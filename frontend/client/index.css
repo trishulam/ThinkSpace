@@ -1,13 +1,25 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import url('tldraw/tldraw.css');
+@import './styles/mindpad.css';
+@import './styles/tailwind-utilities.css';
 
 * {
 	box-sizing: border-box;
 	overscroll-behavior: none;
 }
 
-body {
+html, body {
+	margin: 0;
+	padding: 0;
+	height: 100%;
+	width: 100%;
 	font-family: 'Inter', sans-serif;
+	overflow-x: hidden;
+}
+
+#root {
+	height: 100vh;
+	width: 100vw;
 }
 
 .tldraw-agent-container {
