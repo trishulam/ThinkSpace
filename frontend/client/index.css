@@ -835,3 +835,380 @@ button.prompt-tag span {
 .agent-action-type-message {
 	color: var(--tl-color-text-1);
 }
+
+/* ============================================
+   Agent Sidebar (Live WebSocket Agent Panel)
+   ============================================ */
+
+.agent-sidebar {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	background-color: var(--mindpad-bg-primary, #0F1115);
+	border-left: 1px solid var(--mindpad-border-subtle, #232834);
+	color: var(--mindpad-text-primary, #F9FAFB);
+	font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	font-size: 13px;
+	overflow: hidden;
+}
+
+.agent-sidebar-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--mindpad-border-subtle, #232834);
+	flex-shrink: 0;
+}
+
+.agent-sidebar-header-left {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.agent-sidebar-title {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.agent-sidebar-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: var(--mindpad-text-secondary, #9CA3AF);
+}
+
+.agent-sidebar-status-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background-color: #EF4444;
+	transition: background-color 0.3s ease;
+}
+
+.agent-sidebar-status-dot.connected {
+	background-color: #10B981;
+	box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
+}
+
+.agent-sidebar-status-dot.connecting {
+	background-color: #F59E0B;
+	animation: pulse-dot 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse-dot {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.4; }
+}
+
+.agent-sidebar-connect-btn {
+	padding: 4px 12px;
+	border: 1px solid var(--mindpad-border-subtle, #232834);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--mindpad-text-secondary, #9CA3AF);
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	font-family: inherit;
+}
+
+.agent-sidebar-connect-btn:hover {
+	border-color: var(--mindpad-accent, #10B981);
+	color: var(--mindpad-accent, #10B981);
+}
+
+.agent-sidebar-connect-btn.active {
+	background-color: rgba(239, 68, 68, 0.1);
+	border-color: #EF4444;
+	color: #EF4444;
+}
+
+.agent-sidebar-connect-btn.active:hover {
+	background-color: rgba(239, 68, 68, 0.2);
+}
+
+.agent-sidebar-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 16px;
+	border-bottom: 1px solid var(--mindpad-border-subtle, #232834);
+	flex-shrink: 0;
+}
+
+.agent-sidebar-audio-btn {
+	padding: 4px 10px;
+	border: 1px solid var(--mindpad-border-subtle, #232834);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--mindpad-text-secondary, #9CA3AF);
+	font-size: 11px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	font-family: inherit;
+}
+
+.agent-sidebar-audio-btn:hover:not(:disabled) {
+	border-color: var(--mindpad-accent, #10B981);
+	color: var(--mindpad-accent, #10B981);
+}
+
+.agent-sidebar-audio-btn.active {
+	background-color: rgba(16, 185, 129, 0.15);
+	border-color: var(--mindpad-accent, #10B981);
+	color: var(--mindpad-accent, #10B981);
+}
+
+.agent-sidebar-audio-btn:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.agent-sidebar-checkbox {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+	color: var(--mindpad-text-muted, #6B7280);
+	cursor: pointer;
+	user-select: none;
+}
+
+.agent-sidebar-checkbox input {
+	accent-color: var(--mindpad-accent, #10B981);
+}
+
+.agent-sidebar-clear-btn {
+	margin-left: auto;
+	padding: 2px 8px;
+	border: 1px solid var(--mindpad-border-subtle, #232834);
+	border-radius: 4px;
+	background: transparent;
+	color: var(--mindpad-text-muted, #6B7280);
+	font-size: 11px;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	font-family: inherit;
+}
+
+.agent-sidebar-clear-btn:hover {
+	border-color: var(--mindpad-text-secondary, #9CA3AF);
+	color: var(--mindpad-text-secondary, #9CA3AF);
+}
+
+/* Event Log */
+.agent-sidebar-log {
+	flex: 1;
+	overflow-y: auto;
+	padding: 8px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	scrollbar-width: thin;
+	scrollbar-color: var(--mindpad-border-subtle, #232834) transparent;
+}
+
+.agent-sidebar-log::-webkit-scrollbar {
+	width: 6px;
+}
+
+.agent-sidebar-log::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.agent-sidebar-log::-webkit-scrollbar-thumb {
+	background: var(--mindpad-border-subtle, #232834);
+	border-radius: 3px;
+}
+
+.agent-log-entry {
+	padding: 4px 8px;
+	border-radius: 6px;
+	font-size: 12px;
+	line-height: 1.5;
+	word-break: break-word;
+	transition: background-color 0.15s ease;
+}
+
+.agent-log-entry:hover {
+	background-color: rgba(255, 255, 255, 0.03);
+}
+
+.agent-log-entry-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 2px;
+}
+
+.agent-log-entry-time {
+	font-size: 10px;
+	color: var(--mindpad-text-muted, #6B7280);
+	font-variant-numeric: tabular-nums;
+	flex-shrink: 0;
+}
+
+.agent-log-entry-badge {
+	font-size: 10px;
+	font-weight: 600;
+	padding: 0px 5px;
+	border-radius: 3px;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	flex-shrink: 0;
+}
+
+.agent-log-entry-content {
+	color: var(--mindpad-text-secondary, #9CA3AF);
+	white-space: pre-wrap;
+}
+
+.agent-log-entry-content.partial {
+	opacity: 0.7;
+}
+
+/* Type-specific coloring */
+.agent-log-entry.type-user-text .agent-log-entry-badge,
+.agent-log-entry.type-user-transcription .agent-log-entry-badge {
+	background-color: rgba(59, 130, 246, 0.15);
+	color: #60A5FA;
+}
+
+.agent-log-entry.type-user-text .agent-log-entry-content,
+.agent-log-entry.type-user-transcription .agent-log-entry-content {
+	color: #93C5FD;
+}
+
+.agent-log-entry.type-agent-text .agent-log-entry-badge,
+.agent-log-entry.type-agent-transcription .agent-log-entry-badge {
+	background-color: rgba(16, 185, 129, 0.15);
+	color: #34D399;
+}
+
+.agent-log-entry.type-agent-text .agent-log-entry-content,
+.agent-log-entry.type-agent-transcription .agent-log-entry-content {
+	color: #A7F3D0;
+}
+
+.agent-log-entry.type-tool-call .agent-log-entry-badge {
+	background-color: rgba(139, 92, 246, 0.15);
+	color: #A78BFA;
+}
+
+.agent-log-entry.type-tool-call .agent-log-entry-content {
+	color: #C4B5FD;
+	font-family: 'SF Mono', 'Fira Code', monospace;
+	font-size: 11px;
+}
+
+.agent-log-entry.type-tool-result .agent-log-entry-badge {
+	background-color: rgba(245, 158, 11, 0.15);
+	color: #FBBF24;
+}
+
+.agent-log-entry.type-tool-result .agent-log-entry-content {
+	color: #FDE68A;
+	font-family: 'SF Mono', 'Fira Code', monospace;
+	font-size: 11px;
+}
+
+.agent-log-entry.type-system .agent-log-entry-badge {
+	background-color: rgba(107, 114, 128, 0.15);
+	color: #9CA3AF;
+}
+
+.agent-log-entry.type-system .agent-log-entry-content {
+	color: var(--mindpad-text-muted, #6B7280);
+	font-size: 11px;
+}
+
+.agent-log-entry.type-agent-audio .agent-log-entry-badge,
+.agent-log-entry.type-user-audio .agent-log-entry-badge {
+	background-color: rgba(236, 72, 153, 0.15);
+	color: #F472B6;
+}
+
+.agent-log-entry.type-agent-audio .agent-log-entry-content,
+.agent-log-entry.type-user-audio .agent-log-entry-content {
+	color: var(--mindpad-text-muted, #6B7280);
+	font-size: 11px;
+}
+
+/* Text Input */
+.agent-sidebar-input {
+	display: flex;
+	gap: 8px;
+	padding: 12px 16px;
+	border-top: 1px solid var(--mindpad-border-subtle, #232834);
+	flex-shrink: 0;
+}
+
+.agent-sidebar-input input {
+	flex: 1;
+	height: 36px;
+	padding: 0 12px;
+	border: 1px solid var(--mindpad-border-subtle, #232834);
+	border-radius: 8px;
+	background-color: var(--mindpad-bg-card, #171A21);
+	color: var(--mindpad-text-primary, #F9FAFB);
+	font-size: 13px;
+	font-family: inherit;
+	outline: none;
+	transition: border-color 0.15s ease;
+}
+
+.agent-sidebar-input input::placeholder {
+	color: var(--mindpad-text-muted, #6B7280);
+}
+
+.agent-sidebar-input input:focus {
+	border-color: var(--mindpad-accent, #10B981);
+}
+
+.agent-sidebar-input button {
+	height: 36px;
+	padding: 0 16px;
+	border: none;
+	border-radius: 8px;
+	background-color: var(--mindpad-accent, #10B981);
+	color: white;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: background-color 0.15s ease;
+	font-family: inherit;
+	flex-shrink: 0;
+}
+
+.agent-sidebar-input button:hover:not(:disabled) {
+	background-color: var(--mindpad-accent-hover, #059669);
+}
+
+.agent-sidebar-input button:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+/* Empty state for log */
+.agent-sidebar-log-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	color: var(--mindpad-text-muted, #6B7280);
+	font-size: 13px;
+	text-align: center;
+	padding: 24px;
+}
+
+@media (max-width: 768px) {
+	.agent-sidebar {
+		height: 50vh;
+		width: 100vw;
+	}
+}

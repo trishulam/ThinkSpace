@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+.yarn/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+env/
+venv/
+.eggs/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+.dev.vars
+*.dev.vars
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# Vite
+*.local
+
+# Cloudflare
+.wrangler/
+.mf/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Lock files (keep package-lock, uv.lock)
+# Uncomment if you don't want lock files tracked:
+# package-lock.json
+# uv.lock
+
+# Misc
+*.tsbuildinfo
+.cache/
+.turbo/

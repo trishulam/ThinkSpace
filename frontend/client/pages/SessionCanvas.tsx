@@ -1,10 +1,10 @@
 import React from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { useCallback, useMemo, useState } from 'react'
-import { useSession } from '../context/SessionContext'
+// import { useSession } from '../context/SessionContext'
 import {
 	DefaultSizeStyle,
-	ErrorBoundary,
+	// ErrorBoundary,
 	TLComponents,
 	Tldraw,
 	TldrawOverlays,
@@ -16,14 +16,18 @@ import {
 	TldrawAgentAppContextProvider,
 	TldrawAgentAppProvider,
 } from '../agent/TldrawAgentAppProvider'
-import { ChatPanel } from '../components/ChatPanel'
-import { ChatPanelFallback } from '../components/ChatPanelFallback'
+// Chat panel replaced by AgentSidebar
+// import { ChatPanel } from '../components/ChatPanel'
+// import { ChatPanelFallback } from '../components/ChatPanelFallback'
 import { CustomHelperButtons } from '../components/CustomHelperButtons'
 import { AgentViewportBoundsHighlights } from '../components/highlights/AgentViewportBoundsHighlights'
 import { AllContextHighlights } from '../components/highlights/ContextHighlights'
 import { TargetAreaTool } from '../tools/TargetAreaTool'
 import { TargetShapeTool } from '../tools/TargetShapeTool'
 import { DynamicIsland } from '../components/DynamicIsland'
+import { AgentSidebar } from '../components/AgentSidebar'
+import { useAgentWebSocket } from '../hooks/useAgentWebSocket'
+import { useAudioWorklets } from '../hooks/useAudioWorklets'
 
 // Customize tldraw's styles to play to the agent's strengths
 DefaultSizeStyle.setDefaultValue('s')
@@ -82,40 +86,38 @@ const overrides: TLUiOverrides = {
 export const SessionCanvas: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>()
   const [app, setApp] = useState<TldrawAgentApp | null>(null)
-  
-  // AI Voice Agent Connection State
-  const [isConnected, setIsConnected] = useState(false)
-  const [isConnecting, setIsConnecting] = useState(false)
-  
-  // Get session data from context
-  const { getSession } = useSession()
-  const session = sessionId ? getSession(sessionId) : undefined
 
   const handleUnmount = useCallback(() => {
     setApp(null)
   }, [])
 
-  // AI Voice Agent Connection Handlers
-  const handleConnect = useCallback(() => {
-    setIsConnecting(true)
-    // Simulate connection process
-    setTimeout(() => {
-      setIsConnected(true)
-      setIsConnecting(false)
-    }, 2000) // 2 second connection simulation
-  }, [])
+  // Audio worklets
+  const { isAudioActive, startAudio, stopAudio, playAudioChunk, stopPlayback } =
+    useAudioWorklets()
 
-  const handleDisconnect = useCallback(() => {
-    setIsConnecting(true)
-    // Simulate disconnection process
-    setTimeout(() => {
-      setIsConnected(false)
-      setIsConnecting(false)
-    }, 1000) // 1 second disconnection simulation
-  }, [])
+  // Agent WebSocket
+  const userId = 'demo-user'
+  const wsSessionId = sessionId || 'default-session'
+
+  const ws = useAgentWebSocket({
+    userId,
+    sessionId: wsSessionId,
+    onPlayAudio: playAudioChunk,
+    onStopPlayback: stopPlayback,
+  })
+
+  // Audio start/stop handlers that wire into the WS
+  const handleStartAudio = useCallback(() => {
+    startAudio((pcmChunk) => {
+      ws.sendAudioChunk(pcmChunk)
+    })
+  }, [startAudio, ws.sendAudioChunk])
+
+  const handleStopAudio = useCallback(() => {
+    stopAudio()
+  }, [stopAudio])
 
   // Custom components to visualize what the agent is doing
-  // These use TldrawAgentAppContextProvider to access the app/agent
   const components: TLComponents = useMemo(() => {
     return {
       HelperButtons: () =>
@@ -156,24 +158,34 @@ export const SessionCanvas: React.FC = () => {
               <TldrawAgentAppProvider onMount={setApp} onUnmount={handleUnmount} />
             </Tldraw>
           </div>
-          <ErrorBoundary fallback={ChatPanelFallback}>
+          {/* ChatPanel replaced by live agent sidebar */}
+          {/* <ErrorBoundary fallback={ChatPanelFallback}>
             {app && (
               <TldrawAgentAppContextProvider app={app}>
                 <ChatPanel />
               </TldrawAgentAppContextProvider>
             )}
-          </ErrorBoundary>
+          </ErrorBoundary> */}
+          <AgentSidebar
+            connectionState={ws.connectionState}
+            eventLog={ws.eventLog}
+            isAudioActive={isAudioActive}
+            onConnect={ws.connect}
+            onDisconnect={ws.disconnect}
+            onSendText={ws.sendText}
+            onStartAudio={handleStartAudio}
+            onStopAudio={handleStopAudio}
+            onClearLog={ws.clearLog}
+          />
         </div>
       </TldrawUiToastsProvider>
-      
+
       <CustomToolbar />
-      
+
       {/* Dynamic Island for AI Voice Agent */}
       <DynamicIsland
-        isConnected={isConnected}
-        isConnecting={isConnecting}
-        onConnect={handleConnect}
-        onDisconnect={handleDisconnect}
+        connectionState={ws.connectionState}
+        talkingState={ws.talkingState}
       />
     </>
   )

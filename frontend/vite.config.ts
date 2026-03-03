@@ -12,5 +12,8 @@ export default defineConfig(() => {
 			cloudflare(),
 			react(),
 		],
+		// WebSocket proxy doesn't work here because the Cloudflare Vite
+		// plugin intercepts upgrade requests. The frontend connects directly
+		// to the backend via VITE_AGENT_BACKEND_URL (default ws://localhost:8000).
 	}
 })
