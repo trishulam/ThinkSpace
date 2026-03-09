@@ -1,5 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import type { AgentLogEntry, ConnectionState } from '../types/agent-live'
+import { GestureDebugHud } from '../gesture/components/GestureDebugHud'
+import type { GestureLogEntry, GestureRuntimeState } from '../gesture/types'
 
 const BADGE_LABELS: Record<AgentLogEntry['type'], string> = {
 	'user-text': 'You',
@@ -25,6 +27,9 @@ function formatTime(date: Date): string {
 interface AgentSidebarProps {
 	connectionState: ConnectionState
 	eventLog: AgentLogEntry[]
+	gestureState: GestureRuntimeState | null
+	gestureLogs: GestureLogEntry[]
+	gestureEnabled: boolean
 	isAudioActive: boolean
 	onConnect: () => void
 	onDisconnect: () => void
@@ -32,11 +37,16 @@ interface AgentSidebarProps {
 	onStartAudio: () => void
 	onStopAudio: () => void
 	onClearLog: () => void
+	onClearGestureLogs: () => void
+	onToggleGestures: () => void
 }
 
 export function AgentSidebar({
 	connectionState,
 	eventLog,
+	gestureState,
+	gestureLogs,
+	gestureEnabled,
 	isAudioActive,
 	onConnect,
 	onDisconnect,
@@ -44,8 +54,11 @@ export function AgentSidebar({
 	onStartAudio,
 	onStopAudio,
 	onClearLog,
+	onClearGestureLogs,
+	onToggleGestures,
 }: AgentSidebarProps) {
 	const [showAudioEvents, setShowAudioEvents] = useState(false)
+	const [activeTab, setActiveTab] = useState<'agent' | 'gesture'>('agent')
 	const logEndRef = useRef<HTMLDivElement>(null)
 	const inputRef = useRef<HTMLInputElement>(null)
 
@@ -53,8 +66,9 @@ export function AgentSidebar({
 	const isConnecting = connectionState === 'connecting'
 
 	useEffect(() => {
+		if (activeTab !== 'agent') return
 		logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-	}, [eventLog.length])
+	}, [activeTab, eventLog.length])
 
 	const handleSubmit = useCallback(
 		(e: FormEvent) => {
@@ -117,85 +131,115 @@ export function AgentSidebar({
 				)}
 			</div>
 
-			{/* Controls */}
-			<div className="agent-sidebar-controls">
-				{isAudioActive ? (
-					<button
-						className="agent-sidebar-audio-btn active"
-						onClick={onStopAudio}
-					>
-						Stop Audio
-					</button>
-				) : (
-					<button
-						className="agent-sidebar-audio-btn"
-						onClick={onStartAudio}
-						disabled={!isConnected}
-					>
-						Start Audio
-					</button>
-				)}
-				<label className="agent-sidebar-checkbox">
-					<input
-						type="checkbox"
-						checked={showAudioEvents}
-						onChange={(e) => setShowAudioEvents(e.target.checked)}
-					/>
-					Show audio
-				</label>
-				<button className="agent-sidebar-clear-btn" onClick={onClearLog}>
-					Clear
+			<div className="agent-sidebar-tabs">
+				<button
+					type="button"
+					className={`agent-sidebar-tab${activeTab === 'agent' ? ' active' : ''}`}
+					onClick={() => setActiveTab('agent')}
+				>
+					Agent
+				</button>
+				<button
+					type="button"
+					className={`agent-sidebar-tab${activeTab === 'gesture' ? ' active' : ''}`}
+					onClick={() => setActiveTab('gesture')}
+				>
+					Gestures
+					<span className={`agent-sidebar-tab-badge${gestureEnabled ? ' active' : ''}`}>
+						{gestureEnabled ? 'On' : 'Off'}
+					</span>
 				</button>
 			</div>
 
-			{/* Event Log */}
-			<div className="agent-sidebar-log">
-				{filteredLog.length === 0 ? (
-					<div className="agent-sidebar-log-empty">
-						{isConnected
-							? 'Waiting for events...'
-							: 'Connect to start a session'}
-					</div>
-				) : (
-					filteredLog.map((entry) => (
-						<div
-							key={entry.id}
-							className={`agent-log-entry type-${entry.type}`}
-						>
-							<div className="agent-log-entry-header">
-								<span className="agent-log-entry-time">
-									{formatTime(entry.timestamp)}
-								</span>
-								<span className="agent-log-entry-badge">
-									{BADGE_LABELS[entry.type]}
-								</span>
-							</div>
-							<div
-								className={`agent-log-entry-content${entry.isPartial ? ' partial' : ''}`}
+			{activeTab === 'agent' ? (
+				<>
+					<div className="agent-sidebar-controls">
+						{isAudioActive ? (
+							<button
+								className="agent-sidebar-audio-btn active"
+								onClick={onStopAudio}
 							>
-								{entry.content}
-							</div>
-						</div>
-					))
-				)}
-				<div ref={logEndRef} />
-			</div>
+								Stop Audio
+							</button>
+						) : (
+							<button
+								className="agent-sidebar-audio-btn"
+								onClick={onStartAudio}
+								disabled={!isConnected}
+							>
+								Start Audio
+							</button>
+						)}
+						<label className="agent-sidebar-checkbox">
+							<input
+								type="checkbox"
+								checked={showAudioEvents}
+								onChange={(e) => setShowAudioEvents(e.target.checked)}
+							/>
+							Show audio
+						</label>
+						<button className="agent-sidebar-clear-btn" onClick={onClearLog}>
+							Clear
+						</button>
+					</div>
 
-			{/* Text Input */}
-			<form className="agent-sidebar-input" onSubmit={handleSubmit}>
-				<input
-					ref={inputRef}
-					type="text"
-					placeholder={
-						isConnected ? 'Type a message...' : 'Connect to chat'
-					}
-					disabled={!isConnected}
-					autoComplete="off"
-				/>
-				<button type="submit" disabled={!isConnected}>
-					Send
-				</button>
-			</form>
+					<div className="agent-sidebar-log">
+						{filteredLog.length === 0 ? (
+							<div className="agent-sidebar-log-empty">
+								{isConnected
+									? 'Waiting for events...'
+									: 'Connect to start a session'}
+							</div>
+						) : (
+							filteredLog.map((entry) => (
+								<div
+									key={entry.id}
+									className={`agent-log-entry type-${entry.type}`}
+								>
+									<div className="agent-log-entry-header">
+										<span className="agent-log-entry-time">
+											{formatTime(entry.timestamp)}
+										</span>
+										<span className="agent-log-entry-badge">
+											{BADGE_LABELS[entry.type]}
+										</span>
+									</div>
+									<div
+										className={`agent-log-entry-content${entry.isPartial ? ' partial' : ''}`}
+									>
+										{entry.content}
+									</div>
+								</div>
+							))
+						)}
+						<div ref={logEndRef} />
+					</div>
+
+					<form className="agent-sidebar-input" onSubmit={handleSubmit}>
+						<input
+							ref={inputRef}
+							type="text"
+							placeholder={
+								isConnected ? 'Type a message...' : 'Connect to chat'
+							}
+							disabled={!isConnected}
+							autoComplete="off"
+						/>
+						<button type="submit" disabled={!isConnected}>
+							Send
+						</button>
+					</form>
+				</>
+			) : (
+				<div className="agent-sidebar-gestureTab">
+					<GestureDebugHud
+						state={gestureState}
+						logs={gestureLogs}
+						onToggle={onToggleGestures}
+						onClearLogs={onClearGestureLogs}
+					/>
+				</div>
+			)}
 		</div>
 	)
 }

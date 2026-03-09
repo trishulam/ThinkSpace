@@ -1,6 +1,6 @@
 import React from 'react'
 import { useParams } from 'react-router-dom'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 // import { useSession } from '../context/SessionContext'
 import {
 	DefaultSizeStyle,
@@ -26,6 +26,9 @@ import { TargetAreaTool } from '../tools/TargetAreaTool'
 import { TargetShapeTool } from '../tools/TargetShapeTool'
 import { DynamicIsland } from '../components/DynamicIsland'
 import { AgentSidebar } from '../components/AgentSidebar'
+import { GestureHost } from '../gesture/components/GestureHost'
+import { GestureLogEntry, GestureRuntimeState } from '../gesture/types'
+import { subscribeGestureLogs } from '../gesture/utils/logger'
 import { useAgentWebSocket } from '../hooks/useAgentWebSocket'
 import { useAudioWorklets } from '../hooks/useAudioWorklets'
 
@@ -86,6 +89,10 @@ const overrides: TLUiOverrides = {
 export const SessionCanvas: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>()
   const [app, setApp] = useState<TldrawAgentApp | null>(null)
+  const [gestureEnabled, setGestureEnabled] = useState(false)
+  const [gestureState, setGestureState] = useState<GestureRuntimeState | null>(null)
+  const [gestureLogs, setGestureLogs] = useState<GestureLogEntry[]>([])
+  const canvasRef = useRef<HTMLDivElement | null>(null)
 
   const handleUnmount = useCallback(() => {
     setApp(null)
@@ -116,6 +123,24 @@ export const SessionCanvas: React.FC = () => {
   const handleStopAudio = useCallback(() => {
     stopAudio()
   }, [stopAudio])
+
+  const handleToggleGestures = useCallback(() => {
+    setGestureEnabled((current) => !current)
+  }, [])
+
+  const handleGestureStateChange = useCallback((nextState: GestureRuntimeState) => {
+    setGestureState(nextState)
+  }, [])
+
+  const handleClearGestureLogs = useCallback(() => {
+    setGestureLogs([])
+  }, [])
+
+  React.useEffect(() => {
+    return subscribeGestureLogs((entry) => {
+      setGestureLogs((previous) => [...previous.slice(-149), entry])
+    })
+  }, [])
 
   // Custom components to visualize what the agent is doing
   const components: TLComponents = useMemo(() => {
@@ -148,13 +173,18 @@ export const SessionCanvas: React.FC = () => {
     <>
       <TldrawUiToastsProvider>
         <div className="tldraw-agent-container">
-          <div className="tldraw-canvas">
+          <div className="tldraw-canvas" ref={canvasRef}>
             <Tldraw
               persistenceKey={`session-${sessionId}`}
               tools={tools}
               overrides={overrides}
               components={components}
             >
+              <GestureHost
+                canvasRef={canvasRef}
+                enabled={gestureEnabled}
+                onStateChange={handleGestureStateChange}
+              />
               <TldrawAgentAppProvider onMount={setApp} onUnmount={handleUnmount} />
             </Tldraw>
           </div>
@@ -169,6 +199,9 @@ export const SessionCanvas: React.FC = () => {
           <AgentSidebar
             connectionState={ws.connectionState}
             eventLog={ws.eventLog}
+            gestureState={gestureState}
+            gestureLogs={gestureLogs}
+            gestureEnabled={gestureEnabled}
             isAudioActive={isAudioActive}
             onConnect={ws.connect}
             onDisconnect={ws.disconnect}
@@ -176,6 +209,8 @@ export const SessionCanvas: React.FC = () => {
             onStartAudio={handleStartAudio}
             onStopAudio={handleStopAudio}
             onClearLog={ws.clearLog}
+            onClearGestureLogs={handleClearGestureLogs}
+            onToggleGestures={handleToggleGestures}
           />
         </div>
       </TldrawUiToastsProvider>

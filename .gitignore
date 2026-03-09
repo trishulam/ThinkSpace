@@ -17,6 +17,7 @@ venv/
 !.env.example
 .dev.vars
 *.dev.vars
+Gesture/
 
 # Build output
 dist/
