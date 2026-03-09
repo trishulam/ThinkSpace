@@ -12,15 +12,17 @@ What is working now:
 - browser-side TFLite classifier loading and inference
 - stable cursor gesture activation
 - virtual cursor rendering on the canvas
-- debug HUD with live preview, timings, cursor state, and runtime warnings
+- gesture diagnostics with live preview, timings, cursor state, and runtime warnings
+- diagnostics rendered in the live agent sidebar under the `Gestures` tab instead of floating over the canvas
 
 Known follow-up:
 
 - the label CSV currently does not fully match the classifier output count, so gesture naming needs one cleanup pass before expanding into more gesture stories
+- Story 2 native drawing works, but draw-feel tuning is still needed to better match normal mouse drawing
 
 Recommended next step:
 
-- Story 2 should focus on annotation / drawing only, reusing the existing virtual cursor, tracking, and stability pipeline from Story 1
+- Story 3 should focus on viewport pan only, reusing the existing virtual cursor, tracking, and native draw foundation already in place
 
 ## Story Summary
 

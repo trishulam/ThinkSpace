@@ -4,19 +4,23 @@
 
 Current implementation status:
 
-- Story 1 is working end to end in the browser.
-- The hosted frontend runs the gesture pipeline client-side.
+- Story 1 is complete and working end to end in the browser.
+- Story 2 is complete and working on the real `tldraw` canvas.
+- The hosted frontend now runs the full gesture pipeline client-side.
 - Webcam access, browser MediaPipe hand tracking, browser TFLite classification, stability filtering, and a virtual cursor are all wired into the real canvas route.
-- A debug HUD and structured runtime logging are in place.
+- Gesture-driven drawing now uses the native `tldraw` draw tool through public editor APIs, instead of manually assembling draw shapes.
+- Gesture diagnostics have moved out of the canvas overlay and into the live agent sidebar under a dedicated `Gestures` tab.
+- Structured gesture logs now stream into the sidebar alongside runtime state, preview, timings, and native draw-session diagnostics.
 
 Current known issue:
 
 - The gesture label CSV and classifier output count are mismatched, so some labels should not yet be treated as final source of truth.
+- The current native draw path still needs UX tuning for brush feel parity with normal mouse drawing.
 
 Recommended next build order:
 
 1. Fix the label mapping mismatch so gesture names are trustworthy.
-2. Implement Story 2: annotation / drawing on top of the existing virtual cursor.
+2. Tune native draw feel so thickness and stroke behavior match normal cursor drawing more closely.
 3. Implement Story 3: viewport pan.
 4. Implement Story 4: simple zoom.
 5. Implement Story 5: low-frequency tool switching.

@@ -1,5 +1,29 @@
 # Gesture Story 2 Spec: Annotation And Drawing
 
+## Progress Update
+
+Implementation status: complete.
+
+What is working now:
+
+- Story 2 builds on the completed browser-native Story 1 runtime
+- the draw gesture is recognized and stabilized in the browser
+- the virtual cursor still renders and updates on the canvas
+- gesture-driven drawing now uses the native `tldraw` draw tool through public editor APIs
+- the runtime switches into `draw`, dispatches pointer lifecycle events, and restores the previous tool afterward
+- releasing the draw gesture ends the same native stroke
+- tracking loss and runtime stop cancel or finish the native draw session safely
+- gesture diagnostics and logs are available in the live agent sidebar under a dedicated `Gestures` tab
+
+Known follow-up:
+
+- the label CSV still does not fully match classifier output count
+- native draw feel still needs tuning to better match normal mouse drawing thickness and behavior
+
+Recommended next step:
+
+- Story 3 should focus on viewport pan only, while keeping the native draw path stable and tuning draw feel separately from new navigation gestures
+
 ## Story Summary
 
 Story 2 builds on the completed Story 1 virtual cursor pipeline.
@@ -106,8 +130,8 @@ Story 2 extends the Story 1 pipeline with a new drawing layer.
 
 1. draw gesture activation
 2. stroke lifecycle state machine
-3. point sampling / filtering for strokes
-4. canvas draw adapter
+3. native draw-session driver
+4. `tldraw` tool dispatch integration
 5. stroke-specific HUD and diagnostics
 
 ### Existing layers reused from Story 1
@@ -133,9 +157,9 @@ The Story 2 data flow should be:
 4. TFLite classifier outputs a raw gesture
 5. gesture stability logic determines whether draw mode is active
 6. the virtual cursor continues to update
-7. draw lifecycle decides whether to start / append / end stroke
-8. filtered cursor points are committed to the canvas adapter
-9. a visible draw shape appears and grows on the canvas
+7. draw lifecycle decides whether to start / stream / end the native draw session
+8. the runtime dispatches pointer events into the active `tldraw` draw tool
+9. a visible native draw stroke appears and grows on the canvas
 10. HUD and logs expose the full stroke state
 
 ---
@@ -168,7 +192,7 @@ A slightly conservative drawing gesture that starts reliably is better than a cl
 
 The gesture runtime should decide **when** the user is drawing.
 
-The canvas adapter should decide **how** that drawing becomes a `tldraw` shape.
+The native `tldraw` draw tool should decide **how** that drawing becomes a stroke on the canvas.
 
 ---
 
@@ -263,6 +287,11 @@ Acceptance signals:
 ---
 
 ## FR6: Canvas adapter creates real annotation output
+
+Implementation note:
+
+- the shipped Story 2 path now achieves this through the native `tldraw` draw tool, driven by `editor.setCurrentTool(...)`, `editor.dispatch(...)`, `editor.updatePointer(...)`, and explicit completion / cancellation behavior
+- the original manual draw-shape adapter approach was replaced because the native tool gives live stroke growth on the canvas
 
 The runtime must produce an actual visible draw shape on the `tldraw` canvas.
 
@@ -754,7 +783,7 @@ Story 2 is complete when all of the following are true:
 - releasing the draw gesture ends the stroke
 - tracking loss during drawing ends safely
 - the resulting stroke remains on the `tldraw` canvas
-- HUD and logs make draw lifecycle diagnosable
+- sidebar diagnostics and logs make draw lifecycle diagnosable
 - drawing quality is good enough for a live demo
 
 ---
@@ -771,7 +800,7 @@ The Story 2 demo should look like this:
 6. user moves their hand and the stroke extends
 7. user releases the draw gesture
 8. the stroke ends and remains on the canvas
-9. HUD shows drawing state and runtime details throughout
+9. the `Gestures` sidebar tab shows drawing state, preview, and runtime logs throughout
 
 This is the first story that proves the browser-native gesture system can create real application content.
 
@@ -784,7 +813,7 @@ Do not move to pan until:
 - drawing can start and stop reliably
 - strokes look reasonably clean
 - tracking loss does not corrupt annotation
-- gesture state and stroke lifecycle are both visible in diagnostics
+- gesture state and stroke lifecycle are both visible in sidebar diagnostics
 
 Story 3 should build on a stable drawing interaction, not compete with an unfinished one.
 
