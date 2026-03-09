@@ -1,69 +1,123 @@
-import React from 'react'
-import type { ConnectionState, TalkingState } from '../types/agent-live'
+import React, { useEffect, useRef } from "react";
+import type { ConnectionState, TalkingState } from "../types/agent-live";
 
 interface DynamicIslandProps {
-  connectionState: ConnectionState
-  talkingState: TalkingState
+  connectionState: ConnectionState;
+  talkingState: TalkingState;
 }
+
+/* ── Waveform bars rendered for speaking states ── */
+const WaveformBars: React.FC<{ variant: "agent" | "idle" }> = ({ variant }) => (
+  <div className={`ts-notch-waveform ts-notch-waveform--${variant}`}>
+    {Array.from({ length: 5 }).map((_, i) => (
+      <span
+        key={i}
+        className="ts-notch-waveform-bar"
+        style={{ "--bar-i": i } as React.CSSProperties}
+      />
+    ))}
+  </div>
+);
+
+/* ── Three orbiting dots for thinking/tool-call ── */
+const ThinkingOrbs: React.FC = () => (
+  <div className="ts-notch-thinking">
+    <span className="ts-notch-thinking-dot" />
+    <span className="ts-notch-thinking-dot" />
+    <span className="ts-notch-thinking-dot" />
+  </div>
+);
+
+/* ── Shimmer ring for connecting ── */
+const ConnectingRing: React.FC = () => (
+  <div className="ts-notch-connecting">
+    <span className="ts-notch-ring" />
+    <span className="ts-notch-ring ts-notch-ring--2" />
+    <span className="ts-notch-core" />
+  </div>
+);
+
+/* ── Status dot for idle / disconnecting ── */
+const StatusDot: React.FC<{ state: "idle" | "disconnecting" }> = ({
+  state,
+}) => <span className={`ts-notch-dot ts-notch-dot--${state}`} />;
 
 export const DynamicIsland: React.FC<DynamicIslandProps> = ({
   connectionState,
   talkingState,
 }) => {
-  const getIslandContent = () => {
-    switch (connectionState) {
-      case 'connecting':
+  const notchRef = useRef<HTMLDivElement>(null);
+
+  /* Derive the visual mode from both props */
+  const getMode = (): string => {
+    if (connectionState === "idle") return "idle";
+    if (connectionState === "connecting") return "connecting";
+    if (connectionState === "disconnecting") return "disconnecting";
+    // connected
+    if (talkingState === "thinking") return "thinking";
+    if (talkingState === "agent") return "speaking-agent";
+    // user talking now shows same as idle connected
+    return "connected";
+  };
+
+  const mode = getMode();
+
+  /* aria-label for screen-reader context */
+  const ariaLabels: Record<string, string> = {
+    idle: "Agent disconnected",
+    connecting: "Agent connecting",
+    connected: "Agent connected",
+    thinking: "Agent thinking",
+    "speaking-agent": "Agent speaking",
+    disconnecting: "Agent disconnecting",
+  };
+
+  const renderInner = () => {
+    switch (mode) {
+      case "connecting":
         return (
-          <div className="dynamic-island-content connecting">
-            <div className="connection-dot disconnecting"></div>
-          </div>
-        )
-      case 'connected':
+          <>
+            <ConnectingRing />
+            <span className="ts-notch-label">Connecting</span>
+          </>
+        );
+      case "thinking":
         return (
-          <div className="dynamic-island-content connected">
-            <div className={`voice-visualizer ${talkingState}`}>
-              {talkingState === 'thinking' ? (
-                <>
-                  <div className="thinking-dot"></div>
-                  <div className="thinking-dot"></div>
-                  <div className="thinking-dot"></div>
-                </>
-              ) : (
-                <>
-                  <div className="voice-bar user-bar"></div>
-                  <div className="voice-bar user-bar"></div>
-                  <div className="voice-bar user-bar"></div>
-                  <div className="voice-bar user-bar"></div>
-                  <div className="voice-bar center-bar"></div>
-                  <div className="voice-bar center-bar"></div>
-                  <div className="voice-bar agent-bar"></div>
-                  <div className="voice-bar agent-bar"></div>
-                  <div className="voice-bar agent-bar"></div>
-                  <div className="voice-bar agent-bar"></div>
-                </>
-              )}
-            </div>
-            <div className="connection-dot connected"></div>
-          </div>
-        )
-      case 'disconnecting':
+          <>
+            <ThinkingOrbs />
+            <span className="ts-notch-label">Thinking</span>
+          </>
+        );
+      case "speaking-agent":
         return (
-          <div className="dynamic-island-content disconnecting">
-            <div className="connection-dot disconnecting"></div>
-          </div>
-        )
-      default:
+          <>
+            <span className="ts-notch-pill-dot ts-notch-pill-dot--agent" />
+            <WaveformBars variant="agent" />
+          </>
+        );
+
+      case "connected":
         return (
-          <div className="dynamic-island-content idle">
-            <div className="connection-dot idle"></div>
-          </div>
-        )
+          <>
+            <span className="ts-notch-pill-dot ts-notch-pill-dot--connected" />
+            <WaveformBars variant="idle" />
+          </>
+        );
+      case "disconnecting":
+        return <StatusDot state="disconnecting" />;
+      default: // idle
+        return <StatusDot state="idle" />;
     }
-  }
+  };
 
   return (
-    <div className={`dynamic-island ${connectionState}`}>
-      {getIslandContent()}
+    <div
+      ref={notchRef}
+      className={`ts-notch ts-notch--${mode}`}
+      role="status"
+      aria-label={ariaLabels[mode] ?? "Agent status"}
+    >
+      <div className="ts-notch-inner">{renderInner()}</div>
     </div>
-  )
-}
+  );
+};

@@ -1,18 +1,21 @@
-/* MindPad Design Language - Dark Theme */
+/* MindPad Design Language - Light Theme */
 :root {
-  /* Base Colors */
-  --mindpad-bg-primary: #0F1115;
-  --mindpad-bg-card: #171A21;
-  --mindpad-border-subtle: #232834;
-  --mindpad-accent: #10B981; /* Emerald */
+  /* Base Colors - Light Theme */
+  --mindpad-bg-primary: #f7f8fa;
+  --mindpad-bg-card: #ffffff;
+  --mindpad-bg-hover: #f0f2f5;
+  --mindpad-border-subtle: #e5e7eb;
+  --mindpad-border-medium: #d1d5db;
+  --mindpad-accent: #10b981; /* Emerald */
   --mindpad-accent-hover: #059669;
   --mindpad-accent-light: rgba(16, 185, 129, 0.1);
-  
+  --mindpad-accent-subtle: rgba(16, 185, 129, 0.08);
+
   /* Text Colors */
-  --mindpad-text-primary: #F9FAFB;
-  --mindpad-text-secondary: #9CA3AF;
-  --mindpad-text-muted: #6B7280;
-  
+  --mindpad-text-primary: #111827;
+  --mindpad-text-secondary: #6b7280;
+  --mindpad-text-muted: #9ca3af;
+
   /* Spacing System (8px base) */
   --mindpad-space-1: 8px;
   --mindpad-space-2: 16px;
@@ -21,19 +24,24 @@
   --mindpad-space-5: 40px;
   --mindpad-space-6: 48px;
   --mindpad-space-7: 56px;
-  
+
   /* Border Radius */
   --mindpad-radius-sm: 8px;
   --mindpad-radius-md: 12px;
   --mindpad-radius-lg: 16px;
   --mindpad-radius-xl: 20px;
-  
-  /* Shadows - Minimal, no harsh drops */
-  --mindpad-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
-  --mindpad-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
-  
+
+  /* Shadows */
+  --mindpad-shadow-sm:
+    0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --mindpad-shadow-md:
+    0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --mindpad-shadow-lg:
+    0 10px 30px rgba(0, 0, 0, 0.1), 0 4px 8px rgba(0, 0, 0, 0.05);
+
   /* Typography */
-  --mindpad-font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mindpad-font-family:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mindpad-font-weight-medium: 500;
   --mindpad-font-weight-semibold: 600;
   --mindpad-font-weight-bold: 700;
@@ -49,13 +57,22 @@
   line-height: 1.5;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Light subtle grid pattern */
+  background-image: radial-gradient(
+    circle,
+    rgba(0, 0, 0, 0.035) 1px,
+    transparent 1px
+  );
+  background-size: 28px 28px;
 }
 
 /* Top Navigation Bar */
 .mindpad-nav {
-  height: 64px;
+  height: 60px;
   width: 100%;
-  background-color: var(--mindpad-bg-primary);
+  background-color: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--mindpad-border-subtle);
   display: flex;
   align-items: center;
@@ -64,22 +81,35 @@
   position: sticky;
   top: 0;
   z-index: 50;
+  box-shadow: var(--mindpad-shadow-sm);
 }
 
 .mindpad-nav-logo {
   display: flex;
   align-items: center;
-  gap: var(--mindpad-space-2);
-  font-size: 18px;
-  font-weight: var(--mindpad-font-weight-semibold);
+  gap: 10px;
+  font-size: 17px;
+  font-weight: var(--mindpad-font-weight-bold);
   color: var(--mindpad-text-primary);
   text-decoration: none;
+  letter-spacing: -0.3px;
 }
 
-.mindpad-nav-logo svg {
-  width: 24px;
-  height: 24px;
-  color: var(--mindpad-accent);
+.mindpad-nav-logo-mark {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+.mindpad-nav-logo-mark svg {
+  width: 18px;
+  height: 18px;
+  color: white;
 }
 
 /* Primary Button */
@@ -464,27 +494,27 @@
   .mindpad-nav {
     padding: 0 var(--mindpad-space-2);
   }
-  
+
   .mindpad-container {
     padding: 0 var(--mindpad-space-2);
   }
-  
+
   .mindpad-page-title {
     font-size: 28px;
   }
-  
+
   .mindpad-page-subtitle {
     font-size: 14px;
   }
-  
+
   .mindpad-modal {
     padding: var(--mindpad-space-3);
   }
-  
+
   .mindpad-modal-actions {
     flex-direction: column;
   }
-  
+
   .mindpad-session-card-actions {
     flex-direction: column;
   }
@@ -548,8 +578,8 @@
 
 .tldraw-back-button:hover {
   background-color: #f8f9fa;
-  border-color: var(--mindpad-accent, #10B981);
-  color: var(--mindpad-accent, #10B981);
+  border-color: var(--mindpad-accent, #10b981);
+  color: var(--mindpad-accent, #10b981);
   transform: translateY(-1px);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
@@ -572,11 +602,11 @@
     border-color: #4a5568;
     color: #e2e8f0;
   }
-  
+
   .tldraw-back-button:hover {
     background-color: #4a5568;
-    border-color: var(--mindpad-accent, #10B981);
-    color: var(--mindpad-accent, #10B981);
+    border-color: var(--mindpad-accent, #10b981);
+    color: var(--mindpad-accent, #10b981);
   }
 }
 
@@ -585,779 +615,368 @@
     bottom: 20px;
     right: 20px;
   }
-  
+
   .tldraw-back-button {
     width: 36px;
     height: 36px;
   }
 }
 
-/* Dynamic Island Styles - GPU Optimized */
-.dynamic-island {
+/* ============================================================
+   Top Notch — Mac-style attached notch (replaces Dynamic Island)
+   ============================================================ */
+
+/**
+ * Base notch shell — flush with top of viewport.
+ * Only bottom corners are rounded; top edge merges with browser chrome.
+ */
+.ts-notch {
   position: fixed;
-  top: 20px;
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10000;
-  min-width: 160px;
-  height: 36px;
-  background: linear-gradient(145deg, rgba(0, 0, 0, 0.95), rgba(20, 20, 20, 0.98));
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 20px;
+
+  /* Size — transitions smoothly between states */
+  width: 130px;
+  height: 34px;
+
+  /* Appearance */
+  background: #111214;
+  border-radius: 0 0 22px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: none;
+
+  /* Subtle inner highlight */
   box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    0 2px 0 rgba(255, 255, 255, 0.06) inset,
+    0 6px 24px rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(0, 0, 0, 0.6);
+
+  /* Fluid morphing */
+  transition:
+    width 0.45s cubic-bezier(0.34, 1.56, 0.64, 1),
+    height 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+    border-radius 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.35s ease,
+    border-color 0.35s ease;
+
   overflow: hidden;
-  
-  /* Performance Optimizations */
-  will-change: transform, width, height, border-radius;
-  transform-style: preserve-3d;
-  -webkit-transform-style: preserve-3d;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-  perspective: 1000px;
-  -webkit-perspective: 1000px;
+  will-change: width, height;
   contain: layout style paint;
   isolation: isolate;
 }
 
-.dynamic-island:before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(145deg,
-    rgba(255, 255, 255, 0.1) 0%,
-    rgba(255, 255, 255, 0.05) 50%,
-    rgba(0, 0, 0, 0.1) 100%);
-  border-radius: 22px;
-  pointer-events: none;
-}
-
-/* State-specific island sizing */
-.dynamic-island.connecting {
-  min-width: 280px;
-  height: 48px;
-  border-radius: 24px;
-  animation: islandPulse 2s infinite ease-in-out;
-}
-
-.dynamic-island.connected {
-  min-width: 180px;
-  height: 40px;
-  border-radius: 20px;
-  background: linear-gradient(145deg, rgba(0, 0, 0, 0.95), rgba(15, 15, 15, 0.98));
-  border-color: rgba(16, 185, 129, 0.4);
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 0 0 1px rgba(16, 185, 129, 0.2);
-}
-
-.dynamic-island.disconnecting {
-  min-width: 180px;
-  height: 40px;
-  border-radius: 20px;
-  animation: islandShrink 1s ease-out forwards;
-}
-
-/* Island Content */
-.dynamic-island-content {
+/* Inner layout container */
+.ts-notch-inner {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  width: 100%;
+  justify-content: center;
+  gap: 7px;
+  height: 100%;
+  padding: 0 14px;
   position: relative;
   z-index: 1;
-  color: white;
-  font-size: 14px;
-  font-weight: 500;
-  font-family: var(--mindpad-font-family);
 }
 
-.dynamic-island-content.connected {
-  padding-left: 8px;
-  padding-right: 4px;
+/* ─── State: idle (disconnected) ─── */
+.ts-notch--idle {
+  width: 120px;
+  height: 30px;
+  opacity: 0.75;
 }
 
-.dynamic-island-content.connected .connection-dot {
-  position: absolute;
-  right: 2px;
+/* ─── State: connecting ─── */
+.ts-notch--connecting {
+  width: 190px;
+  height: 40px;
+  border-color: rgba(16, 185, 129, 0.3);
+  box-shadow:
+    0 2px 0 rgba(255, 255, 255, 0.06) inset,
+    0 8px 28px rgba(16, 185, 129, 0.15),
+    0 1px 0 rgba(0, 0, 0, 0.6);
 }
 
-.dynamic-island-content.idle,
-.dynamic-island-content.disconnecting,
-.dynamic-island-content.connecting {
-  padding-left: 8px;
-  padding-right: 4px;
+/* ─── State: connected (idle waveform) ─── */
+.ts-notch--connected {
+  width: 200px;
+  height: 40px;
+  border-color: rgba(16, 185, 129, 0.25);
 }
 
-.dynamic-island-content.idle .connection-dot,
-.dynamic-island-content.disconnecting .connection-dot,
-.dynamic-island-content.connecting .connection-dot {
-  position: absolute;
-  right: 2px;
+/* ─── State: agent speaking ─── */
+.ts-notch--speaking-agent {
+  width: 220px;
+  height: 44px;
+  border-color: rgba(16, 185, 129, 0.4);
+  box-shadow:
+    0 2px 0 rgba(255, 255, 255, 0.06) inset,
+    0 8px 32px rgba(16, 185, 129, 0.2),
+    0 1px 0 rgba(0, 0, 0, 0.6);
 }
 
-.status-text {
-  white-space: nowrap;
-  opacity: 0.9;
-  transition: opacity 0.3s ease;
+/* ─── State: thinking / tool call ─── */
+.ts-notch--thinking {
+  width: 190px;
+  height: 42px;
+  border-color: rgba(139, 92, 246, 0.35);
+  box-shadow:
+    0 2px 0 rgba(255, 255, 255, 0.06) inset,
+    0 8px 28px rgba(139, 92, 246, 0.18),
+    0 1px 0 rgba(0, 0, 0, 0.6);
 }
 
-/* Connection Dot */
-.connection-dot {
-  width: 8px;
-  height: 8px;
+/* ─── State: disconnecting ─── */
+.ts-notch--disconnecting {
+  width: 120px;
+  height: 30px;
+  opacity: 0.75;
+  transition: all 0.5s cubic-bezier(0.55, 0, 1, 0.45);
+}
+
+/* ─── Status dot (idle / disconnecting) ─── */
+.ts-notch-dot {
+  display: block;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  transition: all 0.3s ease;
+  flex-shrink: 0;
 }
 
-.connection-dot.idle {
-  background-color: #EF4444;
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
-  animation: disconnectedPulse 2s infinite ease-in-out;
+.ts-notch-dot--idle {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
+  animation: notchDotIdle 2.4s ease-in-out infinite;
 }
 
-.connection-dot.disconnecting {
-  background-color: #EF4444;
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
-  animation: disconnectedPulse 1.5s infinite ease-in-out;
+.ts-notch-dot--disconnecting {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+  animation: notchDotIdle 1.2s ease-in-out infinite;
 }
 
-.connection-dot.connected {
-  background-color: #10B981;
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
-  animation: connectedPulse 2s infinite ease-in-out;
-}
-
-/* AI Icon */
-.ai-icon {
-  color: rgba(156, 163, 175, 0.8);
-  transition: color 0.3s ease;
-}
-
-/* Pulse Indicator for Connecting State */
-.pulse-indicator {
+/* ─── Connecting ring animation ─── */
+.ts-notch-connecting {
   position: relative;
-  width: 20px;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.ts-notch-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(16, 185, 129, 0.6);
+  animation: notchConnectRing 1.6s ease-out infinite;
+}
+
+.ts-notch-ring--2 {
+  animation-delay: 0.55s;
+}
+
+.ts-notch-core {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #10b981 0%, #059669 100%);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
+  animation: notchCoreBreath 1.6s ease-in-out infinite;
+}
+
+/* ─── Thinking orbiting dots ─── */
+.ts-notch-thinking {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ts-notch-thinking-dot {
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #a78bfa, #8b5cf6);
+  animation: notchThinkBounce 1.2s ease-in-out infinite;
+}
+
+.ts-notch-thinking-dot:nth-child(1) {
+  animation-delay: 0s;
+}
+.ts-notch-thinking-dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.ts-notch-thinking-dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+/* ─── Pill dot (status, shown beside waveform) ─── */
+.ts-notch-pill-dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: notchDotIdle 2s ease-in-out infinite;
+}
+
+.ts-notch-pill-dot--connected {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
+}
+
+.ts-notch-pill-dot--agent {
+  background: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.8);
+}
+
+/* ─── Label text ─── */
+.ts-notch-label {
+  font-family: var(--mindpad-font-family);
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+/* ─── Waveform bars ─── */
+.ts-notch-waveform {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   height: 20px;
 }
 
-.pulse-ring {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 8px;
+.ts-notch-waveform-bar {
+  display: block;
+  width: 3px;
   height: 8px;
-  border: 2px solid #10B981;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  animation: pulseRing 2s infinite ease-out;
+  border-radius: 2px;
+  transform-origin: center;
+  transition: background 0.3s ease;
 }
 
-.pulse-ring-2 {
-  animation-delay: 0.5s;
+/* Idle waveform — static subdued bars */
+.ts-notch-waveform--idle .ts-notch-waveform-bar {
+  background: rgba(255, 255, 255, 0.2);
+  height: 5px;
 }
 
-.pulse-ring-3 {
-  animation-delay: 1s;
+/* Agent speaking — green animated bars */
+.ts-notch-waveform--agent .ts-notch-waveform-bar {
+  background: linear-gradient(to top, #10b981 0%, #34d399 100%);
+  animation: notchWavePulse 0.65s ease-in-out infinite alternate;
+  animation-delay: calc(var(--bar-i, 0) * 0.1s);
 }
 
-/* Voice Visualizer for Connected State */
-.voice-visualizer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 1px;
-  min-width: 60px;
-  margin-left: 4px;
-}
+/* User speaking — blue animated bars */
 
-.voice-bar {
-  width: 2px;
-  height: 8px;
-  border-radius: 1px;
-  transition: all 0.15s ease;
-}
+/* ============================================================
+   Top Notch Animations
+   ============================================================ */
 
-/* User bars (left side - blue) */
-.user-bar {
-  background: rgba(59, 130, 246, 0.4);
-}
-
-/* Center bars (neutral) */
-.center-bar {
-  background: rgba(156, 163, 175, 0.3);
-}
-
-/* Agent bars (right side - green) */
-.agent-bar {
-  background: rgba(16, 185, 129, 0.4);
-}
-
-/* User talking state - only user bars animate */
-.voice-visualizer.user .user-bar {
-  background: linear-gradient(to top, #3B82F6, #60A5FA);
-  animation: userVoiceWave 0.6s infinite ease-in-out;
-}
-
-.voice-visualizer.user .user-bar:nth-child(1) { animation-delay: 0s; }
-.voice-visualizer.user .user-bar:nth-child(2) { animation-delay: 0.08s; }
-.voice-visualizer.user .user-bar:nth-child(3) { animation-delay: 0.16s; }
-.voice-visualizer.user .user-bar:nth-child(4) { animation-delay: 0.24s; }
-
-/* Agent talking state - only agent bars animate */
-.voice-visualizer.agent .agent-bar {
-  background: linear-gradient(to top, #10B981, #34D399);
-  animation: agentVoiceWave 0.8s infinite ease-in-out;
-}
-
-.voice-visualizer.agent .agent-bar:nth-child(7) { animation-delay: 0s; }
-.voice-visualizer.agent .agent-bar:nth-child(8) { animation-delay: 0.1s; }
-.voice-visualizer.agent .agent-bar:nth-child(9) { animation-delay: 0.2s; }
-.voice-visualizer.agent .agent-bar:nth-child(10) { animation-delay: 0.3s; }
-
-/* Thinking dots animation */
-.thinking-dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: linear-gradient(45deg, #10B981, #34D399);
-  animation: thinkingPulse 1.4s infinite ease-in-out;
-  margin: 0 2px;
-}
-
-.thinking-dot:nth-child(1) { animation-delay: 0s; }
-.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
-.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
-
-/* Connection Status Layout */
-.connection-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Fade Indicator for Disconnecting State */
-.fade-indicator {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(239, 68, 68, 0.6), transparent);
-  animation: fadeOut 1s ease-out;
-}
-
-/* Test Controls */
-.dynamic-island-controls {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  padding: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-}
-
-.control-group {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.test-btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-family: var(--mindpad-font-family);
-}
-
-.connect-btn {
-  background: linear-gradient(145deg, #10B981, #059669);
-  color: white;
-}
-
-.connect-btn:hover:not(:disabled) {
-  background: linear-gradient(145deg, #059669, #047857);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-}
-
-.disconnect-btn {
-  background: linear-gradient(145deg, #EF4444, #DC2626);
-  color: white;
-}
-
-.disconnect-btn:hover:not(:disabled) {
-  background: linear-gradient(145deg, #DC2626, #B91C1C);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-}
-
-.thinking-btn {
-  background: linear-gradient(145deg, #8B5CF6, #7C3AED);
-  color: white;
-}
-
-.thinking-btn:hover:not(:disabled) {
-  background: linear-gradient(145deg, #7C3AED, #6D28D9);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
-}
-
-.flashcard-btn {
-  background: linear-gradient(145deg, #F59E0B, #D97706);
-  color: white;
-}
-
-.flashcard-btn:hover:not(:disabled) {
-  background: linear-gradient(145deg, #D97706, #B45309);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-}
-
-.hide-btn {
-  background: rgba(75, 85, 99, 0.8);
-  color: white;
-  border: 1px solid rgba(156, 163, 175, 0.3);
-}
-
-.hide-btn:hover {
-  background: rgba(107, 114, 128, 0.8);
-  transform: translateY(-1px);
-}
-
-.test-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none !important;
-}
-
-/* Show Controls Hint */
-.show-controls-hint {
-  position: fixed;
-  bottom: 90px;
-  right: 20px;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 8px 16px;
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  opacity: 0.7;
-}
-
-.show-controls-hint:hover {
-  opacity: 1;
-  background: rgba(0, 0, 0, 0.8);
-  transform: translateY(-2px);
-}
-
-/* Animations */
-@keyframes islandPulse {
-  0%, 100% {
-    transform: translateX(-50%) scale(1);
-    box-shadow:
-      0 8px 32px rgba(0, 0, 0, 0.3),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  }
-  50% {
-    transform: translateX(-50%) scale(1.02);
-    box-shadow:
-      0 12px 40px rgba(16, 185, 129, 0.2),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  }
-}
-
-@keyframes islandShrink {
-  0% {
-    min-width: 180px;
-    height: 40px;
-    border-radius: 20px;
-    transform: translateX(-50%) scale(1);
-    border-color: rgba(16, 185, 129, 0.4);
-  }
-  50% {
-    min-width: 170px;
-    height: 38px;
-    border-radius: 19px;
-    transform: translateX(-50%) scale(0.95);
-    border-color: rgba(239, 68, 68, 0.4);
-  }
+@keyframes notchDotIdle {
+  0%,
   100% {
-    min-width: 160px;
-    height: 36px;
-    border-radius: 18px;
-    transform: translateX(-50%) scale(1);
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-}
-
-@keyframes pulseRing {
-  0% {
-    transform: translate(-50%, -50%) scale(0.5);
     opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes notchConnectRing {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.9;
   }
   100% {
-    transform: translate(-50%, -50%) scale(2);
+    transform: scale(1.9);
     opacity: 0;
   }
 }
 
-@keyframes connectedPulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.6;
-    transform: scale(1.2);
-  }
-}
-
-@keyframes disconnectedPulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
-  }
-  50% {
-    opacity: 0.7;
-    transform: scale(1.3);
-    box-shadow: 0 0 16px rgba(239, 68, 68, 0.8);
-  }
-}
-
-@keyframes agentVoiceWave {
-  0%, 100% {
-    height: 8px;
-    opacity: 0.6;
-    transform: scaleY(1);
-  }
-  50% {
-    height: 14px;
-    opacity: 1;
-    transform: scaleY(1.8);
-  }
-}
-
-@keyframes userVoiceWave {
-  0%, 100% {
-    height: 8px;
-    opacity: 0.7;
-    transform: scaleY(1);
-  }
-  50% {
-    height: 12px;
-    opacity: 1;
-    transform: scaleY(1.5);
-  }
-}
-
-@keyframes fadeOut {
-  0% {
-    opacity: 1;
-    transform: scale(1);
-  }
+@keyframes notchCoreBreath {
+  0%,
   100% {
-    opacity: 0;
-    transform: scale(0.8);
+    transform: scale(1);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
+  }
+  50% {
+    transform: scale(1.15);
+    box-shadow: 0 0 14px rgba(16, 185, 129, 1);
   }
 }
 
-@keyframes thinkingPulse {
-  0%, 80%, 100% {
-    opacity: 0.3;
-    transform: scale(0.8);
+@keyframes notchThinkBounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0) scale(0.85);
+    opacity: 0.45;
   }
   40% {
+    transform: translateY(-5px) scale(1.1);
     opacity: 1;
-    transform: scale(1.2);
   }
 }
 
-@keyframes flowingBorder {
+@keyframes notchWavePulse {
   0% {
-    transform: rotate(0deg);
+    height: 5px;
+    opacity: 0.6;
   }
   100% {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes rotateBorder {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-
-/* Flashcard Styles */
-.flashcard-container {
-  position: fixed;
-  top: 200px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 9998;
-  width: 380px;
-  max-width: 90vw;
-}
-
-.flashcard-container.animating {
-  animation: genieEmerge 1.0s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
-}
-
-.flashcard-container.visible {
-  animation: flashcardSettle 0.2s ease-out forwards;
-}
-
-.flashcard {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.95), rgba(248, 250, 252, 0.98));
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 16px;
-  box-shadow:
-    0 20px 40px rgba(0, 0, 0, 0.15),
-    0 8px 16px rgba(0, 0, 0, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  overflow: hidden;
-  transition: all 0.3s ease;
-}
-
-.flashcard:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 24px 48px rgba(0, 0, 0, 0.2),
-    0 12px 20px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-}
-
-.flashcard-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 20px 24px 16px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
-}
-
-.flashcard-icon {
-  font-size: 24px;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(145deg, #10B981, #34D399);
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-}
-
-.flashcard-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1f2937;
-  font-family: var(--mindpad-font-family);
-}
-
-.flashcard-content {
-  padding: 20px 24px;
-}
-
-.flashcard-content h3 {
-  font-size: 20px;
-  font-weight: 700;
-  color: #111827;
-  margin: 0 0 12px 0;
-  font-family: var(--mindpad-font-family);
-}
-
-.flashcard-content p {
-  font-size: 15px;
-  line-height: 1.6;
-  color: #4b5563;
-  margin: 0 0 16px 0;
-  font-family: var(--mindpad-font-family);
-}
-
-.flashcard-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.tag {
-  background: linear-gradient(145deg, #e0f2fe, #b3e5fc);
-  color: #0277bd;
-  padding: 4px 12px;
-  border-radius: 16px;
-  font-size: 13px;
-  font-weight: 500;
-  border: 1px solid rgba(2, 119, 189, 0.2);
-  font-family: var(--mindpad-font-family);
-}
-
-.flashcard-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 24px 20px;
-  border-top: 1px solid rgba(148, 163, 184, 0.15);
-}
-
-.flashcard-action {
-  background: linear-gradient(145deg, #10B981, #059669);
-  color: white;
-  border: none;
-  padding: 10px 20px;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-family: var(--mindpad-font-family);
-}
-
-.flashcard-action:hover {
-  background: linear-gradient(145deg, #059669, #047857);
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.3);
-}
-
-.flashcard-dismiss {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(156, 163, 175, 0.1);
-  color: #6b7280;
-  font-size: 20px;
-  font-weight: bold;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-}
-
-.flashcard-dismiss:hover {
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
-  transform: scale(1.1);
-}
-
-/* Simple Genie Effect Animation */
-@keyframes genieEmerge {
-  0% {
-    transform: translateX(-50%) translateY(-180px) scaleY(0.05) scaleX(0.3);
-    opacity: 0;
-    border-radius: 22px;
-  }
-  30% {
-    transform: translateX(-50%) translateY(-120px) scaleY(0.3) scaleX(0.7);
-    opacity: 0.7;
-    border-radius: 20px;
-  }
-  70% {
-    transform: translateX(-50%) translateY(-40px) scaleY(0.8) scaleX(0.95);
-    opacity: 0.9;
-    border-radius: 18px;
-  }
-  100% {
-    transform: translateX(-50%) translateY(0) scaleY(1) scaleX(1);
+    height: 18px;
     opacity: 1;
-    border-radius: 16px;
   }
 }
 
-@keyframes flashcardSettle {
-  0% {
-    transform: translateX(-50%) scale(1.02);
-  }
-  100% {
-    transform: translateX(-50%) scale(1);
-  }
-}
-
-/* Responsive Design for Dynamic Island */
+/* Mobile: slightly smaller notch */
 @media (max-width: 768px) {
-  .dynamic-island {
-    min-width: 140px;
-    height: 32px;
-    border-radius: 16px;
-    padding: 0 12px;
-    top: 16px;
+  .ts-notch {
+    width: 110px;
+    height: 28px;
   }
-  
-  .dynamic-island.connecting {
-    min-width: 160px;
+
+  .ts-notch--connecting {
+    width: 170px;
     height: 36px;
-    border-radius: 18px;
   }
-  
-  .dynamic-island.connected {
-    min-width: 150px;
-    height: 34px;
-    border-radius: 17px;
+  .ts-notch--connected {
+    width: 180px;
+    height: 36px;
   }
-  
-  .dynamic-island-content {
-    font-size: 13px;
-    gap: 10px;
-  }
-  
-  .voice-visualizer {
-    min-width: 45px;
-    margin-left: 2px;
+  .ts-notch--speaking-agent,
+  .ts-notch--thinking {
+    width: 170px;
+    height: 38px;
   }
 
-  .voice-bar {
-    width: 1.5px;
-    height: 6px;
-  }
-  
-  .dynamic-island-controls {
-    bottom: 16px;
-    right: 16px;
-    padding: 12px;
-  }
-  
-  .control-group {
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  
-  .test-btn {
-    padding: 6px 12px;
-    font-size: 13px;
+  .ts-notch-inner {
+    padding: 0 10px;
+    gap: 5px;
   }
 
+  .ts-notch-waveform-bar {
+    width: 2.5px;
+  }
+  @keyframes notchWavePulse {
+    0% {
+      height: 4px;
+      opacity: 0.6;
+    }
+    100% {
+      height: 14px;
+      opacity: 1;
+    }
+  }
+}
+
+@media (max-width: 768px) {
   /* Flashcard Mobile Styles */
   .flashcard-container {
     top: 70px;
@@ -1406,4 +1025,322 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ============================================================
+   Dashboard — Session List (replaces card grid)
+   ============================================================ */
+
+.ts-dashboard-body {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 var(--mindpad-space-3) var(--mindpad-space-7);
+}
+
+/* Section header row */
+.ts-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--mindpad-space-5) 0 var(--mindpad-space-2);
+  gap: 12px;
+}
+
+.ts-section-title {
+  font-size: 22px;
+  font-weight: var(--mindpad-font-weight-bold);
+  color: var(--mindpad-text-primary);
+  margin: 0;
+  letter-spacing: -0.4px;
+}
+
+.ts-section-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mindpad-text-muted);
+  background: var(--mindpad-bg-card);
+  border: 1px solid var(--mindpad-border-subtle);
+  border-radius: 20px;
+  padding: 2px 10px;
+}
+
+/* The list container */
+.ts-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--mindpad-border-subtle);
+  border-radius: var(--mindpad-radius-lg);
+  overflow: hidden;
+  box-shadow: var(--mindpad-shadow-sm);
+}
+
+/* Each row */
+.ts-session-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  background: var(--mindpad-bg-card);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-decoration: none;
+  color: inherit;
+  position: relative;
+}
+
+.ts-session-row:hover {
+  background: var(--mindpad-bg-hover);
+}
+
+.ts-session-row:hover .ts-session-row-actions {
+  opacity: 1;
+}
+
+/* Colored icon bubble */
+.ts-session-row-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/* Body: title + goal */
+.ts-session-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ts-session-row-title {
+  font-size: 15px;
+  font-weight: var(--mindpad-font-weight-semibold);
+  color: var(--mindpad-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.1px;
+}
+
+.ts-session-row-goal {
+  font-size: 13px;
+  color: var(--mindpad-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Meta chips */
+.ts-session-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.ts-session-row-meta-chip {
+  font-size: 12px;
+  color: var(--mindpad-text-muted);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ts-session-row-meta-chip svg {
+  width: 13px;
+  height: 13px;
+  opacity: 0.6;
+}
+
+/* Action buttons (appear on hover) */
+.ts-session-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  flex-shrink: 0;
+}
+
+/* On touch / mobile always show actions */
+@media (max-width: 768px) {
+  .ts-session-row-actions {
+    opacity: 1;
+  }
+}
+
+.ts-row-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+  font-family: var(--mindpad-font-family);
+  white-space: nowrap;
+}
+
+.ts-row-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.ts-row-btn--primary {
+  background: var(--mindpad-accent);
+  color: white;
+}
+
+.ts-row-btn--primary:hover {
+  background: var(--mindpad-accent-hover);
+  transform: translateY(-1px);
+}
+
+.ts-row-btn--ghost {
+  background: transparent;
+  color: var(--mindpad-text-secondary);
+  border: 1px solid var(--mindpad-border-medium);
+}
+
+.ts-row-btn--ghost:hover {
+  background: var(--mindpad-bg-hover);
+  color: var(--mindpad-text-primary);
+  border-color: var(--mindpad-border-medium);
+}
+
+/* Empty state for light theme */
+.ts-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 72px var(--mindpad-space-3) 80px;
+  background: var(--mindpad-bg-card);
+  border-radius: var(--mindpad-radius-lg);
+  border: 1.5px dashed var(--mindpad-border-medium);
+}
+
+.ts-empty-state-glyph {
+  font-size: 48px;
+  margin-bottom: 16px;
+  line-height: 1;
+  filter: grayscale(0.1);
+}
+
+.ts-empty-state-title {
+  font-size: 18px;
+  font-weight: var(--mindpad-font-weight-semibold);
+  color: var(--mindpad-text-primary);
+  margin: 0 0 6px;
+  letter-spacing: -0.2px;
+}
+
+.ts-empty-state-sub {
+  font-size: 14px;
+  color: var(--mindpad-text-secondary);
+  margin: 0 0 28px;
+  max-width: 320px;
+  line-height: 1.55;
+}
+
+/* Loading skeleton row */
+.ts-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  background: var(--mindpad-bg-card);
+  overflow: hidden;
+}
+
+.ts-skeleton-row::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.6),
+    transparent
+  );
+  animation: skeletonShimmer 1.4s infinite;
+}
+
+.ts-skeleton-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--mindpad-border-subtle);
+  flex-shrink: 0;
+}
+
+.ts-skeleton-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ts-skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--mindpad-border-subtle);
+}
+
+.ts-skeleton-line--wide {
+  width: 60%;
+}
+.ts-skeleton-line--narrow {
+  width: 38%;
+}
+
+@keyframes skeletonShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+/* Responsive list */
+@media (max-width: 640px) {
+  .ts-dashboard-body {
+    padding: 0 var(--mindpad-space-2) var(--mindpad-space-6);
+  }
+
+  .ts-session-row {
+    padding: 14px 16px;
+    gap: 12px;
+  }
+
+  .ts-session-row-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 17px;
+    border-radius: 10px;
+  }
+
+  .ts-session-row-meta {
+    display: none;
+  }
+
+  .ts-session-row-title {
+    font-size: 14px;
+  }
 }
