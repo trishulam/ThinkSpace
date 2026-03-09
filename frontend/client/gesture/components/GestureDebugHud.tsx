@@ -37,13 +37,35 @@ function formatLogTime(date: Date) {
 	})
 }
 
+function getInteractionMode(state: GestureRuntimeState) {
+	if (state.stableDrawGestureActive) return 'draw'
+	if (state.stablePanGestureActive) return 'pan'
+	if (state.stableGestureLabel) return 'cursor'
+	return 'idle'
+}
+
+function renderField(label: string, value: string) {
+	return (
+		<div className="gesture-debug-field" key={label}>
+			<span>{label}</span>
+			<strong>{value}</strong>
+		</div>
+	)
+}
+
 export function GestureDebugHud({ state, logs, onToggle, onClearLogs }: GestureDebugHudProps) {
 	const previewRef = useRef<HTMLVideoElement | null>(null)
+	const logRef = useRef<HTMLDivElement | null>(null)
 
 	useEffect(() => {
 		if (!previewRef.current) return
 		previewRef.current.srcObject = state?.stream ?? null
 	}, [state?.stream])
+
+	useEffect(() => {
+		if (!logRef.current) return
+		logRef.current.scrollTop = logRef.current.scrollHeight
+	}, [logs.length])
 
 	if (!state) {
 		return (
@@ -53,26 +75,29 @@ export function GestureDebugHud({ state, logs, onToggle, onClearLogs }: GestureD
 						<div className="gesture-sidebar-panel__title">Gestures</div>
 						<div className="gesture-sidebar-panel__subtitle">Waiting for runtime</div>
 					</div>
-				<div className="gesture-sidebar-panel__actions">
-					<button className="gesture-sidebar-panel__clear" onClick={onClearLogs} type="button">
-						Clear logs
-					</button>
-					<button className="gesture-sidebar-panel__toggle" onClick={onToggle} type="button">
-						Start
-					</button>
-				</div>
+					<div className="gesture-sidebar-panel__actions">
+						<button className="gesture-sidebar-panel__clear" onClick={onClearLogs} type="button">
+							Clear logs
+						</button>
+						<button className="gesture-sidebar-panel__toggle" onClick={onToggle} type="button">
+							Start
+						</button>
+					</div>
 				</div>
 				<div className="gesture-sidebar-empty">Gesture runtime has not mounted yet.</div>
 			</div>
 		)
 	}
 
+	const interactionMode = getInteractionMode(state)
+	const recentLogs = logs.slice(-120)
+
 	return (
 		<div className="gesture-sidebar-panel">
 			<div className="gesture-sidebar-panel__header">
 				<div>
 					<div className="gesture-sidebar-panel__title">Gestures</div>
-					<div className="gesture-sidebar-panel__subtitle">Native draw runtime</div>
+					<div className="gesture-sidebar-panel__subtitle">Canvas gesture runtime</div>
 				</div>
 				<div className="gesture-sidebar-panel__actions">
 					<button className="gesture-sidebar-panel__clear" onClick={onClearLogs} type="button">
@@ -89,132 +114,109 @@ export function GestureDebugHud({ state, logs, onToggle, onClearLogs }: GestureD
 				<div className="gesture-sidebar-panel__preview-badge">{state.trackingState}</div>
 			</div>
 
-			<div className="gesture-debug-grid">
-				<div>
-					<span>camera</span>
-					<strong>{state.cameraState}</strong>
+			<div className="gesture-sidebar-summary">
+				<div className="gesture-sidebar-chip">
+					<span>mode</span>
+					<strong>{interactionMode}</strong>
 				</div>
-				<div>
-					<span>model</span>
-					<strong>{state.modelState}</strong>
-				</div>
-				<div>
-					<span>tracking</span>
-					<strong>{state.handPresent ? 'hand present' : 'no hand'}</strong>
-				</div>
-				<div>
-					<span>video</span>
-					<strong>
-						{state.videoSize ? `${state.videoSize.width}x${state.videoSize.height}` : 'n/a'}
-					</strong>
-				</div>
-				<div>
-					<span>raw gesture</span>
+				<div className="gesture-sidebar-chip">
+					<span>raw</span>
 					<strong>{state.rawGestureLabel ?? 'n/a'}</strong>
 				</div>
-				<div>
-					<span>stable gesture</span>
+				<div className="gesture-sidebar-chip">
+					<span>stable</span>
 					<strong>{state.stableGestureLabel ?? 'n/a'}</strong>
 				</div>
-				<div>
-					<span>raw draw</span>
-					<strong>{state.rawDrawGestureActive ? 'active' : 'inactive'}</strong>
+				<div className="gesture-sidebar-chip">
+					<span>tracking</span>
+					<strong>{state.handPresent ? 'live' : 'lost'}</strong>
 				</div>
-				<div>
-					<span>stable draw</span>
-					<strong>{state.stableDrawGestureActive ? 'active' : 'inactive'}</strong>
-				</div>
-				<div>
-					<span>confidence</span>
-					<strong>
-						{state.rawConfidence !== null ? state.rawConfidence.toFixed(3) : 'n/a'}
-					</strong>
-				</div>
-				<div>
-					<span>cursor</span>
-					<strong>{state.cursorVisibility}</strong>
-				</div>
-				<div>
-					<span>raw point</span>
-					<strong>{formatPoint(state.rawCursorPoint)}</strong>
-				</div>
-				<div>
-					<span>smooth point</span>
-					<strong>{formatPoint(state.cursorPoint)}</strong>
-				</div>
-				<div>
-					<span>hand inference</span>
-					<strong>{formatMs(state.metrics.lastHandInferenceMs)}</strong>
-				</div>
-				<div>
-					<span>classifier</span>
-					<strong>{formatMs(state.metrics.lastClassifierInferenceMs)}</strong>
-				</div>
-				<div>
-					<span>vector length</span>
-					<strong>{state.metrics.preprocessedVectorLength ?? 'n/a'}</strong>
-				</div>
-				<div>
-					<span>draw lifecycle</span>
-					<strong>{state.drawLifecycleState}</strong>
-				</div>
-				<div>
-					<span>stroke state</span>
-					<strong>{state.strokeState}</strong>
-				</div>
-				<div>
-					<span>native session</span>
-					<strong>{state.nativeSessionActive ? 'active' : 'inactive'}</strong>
-				</div>
-				<div>
-					<span>pointer id</span>
-					<strong>{state.activePointerId ?? 'n/a'}</strong>
-				</div>
-				<div>
+				<div className="gesture-sidebar-chip">
 					<span>tool</span>
 					<strong>{state.currentToolId ?? 'n/a'}</strong>
 				</div>
-				<div>
-					<span>prev tool</span>
-					<strong>{state.previousToolId ?? 'n/a'}</strong>
-				</div>
-				<div>
-					<span>last event</span>
-					<strong>{state.lastDispatchedEvent ?? 'none'}</strong>
-				</div>
-				<div>
-					<span>dispatch screen</span>
-					<strong>{formatPoint(state.lastDispatchScreenPoint)}</strong>
-				</div>
-				<div>
-					<span>dispatch page</span>
-					<strong>{formatPoint(state.lastDispatchPagePoint)}</strong>
-				</div>
-				<div>
-					<span>last draw</span>
-					<strong>{state.lastDrawEvent ?? 'none'}</strong>
-				</div>
-				<div>
-					<span>error</span>
-					<strong>{state.error ?? 'none'}</strong>
-				</div>
-				<div>
-					<span>warning</span>
-					<strong>{state.warning ?? 'none'}</strong>
+				<div className="gesture-sidebar-chip">
+					<span>confidence</span>
+					<strong>{state.rawConfidence !== null ? state.rawConfidence.toFixed(3) : 'n/a'}</strong>
 				</div>
 			</div>
 
-			<div className="gesture-sidebar-panel__logHeader">
-				<span>Gesture logs</span>
-				<strong>{logs.length}</strong>
+			<div className="gesture-debug-sections">
+				<section className="gesture-debug-section">
+					<div className="gesture-debug-section__title">System</div>
+					<div className="gesture-debug-grid">
+						{renderField('camera', state.cameraState)}
+						{renderField('model', state.modelState)}
+						{renderField('tracking', state.handPresent ? 'hand present' : 'no hand')}
+						{renderField(
+							'video',
+							state.videoSize ? `${state.videoSize.width}x${state.videoSize.height}` : 'n/a'
+						)}
+						{renderField('cursor', state.cursorVisibility)}
+						{renderField('cursor point', formatPoint(state.cursorPoint))}
+						{renderField('hand inference', formatMs(state.metrics.lastHandInferenceMs))}
+						{renderField('classifier', formatMs(state.metrics.lastClassifierInferenceMs))}
+					</div>
+				</section>
+
+				<section className="gesture-debug-section">
+					<div className="gesture-debug-section__title">Pan</div>
+					<div className="gesture-debug-grid">
+						{renderField('raw pan', state.rawPanGestureActive ? 'active' : 'inactive')}
+						{renderField('stable pan', state.stablePanGestureActive ? 'active' : 'inactive')}
+						{renderField('lifecycle', state.panLifecycleState)}
+						{renderField('last pan', state.lastPanEvent ?? 'none')}
+						{renderField('anchor', formatPoint(state.lastPanAnchorPoint))}
+						{renderField('delta', formatPoint(state.lastPanDelta))}
+					</div>
+				</section>
+
+				<section className="gesture-debug-section">
+					<div className="gesture-debug-section__title">Draw</div>
+					<div className="gesture-debug-grid">
+						{renderField('raw draw', state.rawDrawGestureActive ? 'active' : 'inactive')}
+						{renderField('stable draw', state.stableDrawGestureActive ? 'active' : 'inactive')}
+						{renderField('lifecycle', state.drawLifecycleState)}
+						{renderField('stroke', state.strokeState)}
+						{renderField('native session', state.nativeSessionActive ? 'active' : 'inactive')}
+						{renderField('last draw', state.lastDrawEvent ?? 'none')}
+						{renderField('dispatch event', state.lastDispatchedEvent ?? 'none')}
+						{renderField('dispatch point', formatPoint(state.lastDispatchScreenPoint))}
+					</div>
+				</section>
+
+				{state.warning || state.error ? (
+					<section className="gesture-debug-section">
+						<div className="gesture-debug-section__title">Issues</div>
+						<div className="gesture-issue-list">
+							{state.warning ? (
+								<div className="gesture-issue-card gesture-issue-card--warn">
+									<span>warning</span>
+									<strong>{state.warning}</strong>
+								</div>
+							) : null}
+							{state.error ? (
+								<div className="gesture-issue-card gesture-issue-card--error">
+									<span>error</span>
+									<strong>{state.error}</strong>
+								</div>
+							) : null}
+						</div>
+					</section>
+				) : null}
 			</div>
-			<div className="gesture-sidebar-panel__log">
-				{logs.length === 0 ? (
+
+			<div className="gesture-sidebar-panel__logHeader">
+				<span>Recent lifecycle logs</span>
+				<strong>{recentLogs.length}</strong>
+			</div>
+			<div className="gesture-sidebar-panel__log" ref={logRef}>
+				{recentLogs.length === 0 ? (
 					<div className="gesture-sidebar-empty">
 						Start the runtime to see gesture lifecycle logs here.
 					</div>
 				) : (
-					[...logs].reverse().map((entry) => {
+					recentLogs.map((entry) => {
 						const details = formatLogDetails(entry.details)
 
 						return (

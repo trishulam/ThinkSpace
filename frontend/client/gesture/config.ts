@@ -11,6 +11,7 @@ export const GESTURE_ASSETS = {
 } as const
 
 export const CURSOR_GESTURE_ID = 2
+export const PAN_GESTURE_ID = 1
 export const DRAW_GESTURE_ID = 6
 
 export const GESTURE_THRESHOLDS = {
@@ -19,6 +20,11 @@ export const GESTURE_THRESHOLDS = {
 	cursorMissFrames: 2,
 	cursorSmoothingAlpha: 0.35,
 	cursorFreezeMs: 500,
+	panConfidence: 0.55,
+	panStableFrames: 2,
+	panMissFrames: 2,
+	panSensitivity: 1.15,
+	panReanchorDistance: 120,
 	drawConfidence: 0.45,
 	drawStableFrames: 1,
 	drawMissFrames: 3,

@@ -6,6 +6,7 @@ export type TrackingState = 'no-hand' | 'tracking' | 'lost'
 export type ModelState = 'uninitialized' | 'loading' | 'ready' | 'error'
 export type CursorVisibility = 'hidden' | 'visible' | 'frozen'
 export type DrawLifecycleState = 'idle' | 'drawArming' | 'drawing' | 'drawEnding'
+export type PanLifecycleState = 'idle' | 'panArming' | 'panning' | 'panEnding'
 export type StrokeState =
 	| 'idle'
 	| 'arming'
@@ -62,6 +63,12 @@ export interface GestureRuntimeState extends GesturePredictionState {
 	videoSize: GestureVideoSize | null
 	rawCursorPoint: GesturePoint | null
 	cursorPoint: GesturePoint | null
+	rawPanGestureActive: boolean
+	stablePanGestureActive: boolean
+	panLifecycleState: PanLifecycleState
+	lastPanAnchorPoint: GesturePoint | null
+	lastPanDelta: GesturePoint | null
+	lastPanEvent: string | null
 	rawDrawGestureActive: boolean
 	stableDrawGestureActive: boolean
 	drawLifecycleState: DrawLifecycleState

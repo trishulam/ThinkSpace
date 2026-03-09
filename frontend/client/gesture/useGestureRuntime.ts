@@ -7,6 +7,7 @@ import {
 	GESTURE_ASSETS,
 	GESTURE_DEBUG_MODE,
 	GESTURE_THRESHOLDS,
+	PAN_GESTURE_ID,
 } from './config'
 import { loadTfLiteRuntime } from './runtime/loadTfLiteRuntime'
 import { preprocessLandmarksForClassifier } from './runtime/preprocess'
@@ -16,6 +17,7 @@ import {
 	GestureRuntimeState,
 	GestureVideoSize,
 	ModelState,
+	PanLifecycleState,
 	StrokeState,
 	TrackingState,
 } from './types'
@@ -41,6 +43,12 @@ const INITIAL_STATE: GestureRuntimeState = {
 	stableGestureLabel: null,
 	rawCursorPoint: null,
 	cursorPoint: null,
+	rawPanGestureActive: false,
+	stablePanGestureActive: false,
+	panLifecycleState: 'idle',
+	lastPanAnchorPoint: null,
+	lastPanDelta: null,
+	lastPanEvent: null,
 	rawDrawGestureActive: false,
 	stableDrawGestureActive: false,
 	drawLifecycleState: 'idle',
@@ -130,6 +138,11 @@ function buildGesturePointerEvent(
 		name,
 		button: 0,
 		isPen: true,
+		shiftKey: false,
+		altKey: false,
+		ctrlKey: false,
+		metaKey: false,
+		accelKey: false,
 		point,
 		pointerId: GESTURE_POINTER_ID,
 		target: 'canvas',
@@ -157,16 +170,23 @@ export function useGestureRuntime(
 	const lastSeenHandAtRef = useRef<number | null>(null)
 	const cursorStableHitsRef = useRef(0)
 	const cursorStableMissesRef = useRef(0)
+	const panStableHitsRef = useRef(0)
+	const panStableMissesRef = useRef(0)
 	const drawStableHitsRef = useRef(0)
 	const drawStableMissesRef = useRef(0)
 	const rawGestureIdRef = useRef<number | null>(null)
 	const stableCursorActiveRef = useRef(false)
+	const stablePanActiveRef = useRef(false)
 	const stableDrawActiveRef = useRef(false)
 	const nativeDrawSessionActiveRef = useRef(false)
 	const trackingStateRef = useRef<TrackingState>('no-hand')
 	const labelWarningRef = useRef<string | null>(null)
+	const panLifecycleStateRef = useRef<PanLifecycleState>('idle')
 	const drawLifecycleStateRef = useRef<DrawLifecycleState>('idle')
 	const strokeStateRef = useRef<StrokeState>('idle')
+	const lastPanAnchorPointRef = useRef<GesturePoint | null>(null)
+	const lastPanDeltaRef = useRef<GesturePoint | null>(null)
+	const lastPanEventRef = useRef<string | null>(null)
 	const previousToolIdRef = useRef<string | null>(null)
 	const lastDispatchedEventRef = useRef<GestureDispatchEventName | null>(null)
 	const lastDispatchScreenPointRef = useRef<GesturePoint | null>(null)
@@ -221,6 +241,63 @@ export function useGestureRuntime(
 			}
 
 			previousToolIdRef.current = null
+		}
+
+		const startPanSession = (screenPoint: GesturePoint) => {
+			lastPanAnchorPointRef.current = screenPoint
+			lastPanDeltaRef.current = { x: 0, y: 0 }
+			panLifecycleStateRef.current = 'panning'
+			lastPanEventRef.current = 'pan entered'
+			gestureLog('pan', 'Pan gesture became active', { screenPoint }, {
+				debugMode: GESTURE_DEBUG_MODE,
+			})
+		}
+
+		const updatePanSession = (screenPoint: GesturePoint) => {
+			const previousAnchor = lastPanAnchorPointRef.current
+			if (!previousAnchor) {
+				lastPanAnchorPointRef.current = screenPoint
+				lastPanDeltaRef.current = { x: 0, y: 0 }
+				return
+			}
+
+			const delta = {
+				x: screenPoint.x - previousAnchor.x,
+				y: screenPoint.y - previousAnchor.y,
+			}
+			const distance = Math.hypot(delta.x, delta.y)
+			if (distance > GESTURE_THRESHOLDS.panReanchorDistance) {
+				lastPanAnchorPointRef.current = screenPoint
+				lastPanDeltaRef.current = { x: 0, y: 0 }
+				lastPanEventRef.current = 'pan reanchored'
+				gestureLog('pan', 'Pan anchor reanchored after large jump', { screenPoint, distance }, {
+					debugMode: GESTURE_DEBUG_MODE,
+					level: 'warn',
+				})
+				return
+			}
+
+			const camera = editor.getCamera()
+			editor.setCamera({
+				x: camera.x - (delta.x / camera.z) * GESTURE_THRESHOLDS.panSensitivity,
+				y: camera.y - (delta.y / camera.z) * GESTURE_THRESHOLDS.panSensitivity,
+				z: camera.z,
+			})
+			lastPanAnchorPointRef.current = screenPoint
+			lastPanDeltaRef.current = delta
+			lastPanEventRef.current = 'pan updated'
+		}
+
+		const finishPanSession = (reason: string) => {
+			if (panLifecycleStateRef.current === 'idle' && !stablePanActiveRef.current) return
+
+			panLifecycleStateRef.current = 'idle'
+			lastPanEventRef.current = reason
+			lastPanAnchorPointRef.current = null
+			lastPanDeltaRef.current = null
+			gestureLog('pan', 'Pan session ended', { reason }, {
+				debugMode: GESTURE_DEBUG_MODE,
+			})
 		}
 
 		const dispatchGesturePointer = (name: TLPointerEventInfo['name'], screenPoint: GesturePoint) => {
@@ -308,6 +385,7 @@ export function useGestureRuntime(
 
 		const cleanup = () => {
 			cancelNativeDrawSession('gesture runtime cleanup')
+			finishPanSession('gesture runtime cleanup')
 
 			if (animationFrameRef.current !== null) {
 				cancelAnimationFrame(animationFrameRef.current)
@@ -336,16 +414,23 @@ export function useGestureRuntime(
 			lastSeenHandAtRef.current = null
 			cursorStableHitsRef.current = 0
 			cursorStableMissesRef.current = 0
+			panStableHitsRef.current = 0
+			panStableMissesRef.current = 0
 			drawStableHitsRef.current = 0
 			drawStableMissesRef.current = 0
 			rawGestureIdRef.current = null
 			stableCursorActiveRef.current = false
+			stablePanActiveRef.current = false
 			stableDrawActiveRef.current = false
 			nativeDrawSessionActiveRef.current = false
 			trackingStateRef.current = 'no-hand'
 			labelWarningRef.current = null
+			panLifecycleStateRef.current = 'idle'
 			drawLifecycleStateRef.current = 'idle'
 			strokeStateRef.current = 'idle'
+			lastPanAnchorPointRef.current = null
+			lastPanDeltaRef.current = null
+			lastPanEventRef.current = null
 			previousToolIdRef.current = null
 			lastDispatchedEventRef.current = null
 			lastDispatchScreenPointRef.current = null
@@ -501,9 +586,21 @@ export function useGestureRuntime(
 						trackingStateRef.current = 'lost'
 						cursorStableHitsRef.current = 0
 						cursorStableMissesRef.current = 0
+						panStableHitsRef.current = 0
+						panStableMissesRef.current = 0
 						drawStableHitsRef.current = 0
 						drawStableMissesRef.current = 0
 						stableCursorActiveRef.current = false
+
+						if (stablePanActiveRef.current) {
+							stablePanActiveRef.current = false
+							panLifecycleStateRef.current = 'panEnding'
+							finishPanSession('tracking lost during pan')
+							gestureLog('pan', 'Tracking lost during pan', undefined, {
+								debugMode: GESTURE_DEBUG_MODE,
+								level: 'warn',
+							})
+						}
 
 						if (
 							stableDrawActiveRef.current &&
@@ -526,6 +623,12 @@ export function useGestureRuntime(
 							rawConfidence: null,
 							stableGestureId: null,
 							stableGestureLabel: null,
+							rawPanGestureActive: false,
+							stablePanGestureActive: stablePanActiveRef.current,
+							panLifecycleState: panLifecycleStateRef.current,
+							lastPanAnchorPoint: lastPanAnchorPointRef.current,
+							lastPanDelta: lastPanDeltaRef.current,
+							lastPanEvent: lastPanEventRef.current,
 							rawDrawGestureActive: false,
 							stableDrawGestureActive: stableDrawActiveRef.current,
 							drawLifecycleState: drawLifecycleStateRef.current,
@@ -611,6 +714,9 @@ export function useGestureRuntime(
 					const cursorGestureActive =
 						rawGestureId === CURSOR_GESTURE_ID &&
 						rawConfidence >= GESTURE_THRESHOLDS.cursorConfidence
+					const panGestureActive =
+						rawGestureId === PAN_GESTURE_ID &&
+						rawConfidence >= GESTURE_THRESHOLDS.panConfidence
 					const drawGestureActive =
 						rawGestureId === DRAW_GESTURE_ID &&
 						rawConfidence >= GESTURE_THRESHOLDS.drawConfidence
@@ -621,6 +727,14 @@ export function useGestureRuntime(
 					} else {
 						cursorStableHitsRef.current = 0
 						cursorStableMissesRef.current += 1
+					}
+
+					if (panGestureActive) {
+						panStableHitsRef.current += 1
+						panStableMissesRef.current = 0
+					} else {
+						panStableHitsRef.current = 0
+						panStableMissesRef.current += 1
 					}
 
 					if (drawGestureActive) {
@@ -652,7 +766,32 @@ export function useGestureRuntime(
 						})
 					}
 
+					if (!stablePanActiveRef.current &&
+						!stableDrawActiveRef.current &&
+						panStableHitsRef.current >= GESTURE_THRESHOLDS.panStableFrames
+					) {
+						stablePanActiveRef.current = true
+						panLifecycleStateRef.current = 'panArming'
+						lastPanEventRef.current = 'pan stable entered'
+						gestureLog(
+							'pan',
+							'Pan gesture became stable',
+							{ rawConfidence, panGestureId: PAN_GESTURE_ID },
+							{ debugMode: GESTURE_DEBUG_MODE }
+						)
+					}
+
+					if (stablePanActiveRef.current &&
+						panStableMissesRef.current >= GESTURE_THRESHOLDS.panMissFrames
+					) {
+						stablePanActiveRef.current = false
+						panLifecycleStateRef.current = 'panEnding'
+						lastPanEventRef.current = 'pan stable exited'
+						finishPanSession('pan gesture released')
+					}
+
 					if (!stableDrawActiveRef.current &&
+						!stablePanActiveRef.current &&
 						drawStableHitsRef.current >= GESTURE_THRESHOLDS.drawStableFrames
 					) {
 						stableDrawActiveRef.current = true
@@ -680,9 +819,11 @@ export function useGestureRuntime(
 
 					const stableGestureId = stableDrawActiveRef.current
 						? DRAW_GESTURE_ID
-						: stableCursorActiveRef.current
-							? CURSOR_GESTURE_ID
-							: null
+						: stablePanActiveRef.current
+							? PAN_GESTURE_ID
+							: stableCursorActiveRef.current
+								? CURSOR_GESTURE_ID
+								: null
 					const stableGestureLabel =
 						stableGestureId !== null
 							? labelsRef.current[stableGestureId] ?? `Gesture ${stableGestureId}`
@@ -698,7 +839,8 @@ export function useGestureRuntime(
 						  )
 						: null
 
-					const pointerActive = stableCursorActiveRef.current || stableDrawActiveRef.current
+					const pointerActive =
+						stableCursorActiveRef.current || stablePanActiveRef.current || stableDrawActiveRef.current
 					const nextCursorPoint =
 						rawCanvasPoint && pointerActive
 							? smoothPoint(
@@ -710,6 +852,14 @@ export function useGestureRuntime(
 
 					if (pointerActive && nextCursorPoint) {
 						cursorRef.current = nextCursorPoint
+					}
+
+					if (stablePanActiveRef.current && nextCursorPoint) {
+						if (panLifecycleStateRef.current !== 'panning') {
+							startPanSession(nextCursorPoint)
+						} else {
+							updatePanSession(nextCursorPoint)
+						}
 					}
 
 					if (stableDrawActiveRef.current && nextCursorPoint) {
@@ -731,6 +881,12 @@ export function useGestureRuntime(
 						rawConfidence,
 						stableGestureId,
 						stableGestureLabel,
+						rawPanGestureActive: rawGestureId === PAN_GESTURE_ID,
+						stablePanGestureActive: stablePanActiveRef.current,
+						panLifecycleState: panLifecycleStateRef.current,
+						lastPanAnchorPoint: lastPanAnchorPointRef.current,
+						lastPanDelta: lastPanDeltaRef.current,
+						lastPanEvent: lastPanEventRef.current,
 						rawDrawGestureActive: rawGestureId === DRAW_GESTURE_ID,
 						stableDrawGestureActive: stableDrawActiveRef.current,
 						drawLifecycleState: drawLifecycleStateRef.current,

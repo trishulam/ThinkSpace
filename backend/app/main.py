@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import warnings
+from contextlib import suppress
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,6 +31,9 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Avoid verbose websocket transport logs leaking sensitive headers like API keys.
+logging.getLogger("websockets.client").setLevel(logging.INFO)
 
 # Suppress Pydantic serialization warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -173,10 +177,23 @@ async def websocket_endpoint(
         while True:
             # Receive message from WebSocket (text or binary)
             message = await websocket.receive()
+            message_type = message.get("type")
+
+            if message_type == "websocket.disconnect":
+                logger.debug(
+                    "Client disconnected: code=%s reason=%s",
+                    message.get("code"),
+                    message.get("reason", ""),
+                )
+                return
+
+            if message_type != "websocket.receive":
+                logger.debug(f"Ignoring WebSocket message type: {message_type}")
+                continue
 
             # Handle binary frames (audio data)
-            if "bytes" in message:
-                audio_data = message["bytes"]
+            audio_data = message.get("bytes")
+            if audio_data is not None:
                 logger.debug(f"Received binary audio chunk: {len(audio_data)} bytes")
 
                 audio_blob = types.Blob(
@@ -185,8 +202,10 @@ async def websocket_endpoint(
                 live_request_queue.send_realtime(audio_blob)
 
             # Handle text frames (JSON messages)
-            elif "text" in message:
-                text_data = message["text"]
+            else:
+                text_data = message.get("text")
+                if text_data is None:
+                    continue
                 logger.debug(f"Received text message: {text_data[:100]}...")
 
                 json_message = json.loads(text_data)
@@ -234,10 +253,20 @@ async def websocket_endpoint(
 
     # Run both tasks concurrently
     # Exceptions from either task will propagate and cancel the other task
+    upstream = asyncio.create_task(upstream_task(), name="websocket-upstream")
+    downstream = asyncio.create_task(downstream_task(), name="websocket-downstream")
+
     try:
         logger.debug("Starting asyncio.gather for upstream and downstream tasks")
-        await asyncio.gather(upstream_task(), downstream_task())
-        logger.debug("asyncio.gather completed normally")
+        done, _ = await asyncio.wait(
+            {upstream, downstream}, return_when=asyncio.FIRST_COMPLETED
+        )
+        logger.debug("One websocket task completed, beginning shutdown")
+
+        for task in done:
+            exc = task.exception()
+            if exc:
+                raise exc
     except WebSocketDisconnect:
         logger.debug("Client disconnected normally")
     except Exception as e:
@@ -250,3 +279,11 @@ async def websocket_endpoint(
         # Always close the queue, even if exceptions occurred
         logger.debug("Closing live_request_queue")
         live_request_queue.close()
+
+        for task in (upstream, downstream):
+            if not task.done():
+                task.cancel()
+
+        for task in (upstream, downstream):
+            with suppress(asyncio.CancelledError):
+                await task
