@@ -26,6 +26,8 @@ dist/
 build/
 .next/
 out/
+!/frontend/public/vendor/tfjs-tflite/dist/
+!/frontend/public/vendor/tfjs-tflite/dist/**
 
 # Vite
 *.local
