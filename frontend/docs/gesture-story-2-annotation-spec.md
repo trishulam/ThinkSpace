@@ -19,10 +19,11 @@ Known follow-up:
 
 - the label CSV still does not fully match classifier output count
 - native draw feel still needs tuning to better match normal mouse drawing thickness and behavior
+- Story 3 pan is now complete, though its motion model may still be refined from hand-following into a more anchored grab-and-pull interaction
 
 Recommended next step:
 
-- Story 3 should focus on viewport pan only, while keeping the native draw path stable and tuning draw feel separately from new navigation gestures
+- Story 4 should focus on simple zoom, while keeping the native draw path stable and deciding whether pan remains hand-following or becomes anchored grab-and-pull
 
 ## Story Summary
 

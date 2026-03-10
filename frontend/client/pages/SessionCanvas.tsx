@@ -26,6 +26,7 @@ import { TargetAreaTool } from "../tools/TargetAreaTool";
 import { TargetShapeTool } from "../tools/TargetShapeTool";
 import { DynamicIsland } from "../components/DynamicIsland";
 import { AgentSidebar } from "../components/AgentSidebar";
+import { AgentSubtitleOverlay } from "../components/AgentSubtitleOverlay";
 import { GestureHost } from "../gesture/components/GestureHost";
 import { GestureLogEntry, GestureRuntimeState } from "../gesture/types";
 import { subscribeGestureLogs } from "../gesture/utils/logger";
@@ -148,9 +149,38 @@ export const SessionCanvas: React.FC = () => {
     setGestureLogs([]);
   }, []);
 
+  const handleExportGestureTrace = useCallback(() => {
+    const sanitizedState = gestureState
+      ? {
+          ...gestureState,
+          stream: gestureState.stream ? "[MediaStream omitted]" : null,
+        }
+      : null;
+
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      routeSessionId: sessionId,
+      gestureState: sanitizedState,
+      gestureLogs: gestureLogs.map((entry) => ({
+        ...entry,
+        timestamp: entry.timestamp.toISOString(),
+      })),
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `gesture-trace-${Date.now()}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [gestureLogs, gestureState, sessionId]);
+
   React.useEffect(() => {
     return subscribeGestureLogs((entry) => {
-      setGestureLogs((previous) => [...previous.slice(-149), entry]);
+      setGestureLogs((previous) => [...previous.slice(-399), entry]);
     });
   }, []);
 
@@ -202,6 +232,7 @@ export const SessionCanvas: React.FC = () => {
                 onUnmount={handleUnmount}
               />
             </Tldraw>
+            <AgentSubtitleOverlay subtitle={ws.agentSubtitle} />
           </div>
           {/* ChatPanel replaced by live agent sidebar */}
           {/* <ErrorBoundary fallback={ChatPanelFallback}>
@@ -227,6 +258,7 @@ export const SessionCanvas: React.FC = () => {
             onClearLog={ws.clearLog}
             onClearGestureLogs={handleClearGestureLogs}
             onToggleGestures={handleToggleGestures}
+            onExportGestureTrace={handleExportGestureTrace}
           />
         </div>
       </TldrawUiToastsProvider>

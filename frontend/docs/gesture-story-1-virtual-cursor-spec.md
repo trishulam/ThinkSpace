@@ -19,10 +19,11 @@ Known follow-up:
 
 - the label CSV currently does not fully match the classifier output count, so gesture naming needs one cleanup pass before expanding into more gesture stories
 - Story 2 native drawing works, but draw-feel tuning is still needed to better match normal mouse drawing
+- Story 3 pan is now complete, but its interaction model may still be refined from simple hand-following into a more anchored grab-and-pull feel
 
 Recommended next step:
 
-- Story 3 should focus on viewport pan only, reusing the existing virtual cursor, tracking, and native draw foundation already in place
+- Story 4 should focus on simple zoom, while label cleanup and draw-feel tuning continue as follow-up polish on the completed cursor, draw, and pan foundation
 
 ## Story Summary
 

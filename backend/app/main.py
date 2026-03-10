@@ -227,7 +227,9 @@ async def websocket_endpoint(
                     mime_type = json_message.get("mimeType", "image/jpeg")
 
                     logger.debug(
-                        f"Sending image: {len(image_data)} bytes, " f"type: {mime_type}"
+                        "Sending image: %s bytes, type: %s",
+                        len(image_data),
+                        mime_type,
                     )
 
                     # Send image as blob
@@ -238,7 +240,9 @@ async def websocket_endpoint(
         """Receives Events from run_live() and sends to WebSocket."""
         logger.debug("downstream_task started, calling runner.run_live()")
         logger.debug(
-            f"Starting run_live with user_id={user_id}, " f"session_id={session_id}"
+            "Starting run_live with user_id=%s, session_id=%s",
+            user_id,
+            session_id,
         )
         async for event in runner.run_live(
             user_id=user_id,

@@ -5,7 +5,10 @@ export type CameraState = 'idle' | 'requesting' | 'ready' | 'denied' | 'error'
 export type TrackingState = 'no-hand' | 'tracking' | 'lost'
 export type ModelState = 'uninitialized' | 'loading' | 'ready' | 'error'
 export type CursorVisibility = 'hidden' | 'visible' | 'frozen'
+export type GestureInteractionMode = 'idle' | 'cursor' | 'zoom' | 'pan' | 'draw'
+export type CursorLockReason = 'none' | 'tracking-loss' | 'zoom-anchor'
 export type DrawLifecycleState = 'idle' | 'drawArming' | 'drawing' | 'drawEnding'
+export type ZoomLifecycleState = 'idle' | 'zoomArming' | 'zooming' | 'zoomEnding'
 export type PanLifecycleState = 'idle' | 'panArming' | 'panning' | 'panEnding'
 export type StrokeState =
 	| 'idle'
@@ -59,10 +62,21 @@ export interface GestureRuntimeState extends GesturePredictionState {
 	trackingState: TrackingState
 	modelState: ModelState
 	cursorVisibility: CursorVisibility
+	interactionMode: GestureInteractionMode
+	cursorLockReason: CursorLockReason
 	handPresent: boolean
 	videoSize: GestureVideoSize | null
 	rawCursorPoint: GesturePoint | null
 	cursorPoint: GesturePoint | null
+	rawZoomGestureActive: boolean
+	stableZoomGestureActive: boolean
+	zoomLifecycleState: ZoomLifecycleState
+	lastZoomAnchorScreenPoint: GesturePoint | null
+	lastZoomAnchorPagePoint: GesturePoint | null
+	lastZoomControlPoint: GesturePoint | null
+	lastZoomDeltaY: number | null
+	lastZoomEvent: string | null
+	lastZoomLevel: number | null
 	rawPanGestureActive: boolean
 	stablePanGestureActive: boolean
 	panLifecycleState: PanLifecycleState
