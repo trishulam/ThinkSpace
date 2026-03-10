@@ -6,13 +6,13 @@ interface AgentSubtitleOverlayProps {
 }
 
 export function AgentSubtitleOverlay({ subtitle }: AgentSubtitleOverlayProps) {
-	const isActive = subtitle.isVisible && subtitle.text.trim().length > 0
-	const [visibleText, setVisibleText] = useState(subtitle.text)
+	const isActive = subtitle.isVisible && subtitle.revealedText.trim().length > 0
+	const [visibleText, setVisibleText] = useState(subtitle.revealedText)
 	const measureRef = useRef<HTMLDivElement | null>(null)
 	const tokenRefs = useRef<Array<HTMLSpanElement | null>>([])
 	const tokens = useMemo(
-		() => subtitle.text.match(/\S+\s*|\s+/g) ?? [],
-		[subtitle.text]
+		() => subtitle.revealedText.match(/\S+\s*|\s+/g) ?? [],
+		[subtitle.revealedText]
 	)
 
 	const updateVisibleWindow = useCallback(() => {
@@ -23,7 +23,7 @@ export function AgentSubtitleOverlay({ subtitle }: AgentSubtitleOverlayProps) {
 
 		const spans = tokenRefs.current.filter(Boolean) as HTMLSpanElement[]
 		if (spans.length === 0) {
-			setVisibleText(subtitle.text)
+			setVisibleText(subtitle.revealedText)
 			return
 		}
 
@@ -49,12 +49,12 @@ export function AgentSubtitleOverlay({ subtitle }: AgentSubtitleOverlayProps) {
 			.map((line) => line.replace(/\s+$/g, ''))
 			.filter((line) => line.length > 0)
 		const nextText =
-			normalizedLines.length <= 2
+			normalizedLines.length <= 4
 				? normalizedLines.join('\n')
-				: normalizedLines.slice(-2).join('\n')
+				: normalizedLines.slice(-4).join('\n')
 
-		setVisibleText(nextText || subtitle.text)
-	}, [isActive, subtitle.text])
+		setVisibleText(nextText || subtitle.revealedText)
+	}, [isActive, subtitle.revealedText])
 
 	useLayoutEffect(() => {
 		updateVisibleWindow()
@@ -90,7 +90,7 @@ export function AgentSubtitleOverlay({ subtitle }: AgentSubtitleOverlayProps) {
 			{isActive ? (
 				<div
 					ref={measureRef}
-					className="agent-subtitle-chip agent-subtitle-chip--measure"
+					className="agent-subtitle-chip agent-subtitle-measure"
 					aria-hidden="true"
 				>
 					{tokens.map((token, index) => (

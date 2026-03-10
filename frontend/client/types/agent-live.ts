@@ -23,9 +23,12 @@ export interface AgentLogEntry {
 }
 
 export interface AgentSubtitleState {
-	text: string
+	receivedText: string
+	revealedText: string
 	isVisible: boolean
 	isPartial: boolean
+	isFinal: boolean
+	isCatchingUp: boolean
 	status: AgentSubtitleStatus
 	updatedAt: number | null
 }

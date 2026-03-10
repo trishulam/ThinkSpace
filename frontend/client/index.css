@@ -74,9 +74,10 @@ body {
 
 .agent-subtitle-chip {
 	max-width: min(720px, 78vw);
+	max-height: min(38vh, 320px);
 	padding: 12px 18px;
 	border-radius: 18px;
-	background: rgba(10, 12, 18, 0.8);
+	background: rgba(10, 12, 18, 0.62);
 	border: 1px solid rgba(255, 255, 255, 0.08);
 	box-shadow:
 		0 18px 40px rgba(0, 0, 0, 0.28),
@@ -88,7 +89,18 @@ body {
 	line-height: 1.35;
 	letter-spacing: 0.01em;
 	white-space: pre-line;
+	word-break: break-word;
+	overflow: hidden;
 	backdrop-filter: blur(16px);
+}
+
+.agent-subtitle-measure {
+	position: fixed;
+	left: -99999px;
+	top: 0;
+	opacity: 0;
+	pointer-events: none;
+	z-index: -1;
 }
 
 .agent-subtitle-chip.partial {
@@ -97,17 +109,7 @@ body {
 
 .agent-subtitle-chip.status-complete,
 .agent-subtitle-chip.status-interrupted {
-	background: rgba(10, 12, 18, 0.74);
-}
-
-.agent-subtitle-chip--measure {
-	position: absolute;
-	top: 0;
-	left: 50%;
-	visibility: hidden;
-	transform: translateX(-50%);
-	pointer-events: none;
-	white-space: normal;
+	background: rgba(10, 12, 18, 0.56);
 }
 
 @media (max-width: 768px) {
@@ -119,6 +121,7 @@ body {
 
 	.agent-subtitle-chip {
 		max-width: 100%;
+		max-height: min(34vh, 220px);
 		padding: 10px 14px;
 		font-size: 17px;
 		border-radius: 16px;

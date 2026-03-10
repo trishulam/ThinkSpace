@@ -21,11 +21,16 @@ interface UseAgentWebSocketOptions {
 const NORMAL_SUBTITLE_LINGER_MS = 1600
 const INTERRUPTED_FINAL_LINGER_MS = 500
 const INTERRUPTED_PARTIAL_LINGER_MS = 120
+const BASE_REVEAL_CPS = 15
+const REVEAL_TICK_MS = 50
 
 const EMPTY_SUBTITLE: AgentSubtitleState = {
-	text: '',
+	receivedText: '',
+	revealedText: '',
 	isVisible: false,
 	isPartial: false,
+	isFinal: false,
+	isCatchingUp: false,
 	status: 'idle',
 	updatedAt: null,
 }
@@ -45,9 +50,13 @@ export function useAgentWebSocket({
 	const intentionalDisconnectRef = useRef(false)
 	const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const subtitleTextRef = useRef('')
+	const subtitleRevealLoopRef = useRef<ReturnType<typeof setInterval> | null>(null)
+	const subtitleReceivedTextRef = useRef('')
+	const subtitleRevealedLengthRef = useRef(0)
+	const subtitleRevealCarryRef = useRef(0)
 	const hasOutputTranscriptionRef = useRef(false)
 	const hasFinalSubtitleRef = useRef(false)
+	const pendingTurnCompleteRef = useRef(false)
 
 	// Stable refs for callbacks so the WS handler always sees the latest
 	const onPlayAudioRef = useRef(onPlayAudio)
@@ -81,56 +90,133 @@ export function useAgentWebSocket({
 		}
 	}, [])
 
+	const clearRevealLoop = useCallback(() => {
+		if (subtitleRevealLoopRef.current) {
+			clearInterval(subtitleRevealLoopRef.current)
+			subtitleRevealLoopRef.current = null
+		}
+	}, [])
+
 	const resetSubtitle = useCallback(() => {
 		clearSubtitleTimer()
-		subtitleTextRef.current = ''
+		clearRevealLoop()
+		subtitleReceivedTextRef.current = ''
+		subtitleRevealedLengthRef.current = 0
+		subtitleRevealCarryRef.current = 0
 		hasOutputTranscriptionRef.current = false
 		hasFinalSubtitleRef.current = false
+		pendingTurnCompleteRef.current = false
 		setAgentSubtitle(EMPTY_SUBTITLE)
-	}, [clearSubtitleTimer])
+	}, [clearRevealLoop, clearSubtitleTimer])
 
 	const scheduleSubtitleClear = useCallback(
 		(status: AgentSubtitleState['status'], delayMs: number) => {
 			clearSubtitleTimer()
+			clearRevealLoop()
 			setAgentSubtitle((current) => {
-				if (!current.text) return EMPTY_SUBTITLE
+				if (!current.revealedText) return EMPTY_SUBTITLE
 				return {
 					...current,
 					status,
 					isPartial: false,
 					isVisible: true,
+					isCatchingUp: false,
 					updatedAt: Date.now(),
 				}
 			})
-			subtitleTextRef.current = ''
 			subtitleTimerRef.current = setTimeout(() => {
-				subtitleTextRef.current = ''
+				subtitleReceivedTextRef.current = ''
+				subtitleRevealedLengthRef.current = 0
+				subtitleRevealCarryRef.current = 0
+				pendingTurnCompleteRef.current = false
 				setAgentSubtitle(EMPTY_SUBTITLE)
 			}, delayMs)
 			hasOutputTranscriptionRef.current = false
 			hasFinalSubtitleRef.current = false
 		},
-		[clearSubtitleTimer]
+		[clearRevealLoop, clearSubtitleTimer]
 	)
+
+	const startRevealLoop = useCallback(() => {
+		if (subtitleRevealLoopRef.current) return
+
+		subtitleRevealLoopRef.current = setInterval(() => {
+			const receivedText = subtitleReceivedTextRef.current
+			const revealedLength = subtitleRevealedLengthRef.current
+			const backlog = receivedText.length - revealedLength
+
+			if (backlog <= 0) {
+				subtitleRevealCarryRef.current = 0
+				setAgentSubtitle((current) => {
+					if (!current.isCatchingUp) return current
+					return {
+						...current,
+						isCatchingUp: false,
+						updatedAt: Date.now(),
+					}
+				})
+
+				if (pendingTurnCompleteRef.current) {
+					pendingTurnCompleteRef.current = false
+					scheduleSubtitleClear('complete', NORMAL_SUBTITLE_LINGER_MS)
+				} else {
+					clearRevealLoop()
+				}
+				return
+			}
+
+			const revealAmount =
+				BASE_REVEAL_CPS * (REVEAL_TICK_MS / 1000) + subtitleRevealCarryRef.current
+			const wholeChars = Math.max(1, Math.floor(revealAmount))
+			subtitleRevealCarryRef.current = revealAmount - wholeChars
+
+			const nextRevealedLength = Math.min(receivedText.length, revealedLength + wholeChars)
+			subtitleRevealedLengthRef.current = nextRevealedLength
+			const revealedText = receivedText.slice(0, nextRevealedLength)
+			const nextBacklog = receivedText.length - nextRevealedLength
+
+			setAgentSubtitle((current) => ({
+				...current,
+				revealedText,
+				isVisible: revealedText.trim().length > 0,
+				isCatchingUp: nextBacklog > 0,
+				updatedAt: Date.now(),
+			}))
+
+			if (nextBacklog === 0 && pendingTurnCompleteRef.current) {
+				pendingTurnCompleteRef.current = false
+				scheduleSubtitleClear('complete', NORMAL_SUBTITLE_LINGER_MS)
+			}
+		}, REVEAL_TICK_MS)
+	}, [clearRevealLoop, scheduleSubtitleClear])
 
 	const updateSubtitleFromOutput = useCallback(
 		(textChunk: string, isFinal: boolean) => {
 			clearSubtitleTimer()
+			startRevealLoop()
 			hasOutputTranscriptionRef.current = true
+			pendingTurnCompleteRef.current = false
 
-			const nextText = isFinal ? textChunk : `${subtitleTextRef.current}${textChunk}`
-			subtitleTextRef.current = nextText
+			const nextText = isFinal
+				? textChunk
+				: `${subtitleReceivedTextRef.current}${textChunk}`
+			subtitleReceivedTextRef.current = nextText
 			hasFinalSubtitleRef.current = isFinal
 
-			setAgentSubtitle({
-				text: nextText,
-				isVisible: true,
+			setAgentSubtitle((current) => ({
+				...current,
+				receivedText: nextText,
+				isVisible: current.revealedText.trim().length > 0,
 				isPartial: !isFinal,
+				isFinal,
+				isCatchingUp:
+					subtitleRevealedLengthRef.current < nextText.length ||
+					current.isCatchingUp,
 				status: 'active',
 				updatedAt: Date.now(),
-			})
+			}))
 		},
-		[clearSubtitleTimer]
+		[clearSubtitleTimer, startRevealLoop]
 	)
 
 	const updateSubtitleFromTextFallback = useCallback(
@@ -138,29 +224,39 @@ export function useAgentWebSocket({
 			if (hasOutputTranscriptionRef.current) return
 
 			clearSubtitleTimer()
-			const nextText = isPartial ? `${subtitleTextRef.current}${textChunk}` : textChunk
-			subtitleTextRef.current = nextText
+			startRevealLoop()
+			pendingTurnCompleteRef.current = false
+			const nextText = isPartial
+				? `${subtitleReceivedTextRef.current}${textChunk}`
+				: textChunk
+			subtitleReceivedTextRef.current = nextText
 			hasFinalSubtitleRef.current = !isPartial
 
-			setAgentSubtitle({
-				text: nextText,
-				isVisible: true,
+			setAgentSubtitle((current) => ({
+				...current,
+				receivedText: nextText,
+				isVisible: current.revealedText.trim().length > 0,
 				isPartial,
+				isFinal: !isPartial,
+				isCatchingUp:
+					subtitleRevealedLengthRef.current < nextText.length ||
+					current.isCatchingUp,
 				status: 'active',
 				updatedAt: Date.now(),
-			})
+			}))
 		},
-		[clearSubtitleTimer]
+		[clearSubtitleTimer, startRevealLoop]
 	)
 
 	useEffect(() => {
 		return () => {
 			clearSubtitleTimer()
+			clearRevealLoop()
 			if (reconnectTimerRef.current) {
 				clearTimeout(reconnectTimerRef.current)
 			}
 		}
-	}, [clearSubtitleTimer])
+	}, [clearRevealLoop, clearSubtitleTimer])
 
 	const connect = useCallback(() => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
@@ -191,7 +287,21 @@ export function useAgentWebSocket({
 			// --- turnComplete ---
 			if (adkEvent.turnComplete === true) {
 				setTalkingState('none')
-				scheduleSubtitleClear('complete', NORMAL_SUBTITLE_LINGER_MS)
+				if (
+					subtitleReceivedTextRef.current &&
+					subtitleRevealedLengthRef.current < subtitleReceivedTextRef.current.length
+				) {
+					pendingTurnCompleteRef.current = true
+					setAgentSubtitle((current) => ({
+						...current,
+						isPartial: false,
+						isFinal: true,
+						status: 'active',
+						updatedAt: Date.now(),
+					}))
+				} else {
+					scheduleSubtitleClear('complete', NORMAL_SUBTITLE_LINGER_MS)
+				}
 				addLogEntry('system', 'Turn complete', adkEvent)
 				return
 			}
@@ -200,6 +310,7 @@ export function useAgentWebSocket({
 			if (adkEvent.interrupted === true) {
 				setTalkingState('none')
 				onStopPlaybackRef.current?.()
+				pendingTurnCompleteRef.current = false
 				scheduleSubtitleClear(
 					'interrupted',
 					hasFinalSubtitleRef.current
