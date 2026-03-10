@@ -212,6 +212,7 @@ export const SessionCanvas: React.FC = () => {
             )}
           </ErrorBoundary> */}
           <AgentSidebar
+            app={app}
             connectionState={ws.connectionState}
             eventLog={ws.eventLog}
             gestureState={gestureState}
