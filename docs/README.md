@@ -4,6 +4,23 @@ This directory contains shared architecture and product-design notes for the pro
 
 ## Docs
 
+- `agent-tool-catalog.md`
+  Living Story A1 source of truth for orchestrator-facing tool families. This
+  is where locked tool-family decisions should be recorded as the catalog
+  evolves.
+
+- `tool-result-contract.md`
+  Living Story Group B reference for the common backend tool result envelope,
+  lifecycle semantics, and v1 contract boundaries.
+
+- `frontend-action-contract.md`
+  Living Story Group C reference for the shared frontend action envelope,
+  locked v1 action types, and current action-contract boundaries.
+
+- `flashcards-end-to-end-scratchpad.md`
+  Working scratchpad for Story Group D. Use this as the tactical thinking pad
+  for sequencing flashcard implementation across frontend and backend.
+
 - `implementation-stories.md`
   Ordered implementation story plan with dependencies, tasks, execution notes, and a two-day coding sequence for building the full proactive tutor system.
 

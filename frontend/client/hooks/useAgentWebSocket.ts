@@ -3,6 +3,10 @@ import type {
 	AgentLogEntry,
 	AgentSubtitleState,
 	ConnectionState,
+	FrontendAck,
+	FrontendAction,
+	FrontendActionMessage,
+	ToolResultMessage,
 	TalkingState,
 } from '../types/agent-live'
 
@@ -72,6 +76,26 @@ const EMPTY_SUBTITLE: AgentSubtitleState = {
 	updatedAt: null,
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null
+}
+
+function isFrontendActionMessage(value: unknown): value is FrontendActionMessage {
+	if (!isRecord(value) || value.type !== 'frontend_action') return false
+	if (!isRecord(value.action)) return false
+	if (typeof value.action.type !== 'string') return false
+	if (typeof value.action.source_tool !== 'string') return false
+	return 'payload' in value.action
+}
+
+function isToolResultMessage(value: unknown): value is ToolResultMessage {
+	if (!isRecord(value) || value.type !== 'tool_result') return false
+	if (!isRecord(value.result)) return false
+	if (typeof value.result.status !== 'string') return false
+	if (typeof value.result.tool !== 'string') return false
+	return true
+}
+
 export function useAgentWebSocket({
 	userId,
 	sessionId,
@@ -83,6 +107,7 @@ export function useAgentWebSocket({
 	const [talkingState, setTalkingState] = useState<TalkingState>('none')
 	const [eventLog, setEventLog] = useState<AgentLogEntry[]>([])
 	const [agentSubtitle, setAgentSubtitle] = useState<AgentSubtitleState>(EMPTY_SUBTITLE)
+	const [frontendActions, setFrontendActions] = useState<FrontendAction[]>([])
 
 	const wsRef = useRef<WebSocket | null>(null)
 	const intentionalDisconnectRef = useRef(false)
@@ -96,7 +121,6 @@ export function useAgentWebSocket({
 	const subtitleAudioDurationMsRef = useRef(0)
 	const currentRevealCpsRef = useRef(BASE_REVEAL_CPS)
 	const targetRevealCpsRef = useRef(BASE_REVEAL_CPS)
-	const hasOutputTranscriptionRef = useRef(false)
 	const hasFinalSubtitleRef = useRef(false)
 	const pendingTurnCompleteRef = useRef(false)
 
@@ -124,6 +148,14 @@ export function useAgentWebSocket({
 	const clearLog = useCallback(() => {
 		setEventLog([])
 		hasAppliedInitialLogRef.current = false
+	}, [])
+
+	const clearFrontendActions = useCallback(() => {
+		setFrontendActions([])
+	}, [])
+
+	const shiftFrontendAction = useCallback(() => {
+		setFrontendActions((prev) => (prev.length > 0 ? prev.slice(1) : prev))
 	}, [])
 
 	// Restore persisted transcript when initialEventLog becomes available (e.g. from session resume)
@@ -161,7 +193,6 @@ export function useAgentWebSocket({
 		subtitleAudioDurationMsRef.current = 0
 		currentRevealCpsRef.current = BASE_REVEAL_CPS
 		targetRevealCpsRef.current = BASE_REVEAL_CPS
-		hasOutputTranscriptionRef.current = false
 		hasFinalSubtitleRef.current = false
 		pendingTurnCompleteRef.current = false
 		setAgentSubtitle(EMPTY_SUBTITLE)
@@ -192,7 +223,6 @@ export function useAgentWebSocket({
 				pendingTurnCompleteRef.current = false
 				setAgentSubtitle(EMPTY_SUBTITLE)
 			}, delayMs)
-			hasOutputTranscriptionRef.current = false
 			hasFinalSubtitleRef.current = false
 		},
 		[clearRevealLoop, clearSubtitleTimer]
@@ -279,7 +309,6 @@ export function useAgentWebSocket({
 		(textChunk: string, isFinal: boolean) => {
 			clearSubtitleTimer()
 			startRevealLoop()
-			hasOutputTranscriptionRef.current = true
 			pendingTurnCompleteRef.current = false
 
 			const nextText = isFinal
@@ -295,36 +324,6 @@ export function useAgentWebSocket({
 				isVisible: current.revealedText.trim().length > 0,
 				isPartial: !isFinal,
 				isFinal,
-				isCatchingUp:
-					subtitleRevealedLengthRef.current < nextText.length ||
-					current.isCatchingUp,
-				status: 'active',
-				updatedAt: Date.now(),
-			}))
-		},
-		[clearSubtitleTimer, startRevealLoop, updateTargetRevealCps]
-	)
-
-	const updateSubtitleFromTextFallback = useCallback(
-		(textChunk: string, isPartial: boolean) => {
-			if (hasOutputTranscriptionRef.current) return
-
-			clearSubtitleTimer()
-			startRevealLoop()
-			pendingTurnCompleteRef.current = false
-			const nextText = isPartial
-				? `${subtitleReceivedTextRef.current}${textChunk}`
-				: textChunk
-			subtitleReceivedTextRef.current = nextText
-			hasFinalSubtitleRef.current = !isPartial
-			updateTargetRevealCps()
-
-			setAgentSubtitle((current) => ({
-				...current,
-				receivedText: nextText,
-				isVisible: current.revealedText.trim().length > 0,
-				isPartial,
-				isFinal: !isPartial,
 				isCatchingUp:
 					subtitleRevealedLengthRef.current < nextText.length ||
 					current.isCatchingUp,
@@ -364,12 +363,35 @@ export function useAgentWebSocket({
 		ws.onopen = () => {
 			setConnectionState('connected')
 			setTalkingState('none')
+			setFrontendActions([])
 			addLogEntry('system', 'Connected to agent', { userId, sessionId, url: wsUrl })
 		}
 
 		ws.onmessage = (event: MessageEvent) => {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const adkEvent: any = JSON.parse(event.data)
+			const parsedMessage: any = JSON.parse(event.data)
+
+			if (isFrontendActionMessage(parsedMessage)) {
+				setFrontendActions((prev) => [...prev, parsedMessage.action])
+				addLogEntry(
+					'system',
+					`Frontend action: ${parsedMessage.action.type}`,
+					parsedMessage
+				)
+				return
+			}
+
+			if (isToolResultMessage(parsedMessage)) {
+				const summary = parsedMessage.result.summary || parsedMessage.result.tool
+				addLogEntry(
+					'tool-result',
+					`${parsedMessage.result.status}: ${summary}`,
+					parsedMessage
+				)
+				return
+			}
+
+			const adkEvent = parsedMessage
 
 			// --- turnComplete ---
 			if (adkEvent.turnComplete === true) {
@@ -450,14 +472,6 @@ export function useAgentWebSocket({
 
 			// --- content.parts ---
 			if (adkEvent.content?.parts) {
-				const textParts = adkEvent.content.parts
-					.filter((part: { text?: string; thought?: boolean }) => part.text && !part.thought)
-					.map((part: { text: string }) => part.text)
-					.join('')
-				if (textParts) {
-					updateSubtitleFromTextFallback(textParts, !!adkEvent.partial)
-				}
-
 				for (const part of adkEvent.content.parts) {
 					// Audio
 					if (part.inlineData) {
@@ -509,6 +523,7 @@ export function useAgentWebSocket({
 			wsRef.current = null
 			setConnectionState('idle')
 			setTalkingState('none')
+			setFrontendActions([])
 			resetSubtitle()
 
 			if (!intentionalDisconnectRef.current) {
@@ -532,7 +547,6 @@ export function useAgentWebSocket({
 		scheduleSubtitleClear,
 		updateTargetRevealCps,
 		updateSubtitleFromOutput,
-		updateSubtitleFromTextFallback,
 	])
 
 	const disconnect = useCallback(() => {
@@ -570,16 +584,30 @@ export function useAgentWebSocket({
 		}
 	}, [])
 
+	const sendFrontendAck = useCallback(
+		(ack: FrontendAck) => {
+			if (wsRef.current?.readyState !== WebSocket.OPEN) return
+			const payload = JSON.stringify({ type: 'frontend_ack', ack })
+			wsRef.current.send(payload)
+			addLogEntry('system', `Frontend ack: ${ack.action_type} (${ack.status})`, payload)
+		},
+		[addLogEntry]
+	)
+
 	return {
 		connectionState,
 		talkingState,
 		eventLog,
 		agentSubtitle,
+		frontendActions,
 		connect,
 		disconnect,
 		sendText,
 		sendImage,
 		sendAudioChunk,
+		sendFrontendAck,
 		clearLog,
+		clearFrontendActions,
+		shiftFrontendAction,
 	}
 }

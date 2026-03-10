@@ -39,6 +39,7 @@ Main responsibilities:
 - reveal subtitle text progressively
 - derive audio-informed pacing from output audio chunks
 - coordinate `turnComplete` and `interrupted`
+- keep captions speech-only, with no fallback from generic `content.parts[].text`
 
 ### `client/components/AgentSubtitleOverlay.tsx`
 
@@ -88,6 +89,12 @@ Important fields:
 - `turnComplete`
 - `interrupted`
 - `content.parts[].inlineData` for output PCM audio
+
+Caption policy:
+
+- subtitles are driven by `outputTranscription` only
+- generic assistant text in `content.parts[].text` is not caption-eligible
+- this avoids leaking tool narration or planning prose into the canvas captions
 
 ### What We Verified About `outputTranscription`
 

@@ -32,3 +32,55 @@ export interface AgentSubtitleState {
 	status: AgentSubtitleStatus
 	updatedAt: number | null
 }
+
+export type FrontendActionType =
+	| 'canvas.insert_visual'
+	| 'canvas.insert_widget'
+	| 'flashcards.begin'
+	| 'flashcards.show'
+	| 'flashcards.next'
+	| 'flashcards.reveal_answer'
+	| 'flashcards.clear'
+
+export interface FrontendAction {
+	type: FrontendActionType
+	source_tool: string
+	job_id?: string
+	payload: unknown
+}
+
+export interface FrontendActionMessage {
+	type: 'frontend_action'
+	action: FrontendAction
+}
+
+export interface ToolResultEnvelope {
+	status: 'accepted' | 'completed' | 'failed'
+	tool: string
+	summary?: string
+	job?: {
+		id: string
+	}
+	payload?: unknown
+	frontend_action?: FrontendAction
+}
+
+export interface ToolResultMessage {
+	type: 'tool_result'
+	result: ToolResultEnvelope
+}
+
+export type FrontendAckStatus = 'applied' | 'failed'
+
+export interface FrontendAck {
+	status: FrontendAckStatus
+	action_type: FrontendActionType
+	source_tool: string
+	job_id?: string
+	summary?: string
+}
+
+export interface FrontendAckMessage {
+	type: 'frontend_ack'
+	ack: FrontendAck
+}

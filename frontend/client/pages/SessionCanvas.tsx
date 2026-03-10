@@ -36,12 +36,23 @@ import { DynamicIsland } from "../components/DynamicIsland";
 import { AgentSidebar } from "../components/AgentSidebar";
 import { AgentSubtitleOverlay } from "../components/AgentSubtitleOverlay";
 import { SessionRestoreOverlay } from "../components/SessionRestoreOverlay";
+import { FlashcardPanel } from "../components/FlashcardPanel";
 import { GestureHost } from "../gesture/components/GestureHost";
 import { GestureLogEntry, GestureRuntimeState } from "../gesture/types";
 import { subscribeGestureLogs } from "../gesture/utils/logger";
+import {
+  EMPTY_FLASHCARD_STATE,
+  applyFlashcardAction,
+  type FlashcardState,
+} from "../flashcards";
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useAudioWorklets } from "../hooks/useAudioWorklets";
 import type { AgentLogEntry } from "../types/agent-live";
+import type {
+  ConnectionState,
+  FrontendAction,
+  TalkingState,
+} from "../types/agent-live";
 
 // Customize tldraw's styles to play to the agent's strengths
 DefaultSizeStyle.setDefaultValue("s");
@@ -98,6 +109,7 @@ const overrides: TLUiOverrides = {
 };
 
 export const SessionCanvas: React.FC = () => {
+  const FLASHCARD_BEGIN_VISIBLE_MS = 350;
   const { sessionId } = useParams<{ sessionId: string }>();
   const [app, setApp] = useState<TldrawAgentApp | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -114,6 +126,19 @@ export const SessionCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const hasLoadedRemoteSnapshotRef = useRef(false);
   const isSavingCheckpointRef = useRef(false);
+  const [flashcardState, setFlashcardState] =
+    useState<FlashcardState>(EMPTY_FLASHCARD_STATE);
+  const flashcardStateRef = useRef<FlashcardState>(EMPTY_FLASHCARD_STATE);
+  const flashcardActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const processedFlashcardActionKeyRef = useRef<string | null>(null);
+
+  // Temporary testing state for Dynamic Island
+  const [testConnState, setTestConnState] = useState<ConnectionState | null>(
+    null,
+  );
+  const [testTalkState, setTestTalkState] = useState<TalkingState | null>(null);
 
   const handleUnmount = useCallback(() => {
     setApp(null);
@@ -191,34 +216,50 @@ export const SessionCanvas: React.FC = () => {
     setGestureLogs([]);
   }, []);
 
-  const handleExportGestureTrace = useCallback(() => {
-    const sanitizedState = gestureState
-      ? {
-          ...gestureState,
-          stream: gestureState.stream ? "[MediaStream omitted]" : null,
+  const applyFrontendFlashcardState = useCallback(
+    (action: Parameters<typeof applyFlashcardAction>[1]) => {
+      const result = applyFlashcardAction(flashcardStateRef.current, action);
+      flashcardStateRef.current = result.nextState;
+      setFlashcardState(result.nextState);
+      return result;
+    },
+    [],
+  );
+
+  const handleFrontendFlashcardAction = useCallback(
+    (action: FrontendAction) => {
+      switch (action.type) {
+        case "flashcards.begin":
+        case "flashcards.show":
+        case "flashcards.next":
+        case "flashcards.reveal_answer":
+        case "flashcards.clear": {
+          const result = applyFrontendFlashcardState({
+            type: action.type,
+            jobId: action.job_id,
+            payload: action.payload,
+          });
+          ws.sendFrontendAck({
+            status: result.applied ? "applied" : "failed",
+            action_type: action.type,
+            source_tool: action.source_tool,
+            job_id: action.job_id,
+            summary: result.summary,
+          });
+          return;
         }
-      : null;
-
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      routeSessionId: sessionId,
-      gestureState: sanitizedState,
-      gestureLogs: gestureLogs.map((entry) => ({
-        ...entry,
-        timestamp: entry.timestamp.toISOString(),
-      })),
-    };
-
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `gesture-trace-${Date.now()}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, [gestureLogs, gestureState, sessionId]);
+        default:
+          ws.sendFrontendAck({
+            status: "failed",
+            action_type: action.type,
+            source_tool: action.source_tool,
+            job_id: action.job_id,
+            summary: `Unhandled frontend action: ${action.type}`,
+          });
+      }
+    },
+    [applyFrontendFlashcardState, ws],
+  );
 
   React.useEffect(() => {
     return subscribeGestureLogs((entry) => {
@@ -313,6 +354,70 @@ export const SessionCanvas: React.FC = () => {
     }
   }, [saveCheckpoint, ws.eventLog]);
 
+  React.useEffect(() => {
+    return () => {
+      if (flashcardActionTimerRef.current) {
+        clearTimeout(flashcardActionTimerRef.current);
+        flashcardActionTimerRef.current = null;
+      }
+      processedFlashcardActionKeyRef.current = null;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (ws.frontendActions.length === 0) {
+      return;
+    }
+
+    const nextAction = ws.frontendActions[0];
+    if (!nextAction) {
+      return;
+    }
+
+    const actionKey = [
+      nextAction.type,
+      nextAction.source_tool,
+      nextAction.job_id ?? "",
+    ].join(":");
+
+    if (processedFlashcardActionKeyRef.current === actionKey) {
+      return;
+    }
+
+    processedFlashcardActionKeyRef.current = actionKey;
+    handleFrontendFlashcardAction(nextAction);
+
+    if (flashcardActionTimerRef.current) {
+      clearTimeout(flashcardActionTimerRef.current);
+      flashcardActionTimerRef.current = null;
+    }
+
+    const delayMs =
+      nextAction.type === "flashcards.begin" ? FLASHCARD_BEGIN_VISIBLE_MS : 0;
+
+    const finalizeAction = () => {
+      processedFlashcardActionKeyRef.current = null;
+      ws.shiftFrontendAction();
+      flashcardActionTimerRef.current = null;
+    };
+
+    if (delayMs <= 0) {
+      finalizeAction();
+      return;
+    }
+
+    flashcardActionTimerRef.current = setTimeout(finalizeAction, delayMs);
+  }, [
+    handleFrontendFlashcardAction,
+    ws,
+    ws.frontendActions,
+    ws.shiftFrontendAction,
+  ]);
+
+  React.useEffect(() => {
+    flashcardStateRef.current = flashcardState;
+  }, [flashcardState]);
+
   // Custom components to visualize what the agent is doing
   const components: TLComponents = useMemo(() => {
     return {
@@ -368,6 +473,7 @@ export const SessionCanvas: React.FC = () => {
               />
             </Tldraw>
             <AgentSubtitleOverlay subtitle={ws.agentSubtitle} />
+            <FlashcardPanel state={flashcardState} />
           </div>
           {/* ChatPanel replaced by live agent sidebar */}
           {/* <ErrorBoundary fallback={ChatPanelFallback}>
@@ -393,7 +499,6 @@ export const SessionCanvas: React.FC = () => {
             onClearLog={ws.clearLog}
             onClearGestureLogs={handleClearGestureLogs}
             onToggleGestures={handleToggleGestures}
-            onExportGestureTrace={handleExportGestureTrace}
           />
         </div>
       </TldrawUiToastsProvider>
