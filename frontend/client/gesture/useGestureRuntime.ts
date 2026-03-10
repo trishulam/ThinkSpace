@@ -8,11 +8,14 @@ import {
 	GESTURE_DEBUG_MODE,
 	GESTURE_THRESHOLDS,
 	PAN_GESTURE_ID,
+	ZOOM_GESTURE_ID,
 } from './config'
 import { loadTfLiteRuntime } from './runtime/loadTfLiteRuntime'
 import { preprocessLandmarksForClassifier } from './runtime/preprocess'
 import {
+	CursorLockReason,
 	DrawLifecycleState,
+	GestureInteractionMode,
 	GesturePoint,
 	GestureRuntimeState,
 	GestureVideoSize,
@@ -20,8 +23,9 @@ import {
 	PanLifecycleState,
 	StrokeState,
 	TrackingState,
+	ZoomLifecycleState,
 } from './types'
-import { smoothPoint } from './utils/math'
+import { clamp, smoothPoint } from './utils/math'
 import { gestureLog } from './utils/logger'
 
 const INITIAL_STATE: GestureRuntimeState = {
@@ -34,6 +38,8 @@ const INITIAL_STATE: GestureRuntimeState = {
 	trackingState: 'no-hand',
 	modelState: 'uninitialized',
 	cursorVisibility: 'hidden',
+	interactionMode: 'idle',
+	cursorLockReason: 'none',
 	handPresent: false,
 	videoSize: null,
 	rawGestureId: null,
@@ -43,6 +49,15 @@ const INITIAL_STATE: GestureRuntimeState = {
 	stableGestureLabel: null,
 	rawCursorPoint: null,
 	cursorPoint: null,
+	rawZoomGestureActive: false,
+	stableZoomGestureActive: false,
+	zoomLifecycleState: 'idle',
+	lastZoomAnchorScreenPoint: null,
+	lastZoomAnchorPagePoint: null,
+	lastZoomControlPoint: null,
+	lastZoomDeltaY: null,
+	lastZoomEvent: null,
+	lastZoomLevel: null,
 	rawPanGestureActive: false,
 	stablePanGestureActive: false,
 	panLifecycleState: 'idle',
@@ -170,20 +185,33 @@ export function useGestureRuntime(
 	const lastSeenHandAtRef = useRef<number | null>(null)
 	const cursorStableHitsRef = useRef(0)
 	const cursorStableMissesRef = useRef(0)
+	const zoomStableHitsRef = useRef(0)
+	const zoomStableMissesRef = useRef(0)
 	const panStableHitsRef = useRef(0)
 	const panStableMissesRef = useRef(0)
 	const drawStableHitsRef = useRef(0)
 	const drawStableMissesRef = useRef(0)
 	const rawGestureIdRef = useRef<number | null>(null)
+	const rawZoomGestureActiveRef = useRef(false)
 	const stableCursorActiveRef = useRef(false)
+	const stableZoomActiveRef = useRef(false)
 	const stablePanActiveRef = useRef(false)
 	const stableDrawActiveRef = useRef(false)
 	const nativeDrawSessionActiveRef = useRef(false)
 	const trackingStateRef = useRef<TrackingState>('no-hand')
 	const labelWarningRef = useRef<string | null>(null)
+	const zoomLifecycleStateRef = useRef<ZoomLifecycleState>('idle')
 	const panLifecycleStateRef = useRef<PanLifecycleState>('idle')
 	const drawLifecycleStateRef = useRef<DrawLifecycleState>('idle')
 	const strokeStateRef = useRef<StrokeState>('idle')
+	const lastZoomAnchorScreenPointRef = useRef<GesturePoint | null>(null)
+	const lastZoomAnchorPagePointRef = useRef<GesturePoint | null>(null)
+	const lastZoomControlPointRef = useRef<GesturePoint | null>(null)
+	const lastZoomStartControlYRef = useRef<number | null>(null)
+	const lastZoomStartLevelRef = useRef<number | null>(null)
+	const lastZoomDeltaYRef = useRef<number | null>(null)
+	const lastZoomEventRef = useRef<string | null>(null)
+	const lastZoomLevelRef = useRef<number | null>(null)
 	const lastPanAnchorPointRef = useRef<GesturePoint | null>(null)
 	const lastPanDeltaRef = useRef<GesturePoint | null>(null)
 	const lastPanEventRef = useRef<string | null>(null)
@@ -196,6 +224,20 @@ export function useGestureRuntime(
 	const isSupported = useMemo(() => {
 		return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
 	}, [])
+
+	const getInteractionMode = (): GestureInteractionMode => {
+		if (stableDrawActiveRef.current) return 'draw'
+		if (stableZoomActiveRef.current) return 'zoom'
+		if (stablePanActiveRef.current) return 'pan'
+		if (stableCursorActiveRef.current) return 'cursor'
+		return 'idle'
+	}
+
+	const getCursorLockReason = (cursorFrozenForTrackingLoss: boolean): CursorLockReason => {
+		if (stableZoomActiveRef.current) return 'zoom-anchor'
+		if (cursorFrozenForTrackingLoss) return 'tracking-loss'
+		return 'none'
+	}
 
 	useEffect(() => {
 		if (!enabled) {
@@ -241,6 +283,92 @@ export function useGestureRuntime(
 			}
 
 			previousToolIdRef.current = null
+		}
+
+		const startZoomSession = (anchorScreenPoint: GesturePoint, controlPoint: GesturePoint) => {
+			const anchorPagePoint = editor.screenToPage(anchorScreenPoint)
+			const camera = editor.getCamera()
+
+			cursorRef.current = anchorScreenPoint
+			lastZoomAnchorScreenPointRef.current = anchorScreenPoint
+			lastZoomAnchorPagePointRef.current = anchorPagePoint
+			lastZoomControlPointRef.current = controlPoint
+			lastZoomStartControlYRef.current = controlPoint.y
+			lastZoomStartLevelRef.current = camera.z
+			lastZoomDeltaYRef.current = 0
+			lastZoomLevelRef.current = camera.z
+			zoomLifecycleStateRef.current = 'zooming'
+			lastZoomEventRef.current = 'zoom entered'
+
+			gestureLog(
+				'zoom',
+				'Zoom gesture became active',
+				{ gestureId: ZOOM_GESTURE_ID, anchorScreenPoint, anchorPagePoint, controlPoint },
+				{
+					debugMode: GESTURE_DEBUG_MODE,
+				}
+			)
+			gestureLog('zoom', 'Cursor frozen for zoom anchor', { anchorScreenPoint }, {
+				debugMode: GESTURE_DEBUG_MODE,
+			})
+		}
+
+		const updateZoomSession = (controlPoint: GesturePoint) => {
+			const zoomStartY = lastZoomStartControlYRef.current
+			const zoomStartLevel = lastZoomStartLevelRef.current
+
+			if (zoomStartY === null || zoomStartLevel === null) {
+				lastZoomEventRef.current = 'zoom anchor unavailable'
+				gestureLog('zoom', 'Zoom anchor unavailable during update', undefined, {
+					debugMode: GESTURE_DEBUG_MODE,
+					level: 'warn',
+				})
+				return
+			}
+
+			const deltaY = controlPoint.y - zoomStartY
+			const effectiveDeltaY =
+				Math.abs(deltaY) > GESTURE_THRESHOLDS.zoomDeadzonePx
+					? deltaY - Math.sign(deltaY) * GESTURE_THRESHOLDS.zoomDeadzonePx
+					: 0
+			const nextZoom = clamp(
+				zoomStartLevel - effectiveDeltaY * GESTURE_THRESHOLDS.zoomSensitivity,
+				GESTURE_THRESHOLDS.zoomMin,
+				GESTURE_THRESHOLDS.zoomMax
+			)
+			const camera = editor.getCamera()
+
+			editor.setCamera({
+				x: camera.x,
+				y: camera.y,
+				z: nextZoom,
+			})
+
+			lastZoomControlPointRef.current = controlPoint
+			lastZoomDeltaYRef.current = effectiveDeltaY
+			lastZoomLevelRef.current = nextZoom
+			lastZoomEventRef.current = effectiveDeltaY === 0 ? 'zoom holding' : 'zoom updated'
+		}
+
+		const finishZoomSession = (reason: string) => {
+			if (zoomLifecycleStateRef.current === 'idle' && !stableZoomActiveRef.current) return
+
+			zoomLifecycleStateRef.current = 'idle'
+			lastZoomEventRef.current = reason
+			lastZoomAnchorScreenPointRef.current = null
+			lastZoomAnchorPagePointRef.current = null
+			lastZoomControlPointRef.current = null
+			lastZoomStartControlYRef.current = null
+			lastZoomStartLevelRef.current = null
+			lastZoomDeltaYRef.current = null
+			lastZoomLevelRef.current = editor.getCamera().z
+
+			gestureLog('zoom', 'Zoom session ended', { reason }, {
+				debugMode: GESTURE_DEBUG_MODE,
+			})
+			gestureLog('zoom', 'Cursor tracking resumed after zoom', { reason }, {
+				debugMode: GESTURE_DEBUG_MODE,
+			})
 		}
 
 		const startPanSession = (screenPoint: GesturePoint) => {
@@ -385,6 +513,7 @@ export function useGestureRuntime(
 
 		const cleanup = () => {
 			cancelNativeDrawSession('gesture runtime cleanup')
+			finishZoomSession('gesture runtime cleanup')
 			finishPanSession('gesture runtime cleanup')
 
 			if (animationFrameRef.current !== null) {
@@ -414,20 +543,33 @@ export function useGestureRuntime(
 			lastSeenHandAtRef.current = null
 			cursorStableHitsRef.current = 0
 			cursorStableMissesRef.current = 0
+			zoomStableHitsRef.current = 0
+			zoomStableMissesRef.current = 0
 			panStableHitsRef.current = 0
 			panStableMissesRef.current = 0
 			drawStableHitsRef.current = 0
 			drawStableMissesRef.current = 0
 			rawGestureIdRef.current = null
+			rawZoomGestureActiveRef.current = false
 			stableCursorActiveRef.current = false
+			stableZoomActiveRef.current = false
 			stablePanActiveRef.current = false
 			stableDrawActiveRef.current = false
 			nativeDrawSessionActiveRef.current = false
 			trackingStateRef.current = 'no-hand'
 			labelWarningRef.current = null
+			zoomLifecycleStateRef.current = 'idle'
 			panLifecycleStateRef.current = 'idle'
 			drawLifecycleStateRef.current = 'idle'
 			strokeStateRef.current = 'idle'
+			lastZoomAnchorScreenPointRef.current = null
+			lastZoomAnchorPagePointRef.current = null
+			lastZoomControlPointRef.current = null
+			lastZoomStartControlYRef.current = null
+			lastZoomStartLevelRef.current = null
+			lastZoomDeltaYRef.current = null
+			lastZoomEventRef.current = null
+			lastZoomLevelRef.current = null
 			lastPanAnchorPointRef.current = null
 			lastPanDeltaRef.current = null
 			lastPanEventRef.current = null
@@ -586,11 +728,24 @@ export function useGestureRuntime(
 						trackingStateRef.current = 'lost'
 						cursorStableHitsRef.current = 0
 						cursorStableMissesRef.current = 0
+						zoomStableHitsRef.current = 0
+						zoomStableMissesRef.current = 0
 						panStableHitsRef.current = 0
 						panStableMissesRef.current = 0
 						drawStableHitsRef.current = 0
 						drawStableMissesRef.current = 0
+						rawZoomGestureActiveRef.current = false
 						stableCursorActiveRef.current = false
+
+						if (stableZoomActiveRef.current) {
+							stableZoomActiveRef.current = false
+							zoomLifecycleStateRef.current = 'zoomEnding'
+							finishZoomSession('tracking lost during zoom')
+							gestureLog('zoom', 'Tracking lost during zoom', undefined, {
+								debugMode: GESTURE_DEBUG_MODE,
+								level: 'warn',
+							})
+						}
 
 						if (stablePanActiveRef.current) {
 							stablePanActiveRef.current = false
@@ -618,11 +773,22 @@ export function useGestureRuntime(
 							...previous,
 							handPresent: false,
 							trackingState: 'lost',
+							interactionMode: getInteractionMode(),
+							cursorLockReason: getCursorLockReason(cursorFrozen),
 							rawGestureId: null,
 							rawGestureLabel: null,
 							rawConfidence: null,
 							stableGestureId: null,
 							stableGestureLabel: null,
+							rawZoomGestureActive: false,
+							stableZoomGestureActive: stableZoomActiveRef.current,
+							zoomLifecycleState: zoomLifecycleStateRef.current,
+							lastZoomAnchorScreenPoint: lastZoomAnchorScreenPointRef.current,
+							lastZoomAnchorPagePoint: lastZoomAnchorPagePointRef.current,
+							lastZoomControlPoint: lastZoomControlPointRef.current,
+							lastZoomDeltaY: lastZoomDeltaYRef.current,
+							lastZoomEvent: lastZoomEventRef.current,
+							lastZoomLevel: lastZoomLevelRef.current,
 							rawPanGestureActive: false,
 							stablePanGestureActive: stablePanActiveRef.current,
 							panLifecycleState: panLifecycleStateRef.current,
@@ -700,6 +866,19 @@ export function useGestureRuntime(
 					}
 					const rawGestureLabel =
 						labelsRef.current[rawGestureId] ?? `Gesture ${rawGestureId}`
+					const canvasRect = canvasElement.getBoundingClientRect()
+					const indexTip = pixelLandmarks[8]
+					const rawCursorLandmark = indexTip ?? pixelLandmarks[0]
+					const rawCanvasPoint = rawCursorLandmark
+						? toCanvasPoint(
+								{ width: canvasRect.width, height: canvasRect.height },
+								{ width: videoElement.videoWidth, height: videoElement.videoHeight },
+								rawCursorLandmark
+						  )
+						: null
+					const zoomControlCanvasPoint = rawCanvasPoint
+					const rawZoomGestureActive = rawGestureId === ZOOM_GESTURE_ID
+					rawZoomGestureActiveRef.current = rawZoomGestureActive
 
 					if (rawGestureIdRef.current !== rawGestureId) {
 						gestureLog(
@@ -714,6 +893,9 @@ export function useGestureRuntime(
 					const cursorGestureActive =
 						rawGestureId === CURSOR_GESTURE_ID &&
 						rawConfidence >= GESTURE_THRESHOLDS.cursorConfidence
+					const zoomGestureActive =
+						rawGestureId === ZOOM_GESTURE_ID &&
+						rawConfidence >= GESTURE_THRESHOLDS.zoomConfidence
 					const panGestureActive =
 						rawGestureId === PAN_GESTURE_ID &&
 						rawConfidence >= GESTURE_THRESHOLDS.panConfidence
@@ -729,7 +911,22 @@ export function useGestureRuntime(
 						cursorStableMissesRef.current += 1
 					}
 
-					if (panGestureActive) {
+					if (
+						zoomGestureActive &&
+						(stableZoomActiveRef.current ||
+							(!stablePanActiveRef.current && !stableDrawActiveRef.current))
+					) {
+						zoomStableHitsRef.current += 1
+						zoomStableMissesRef.current = 0
+					} else {
+						zoomStableHitsRef.current = 0
+						zoomStableMissesRef.current += 1
+					}
+
+					if (stableZoomActiveRef.current) {
+						panStableHitsRef.current = 0
+						panStableMissesRef.current = 0
+					} else if (panGestureActive) {
 						panStableHitsRef.current += 1
 						panStableMissesRef.current = 0
 					} else {
@@ -737,7 +934,10 @@ export function useGestureRuntime(
 						panStableMissesRef.current += 1
 					}
 
-					if (drawGestureActive) {
+					if (stableZoomActiveRef.current) {
+						drawStableHitsRef.current = 0
+						drawStableMissesRef.current = 0
+					} else if (drawGestureActive) {
 						drawStableHitsRef.current += 1
 						drawStableMissesRef.current = 0
 					} else {
@@ -766,7 +966,35 @@ export function useGestureRuntime(
 						})
 					}
 
+					if (
+						!stableZoomActiveRef.current &&
+						!stablePanActiveRef.current &&
+						!stableDrawActiveRef.current &&
+						zoomStableHitsRef.current >= GESTURE_THRESHOLDS.zoomStableFrames
+					) {
+						stableZoomActiveRef.current = true
+						zoomLifecycleStateRef.current = 'zoomArming'
+						lastZoomEventRef.current = 'zoom gesture stable entered'
+						gestureLog(
+							'zoom',
+							'Zoom gesture became stable',
+							{ rawConfidence, zoomGestureId: ZOOM_GESTURE_ID },
+							{ debugMode: GESTURE_DEBUG_MODE }
+						)
+					}
+
+					if (
+						stableZoomActiveRef.current &&
+						zoomStableMissesRef.current >= GESTURE_THRESHOLDS.zoomMissFrames
+					) {
+						stableZoomActiveRef.current = false
+						zoomLifecycleStateRef.current = 'zoomEnding'
+						lastZoomEventRef.current = 'zoom gesture released'
+						finishZoomSession('zoom gesture released')
+					}
+
 					if (!stablePanActiveRef.current &&
+						!stableZoomActiveRef.current &&
 						!stableDrawActiveRef.current &&
 						panStableHitsRef.current >= GESTURE_THRESHOLDS.panStableFrames
 					) {
@@ -791,6 +1019,7 @@ export function useGestureRuntime(
 					}
 
 					if (!stableDrawActiveRef.current &&
+						!stableZoomActiveRef.current &&
 						!stablePanActiveRef.current &&
 						drawStableHitsRef.current >= GESTURE_THRESHOLDS.drawStableFrames
 					) {
@@ -821,6 +1050,8 @@ export function useGestureRuntime(
 						? DRAW_GESTURE_ID
 						: stablePanActiveRef.current
 							? PAN_GESTURE_ID
+							: stableZoomActiveRef.current
+								? ZOOM_GESTURE_ID
 							: stableCursorActiveRef.current
 								? CURSOR_GESTURE_ID
 								: null
@@ -829,20 +1060,13 @@ export function useGestureRuntime(
 							? labelsRef.current[stableGestureId] ?? `Gesture ${stableGestureId}`
 							: null
 
-					const rawCursorLandmark = pixelLandmarks[8] ?? pixelLandmarks[0]
-					const canvasRect = canvasElement.getBoundingClientRect()
-					const rawCanvasPoint = rawCursorLandmark
-						? toCanvasPoint(
-								{ width: canvasRect.width, height: canvasRect.height },
-								{ width: videoElement.videoWidth, height: videoElement.videoHeight },
-								rawCursorLandmark
-						  )
-						: null
-
-					const pointerActive =
-						stableCursorActiveRef.current || stablePanActiveRef.current || stableDrawActiveRef.current
-					const nextCursorPoint =
-						rawCanvasPoint && pointerActive
+					const trackedPointerActive =
+						!stableZoomActiveRef.current &&
+						(stableCursorActiveRef.current ||
+							stablePanActiveRef.current ||
+							stableDrawActiveRef.current)
+					const nextTrackedCursorPoint =
+						rawCanvasPoint && trackedPointerActive
 							? smoothPoint(
 									cursorRef.current,
 									rawCanvasPoint,
@@ -850,25 +1074,48 @@ export function useGestureRuntime(
 							  )
 							: cursorRef.current
 
-					if (pointerActive && nextCursorPoint) {
-						cursorRef.current = nextCursorPoint
+					if (trackedPointerActive && nextTrackedCursorPoint) {
+						cursorRef.current = nextTrackedCursorPoint
 					}
 
-					if (stablePanActiveRef.current && nextCursorPoint) {
+					if (stableZoomActiveRef.current) {
+						const zoomAnchorScreenPoint =
+							lastZoomAnchorScreenPointRef.current ??
+							cursorRef.current ??
+							rawCanvasPoint ??
+							zoomControlCanvasPoint
+
+						if (zoomAnchorScreenPoint && zoomControlCanvasPoint) {
+							if (zoomLifecycleStateRef.current !== 'zooming') {
+								startZoomSession(zoomAnchorScreenPoint, zoomControlCanvasPoint)
+							} else {
+								updateZoomSession(zoomControlCanvasPoint)
+							}
+						}
+					} else if (stablePanActiveRef.current && nextTrackedCursorPoint) {
 						if (panLifecycleStateRef.current !== 'panning') {
-							startPanSession(nextCursorPoint)
+							startPanSession(nextTrackedCursorPoint)
 						} else {
-							updatePanSession(nextCursorPoint)
+							updatePanSession(nextTrackedCursorPoint)
+						}
+					} else if (stableDrawActiveRef.current && nextTrackedCursorPoint) {
+						if (!nativeDrawSessionActiveRef.current) {
+							startNativeDrawSession(nextTrackedCursorPoint)
+						} else {
+							streamNativeDrawSession(nextTrackedCursorPoint)
 						}
 					}
 
-					if (stableDrawActiveRef.current && nextCursorPoint) {
-						if (!nativeDrawSessionActiveRef.current) {
-							startNativeDrawSession(nextCursorPoint)
-						} else {
-							streamNativeDrawSession(nextCursorPoint)
-						}
-					}
+					const displayCursorPoint = stableZoomActiveRef.current
+						? lastZoomAnchorScreenPointRef.current ?? cursorRef.current
+						: trackedPointerActive
+							? cursorRef.current
+							: null
+					const displayCursorVisibility = stableZoomActiveRef.current
+						? 'frozen'
+						: trackedPointerActive && displayCursorPoint
+							? 'visible'
+							: 'hidden'
 
 					setState((previous) => ({
 						...previous,
@@ -876,11 +1123,22 @@ export function useGestureRuntime(
 						handPresent: true,
 						warning: labelWarningRef.current,
 						trackingState: 'tracking',
+						interactionMode: getInteractionMode(),
+						cursorLockReason: getCursorLockReason(false),
 						rawGestureId,
 						rawGestureLabel,
 						rawConfidence,
 						stableGestureId,
 						stableGestureLabel,
+						rawZoomGestureActive,
+						stableZoomGestureActive: stableZoomActiveRef.current,
+						zoomLifecycleState: zoomLifecycleStateRef.current,
+						lastZoomAnchorScreenPoint: lastZoomAnchorScreenPointRef.current,
+						lastZoomAnchorPagePoint: lastZoomAnchorPagePointRef.current,
+						lastZoomControlPoint: lastZoomControlPointRef.current,
+						lastZoomDeltaY: lastZoomDeltaYRef.current,
+						lastZoomEvent: lastZoomEventRef.current,
+						lastZoomLevel: lastZoomLevelRef.current,
 						rawPanGestureActive: rawGestureId === PAN_GESTURE_ID,
 						stablePanGestureActive: stablePanActiveRef.current,
 						panLifecycleState: panLifecycleStateRef.current,
@@ -900,8 +1158,8 @@ export function useGestureRuntime(
 						lastDispatchPagePoint: lastDispatchPagePointRef.current,
 						lastDrawEvent: lastDrawEventRef.current,
 						rawCursorPoint: rawCanvasPoint,
-						cursorPoint: pointerActive ? nextCursorPoint : null,
-						cursorVisibility: pointerActive ? 'visible' : 'hidden',
+						cursorPoint: displayCursorPoint,
+						cursorVisibility: displayCursorVisibility,
 						metrics: {
 							lastFrameAt: frameAt,
 							lastHandInferenceMs: handInferenceMs,

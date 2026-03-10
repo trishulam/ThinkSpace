@@ -39,6 +39,7 @@ interface AgentSidebarProps {
 	onClearLog: () => void
 	onClearGestureLogs: () => void
 	onToggleGestures: () => void
+	onExportGestureTrace: () => void
 }
 
 export function AgentSidebar({
@@ -56,6 +57,7 @@ export function AgentSidebar({
 	onClearLog,
 	onClearGestureLogs,
 	onToggleGestures,
+	onExportGestureTrace,
 }: AgentSidebarProps) {
 	const [showAudioEvents, setShowAudioEvents] = useState(false)
 	const [activeTab, setActiveTab] = useState<'agent' | 'gesture'>('agent')
@@ -237,6 +239,7 @@ export function AgentSidebar({
 						logs={gestureLogs}
 						onToggle={onToggleGestures}
 						onClearLogs={onClearGestureLogs}
+						onExportTrace={onExportGestureTrace}
 					/>
 				</div>
 			)}

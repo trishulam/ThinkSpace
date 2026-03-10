@@ -1,5 +1,10 @@
-import { useCallback, useRef, useState } from 'react'
-import type { AgentLogEntry, ConnectionState, TalkingState } from '../types/agent-live'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type {
+	AgentLogEntry,
+	AgentSubtitleState,
+	ConnectionState,
+	TalkingState,
+} from '../types/agent-live'
 
 let logIdCounter = 0
 function nextLogId(): string {
@@ -13,6 +18,18 @@ interface UseAgentWebSocketOptions {
 	onStopPlayback?: () => void
 }
 
+const NORMAL_SUBTITLE_LINGER_MS = 1600
+const INTERRUPTED_FINAL_LINGER_MS = 500
+const INTERRUPTED_PARTIAL_LINGER_MS = 120
+
+const EMPTY_SUBTITLE: AgentSubtitleState = {
+	text: '',
+	isVisible: false,
+	isPartial: false,
+	status: 'idle',
+	updatedAt: null,
+}
+
 export function useAgentWebSocket({
 	userId,
 	sessionId,
@@ -22,10 +39,15 @@ export function useAgentWebSocket({
 	const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
 	const [talkingState, setTalkingState] = useState<TalkingState>('none')
 	const [eventLog, setEventLog] = useState<AgentLogEntry[]>([])
+	const [agentSubtitle, setAgentSubtitle] = useState<AgentSubtitleState>(EMPTY_SUBTITLE)
 
 	const wsRef = useRef<WebSocket | null>(null)
 	const intentionalDisconnectRef = useRef(false)
 	const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const subtitleTextRef = useRef('')
+	const hasOutputTranscriptionRef = useRef(false)
+	const hasFinalSubtitleRef = useRef(false)
 
 	// Stable refs for callbacks so the WS handler always sees the latest
 	const onPlayAudioRef = useRef(onPlayAudio)
@@ -52,11 +74,100 @@ export function useAgentWebSocket({
 		setEventLog([])
 	}, [])
 
+	const clearSubtitleTimer = useCallback(() => {
+		if (subtitleTimerRef.current) {
+			clearTimeout(subtitleTimerRef.current)
+			subtitleTimerRef.current = null
+		}
+	}, [])
+
+	const resetSubtitle = useCallback(() => {
+		clearSubtitleTimer()
+		subtitleTextRef.current = ''
+		hasOutputTranscriptionRef.current = false
+		hasFinalSubtitleRef.current = false
+		setAgentSubtitle(EMPTY_SUBTITLE)
+	}, [clearSubtitleTimer])
+
+	const scheduleSubtitleClear = useCallback(
+		(status: AgentSubtitleState['status'], delayMs: number) => {
+			clearSubtitleTimer()
+			setAgentSubtitle((current) => {
+				if (!current.text) return EMPTY_SUBTITLE
+				return {
+					...current,
+					status,
+					isPartial: false,
+					isVisible: true,
+					updatedAt: Date.now(),
+				}
+			})
+			subtitleTextRef.current = ''
+			subtitleTimerRef.current = setTimeout(() => {
+				subtitleTextRef.current = ''
+				setAgentSubtitle(EMPTY_SUBTITLE)
+			}, delayMs)
+			hasOutputTranscriptionRef.current = false
+			hasFinalSubtitleRef.current = false
+		},
+		[clearSubtitleTimer]
+	)
+
+	const updateSubtitleFromOutput = useCallback(
+		(textChunk: string, isFinal: boolean) => {
+			clearSubtitleTimer()
+			hasOutputTranscriptionRef.current = true
+
+			const nextText = isFinal ? textChunk : `${subtitleTextRef.current}${textChunk}`
+			subtitleTextRef.current = nextText
+			hasFinalSubtitleRef.current = isFinal
+
+			setAgentSubtitle({
+				text: nextText,
+				isVisible: true,
+				isPartial: !isFinal,
+				status: 'active',
+				updatedAt: Date.now(),
+			})
+		},
+		[clearSubtitleTimer]
+	)
+
+	const updateSubtitleFromTextFallback = useCallback(
+		(textChunk: string, isPartial: boolean) => {
+			if (hasOutputTranscriptionRef.current) return
+
+			clearSubtitleTimer()
+			const nextText = isPartial ? `${subtitleTextRef.current}${textChunk}` : textChunk
+			subtitleTextRef.current = nextText
+			hasFinalSubtitleRef.current = !isPartial
+
+			setAgentSubtitle({
+				text: nextText,
+				isVisible: true,
+				isPartial,
+				status: 'active',
+				updatedAt: Date.now(),
+			})
+		},
+		[clearSubtitleTimer]
+	)
+
+	useEffect(() => {
+		return () => {
+			clearSubtitleTimer()
+			if (reconnectTimerRef.current) {
+				clearTimeout(reconnectTimerRef.current)
+			}
+		}
+	}, [clearSubtitleTimer])
+
 	const connect = useCallback(() => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
 
 		intentionalDisconnectRef.current = false
 		setConnectionState('connecting')
+		resetSubtitle()
 
 		// Connect directly to the backend. The Cloudflare Vite plugin intercepts
 		// upgrade requests before the Vite proxy can forward them, so we bypass
@@ -80,6 +191,7 @@ export function useAgentWebSocket({
 			// --- turnComplete ---
 			if (adkEvent.turnComplete === true) {
 				setTalkingState('none')
+				scheduleSubtitleClear('complete', NORMAL_SUBTITLE_LINGER_MS)
 				addLogEntry('system', 'Turn complete', adkEvent)
 				return
 			}
@@ -88,6 +200,12 @@ export function useAgentWebSocket({
 			if (adkEvent.interrupted === true) {
 				setTalkingState('none')
 				onStopPlaybackRef.current?.()
+				scheduleSubtitleClear(
+					'interrupted',
+					hasFinalSubtitleRef.current
+						? INTERRUPTED_FINAL_LINGER_MS
+						: INTERRUPTED_PARTIAL_LINGER_MS
+				)
 				addLogEntry('system', 'Interrupted', adkEvent)
 				return
 			}
@@ -110,6 +228,7 @@ export function useAgentWebSocket({
 				const text = adkEvent.outputTranscription.text
 				const finished = adkEvent.outputTranscription.finished
 				setTalkingState('agent')
+				updateSubtitleFromOutput(text, finished === true)
 				addLogEntry(
 					'agent-transcription',
 					text,
@@ -133,6 +252,14 @@ export function useAgentWebSocket({
 
 			// --- content.parts ---
 			if (adkEvent.content?.parts) {
+				const textParts = adkEvent.content.parts
+					.filter((part: { text?: string; thought?: boolean }) => part.text && !part.thought)
+					.map((part: { text: string }) => part.text)
+					.join('')
+				if (textParts) {
+					updateSubtitleFromTextFallback(textParts, !!adkEvent.partial)
+				}
+
 				for (const part of adkEvent.content.parts) {
 					// Audio
 					if (part.inlineData) {
@@ -177,6 +304,7 @@ export function useAgentWebSocket({
 			wsRef.current = null
 			setConnectionState('idle')
 			setTalkingState('none')
+			resetSubtitle()
 
 			if (!intentionalDisconnectRef.current) {
 				addLogEntry('system', 'Disconnected. Reconnecting in 5s...')
@@ -191,7 +319,15 @@ export function useAgentWebSocket({
 		ws.onerror = () => {
 			addLogEntry('system', 'WebSocket error')
 		}
-	}, [userId, sessionId, addLogEntry])
+	}, [
+		userId,
+		sessionId,
+		addLogEntry,
+		resetSubtitle,
+		scheduleSubtitleClear,
+		updateSubtitleFromOutput,
+		updateSubtitleFromTextFallback,
+	])
 
 	const disconnect = useCallback(() => {
 		intentionalDisconnectRef.current = true
@@ -203,7 +339,8 @@ export function useAgentWebSocket({
 			setConnectionState('disconnecting')
 			wsRef.current.close()
 		}
-	}, [])
+		resetSubtitle()
+	}, [resetSubtitle])
 
 	const sendText = useCallback((message: string) => {
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -231,6 +368,7 @@ export function useAgentWebSocket({
 		connectionState,
 		talkingState,
 		eventLog,
+		agentSubtitle,
 		connect,
 		disconnect,
 		sendText,

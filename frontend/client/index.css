@@ -50,6 +50,80 @@ html, body {
 	z-index: 20;
 }
 
+.agent-subtitle-overlay {
+	position: absolute;
+	left: 24px;
+	right: 24px;
+	bottom: max(104px, calc(env(safe-area-inset-bottom) + 32px));
+	display: flex;
+	justify-content: center;
+	pointer-events: none;
+	z-index: 30;
+	opacity: 0;
+	transform: translateY(10px);
+	transition:
+		opacity 180ms ease,
+		transform 220ms ease;
+}
+
+.agent-subtitle-overlay.visible {
+	opacity: 1;
+	transform: translateY(0);
+}
+
+.agent-subtitle-chip {
+	max-width: min(720px, 78vw);
+	padding: 12px 18px;
+	border-radius: 18px;
+	background: rgba(10, 12, 18, 0.8);
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	box-shadow:
+		0 18px 40px rgba(0, 0, 0, 0.28),
+		inset 0 1px 0 rgba(255, 255, 255, 0.06);
+	color: rgba(248, 250, 252, 0.98);
+	text-align: center;
+	font-size: clamp(18px, 1.4vw, 24px);
+	font-weight: 550;
+	line-height: 1.35;
+	letter-spacing: 0.01em;
+	white-space: pre-line;
+	backdrop-filter: blur(16px);
+}
+
+.agent-subtitle-chip.partial {
+	color: rgba(248, 250, 252, 0.9);
+}
+
+.agent-subtitle-chip.status-complete,
+.agent-subtitle-chip.status-interrupted {
+	background: rgba(10, 12, 18, 0.74);
+}
+
+.agent-subtitle-chip--measure {
+	position: absolute;
+	top: 0;
+	left: 50%;
+	visibility: hidden;
+	transform: translateX(-50%);
+	pointer-events: none;
+	white-space: normal;
+}
+
+@media (max-width: 768px) {
+	.agent-subtitle-overlay {
+		left: 16px;
+		right: 16px;
+		bottom: max(84px, calc(env(safe-area-inset-bottom) + 20px));
+	}
+
+	.agent-subtitle-chip {
+		max-width: 100%;
+		padding: 10px 14px;
+		font-size: 17px;
+		border-radius: 16px;
+	}
+}
+
 .gesture-virtual-cursor {
 	position: absolute;
 	width: 22px;

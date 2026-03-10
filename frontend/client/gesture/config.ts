@@ -12,6 +12,7 @@ export const GESTURE_ASSETS = {
 
 export const CURSOR_GESTURE_ID = 2
 export const PAN_GESTURE_ID = 1
+export const ZOOM_GESTURE_ID = 3
 export const DRAW_GESTURE_ID = 6
 
 export const GESTURE_THRESHOLDS = {
@@ -20,6 +21,13 @@ export const GESTURE_THRESHOLDS = {
 	cursorMissFrames: 2,
 	cursorSmoothingAlpha: 0.35,
 	cursorFreezeMs: 500,
+	zoomConfidence: 0.45,
+	zoomStableFrames: 2,
+	zoomMissFrames: 2,
+	zoomDeadzonePx: 18,
+	zoomSensitivity: 0.0035,
+	zoomMin: 0.2,
+	zoomMax: 6,
 	panConfidence: 0.55,
 	panStableFrames: 2,
 	panMissFrames: 2,

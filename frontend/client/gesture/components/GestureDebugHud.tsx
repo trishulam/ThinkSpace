@@ -6,6 +6,7 @@ interface GestureDebugHudProps {
 	logs: GestureLogEntry[]
 	onToggle: () => void
 	onClearLogs: () => void
+	onExportTrace: () => void
 }
 
 function formatPoint(point: GestureRuntimeState['cursorPoint']) {
@@ -38,10 +39,7 @@ function formatLogTime(date: Date) {
 }
 
 function getInteractionMode(state: GestureRuntimeState) {
-	if (state.stableDrawGestureActive) return 'draw'
-	if (state.stablePanGestureActive) return 'pan'
-	if (state.stableGestureLabel) return 'cursor'
-	return 'idle'
+	return state.interactionMode
 }
 
 function renderField(label: string, value: string) {
@@ -53,7 +51,13 @@ function renderField(label: string, value: string) {
 	)
 }
 
-export function GestureDebugHud({ state, logs, onToggle, onClearLogs }: GestureDebugHudProps) {
+export function GestureDebugHud({
+	state,
+	logs,
+	onToggle,
+	onClearLogs,
+	onExportTrace,
+}: GestureDebugHudProps) {
 	const previewRef = useRef<HTMLVideoElement | null>(null)
 	const logRef = useRef<HTMLDivElement | null>(null)
 
@@ -76,6 +80,9 @@ export function GestureDebugHud({ state, logs, onToggle, onClearLogs }: GestureD
 						<div className="gesture-sidebar-panel__subtitle">Waiting for runtime</div>
 					</div>
 					<div className="gesture-sidebar-panel__actions">
+						<button className="gesture-sidebar-panel__clear" onClick={onExportTrace} type="button">
+							Export trace
+						</button>
 						<button className="gesture-sidebar-panel__clear" onClick={onClearLogs} type="button">
 							Clear logs
 						</button>
@@ -100,6 +107,9 @@ export function GestureDebugHud({ state, logs, onToggle, onClearLogs }: GestureD
 					<div className="gesture-sidebar-panel__subtitle">Canvas gesture runtime</div>
 				</div>
 				<div className="gesture-sidebar-panel__actions">
+					<button className="gesture-sidebar-panel__clear" onClick={onExportTrace} type="button">
+						Export trace
+					</button>
 					<button className="gesture-sidebar-panel__clear" onClick={onClearLogs} type="button">
 						Clear logs
 					</button>
@@ -136,8 +146,8 @@ export function GestureDebugHud({ state, logs, onToggle, onClearLogs }: GestureD
 					<strong>{state.currentToolId ?? 'n/a'}</strong>
 				</div>
 				<div className="gesture-sidebar-chip">
-					<span>confidence</span>
-					<strong>{state.rawConfidence !== null ? state.rawConfidence.toFixed(3) : 'n/a'}</strong>
+					<span>cursor lock</span>
+					<strong>{state.cursorLockReason}</strong>
 				</div>
 			</div>
 
@@ -153,9 +163,32 @@ export function GestureDebugHud({ state, logs, onToggle, onClearLogs }: GestureD
 							state.videoSize ? `${state.videoSize.width}x${state.videoSize.height}` : 'n/a'
 						)}
 						{renderField('cursor', state.cursorVisibility)}
-						{renderField('cursor point', formatPoint(state.cursorPoint))}
+						{renderField('display cursor', formatPoint(state.cursorPoint))}
+						{renderField('raw cursor', formatPoint(state.rawCursorPoint))}
+						{renderField('mode', state.interactionMode)}
 						{renderField('hand inference', formatMs(state.metrics.lastHandInferenceMs))}
 						{renderField('classifier', formatMs(state.metrics.lastClassifierInferenceMs))}
+					</div>
+				</section>
+
+				<section className="gesture-debug-section">
+					<div className="gesture-debug-section__title">Zoom</div>
+					<div className="gesture-debug-grid">
+						{renderField('raw zoom', state.rawZoomGestureActive ? 'active' : 'inactive')}
+						{renderField('stable zoom', state.stableZoomGestureActive ? 'active' : 'inactive')}
+						{renderField('lifecycle', state.zoomLifecycleState)}
+						{renderField('last zoom', state.lastZoomEvent ?? 'none')}
+						{renderField('anchor screen', formatPoint(state.lastZoomAnchorScreenPoint))}
+						{renderField('anchor page', formatPoint(state.lastZoomAnchorPagePoint))}
+						{renderField('landmark 8', formatPoint(state.lastZoomControlPoint))}
+						{renderField(
+							'delta y',
+							state.lastZoomDeltaY !== null ? state.lastZoomDeltaY.toFixed(1) : 'n/a'
+						)}
+						{renderField(
+							'zoom level',
+							state.lastZoomLevel !== null ? state.lastZoomLevel.toFixed(3) : 'n/a'
+						)}
 					</div>
 				</section>
 

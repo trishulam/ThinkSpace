@@ -1,5 +1,6 @@
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting'
 export type TalkingState = 'none' | 'user' | 'agent' | 'thinking'
+export type AgentSubtitleStatus = 'idle' | 'active' | 'complete' | 'interrupted'
 export type LogEntryType =
 	| 'user-text'
 	| 'user-transcription'
@@ -19,4 +20,12 @@ export interface AgentLogEntry {
 	rawEvent?: unknown
 	isPartial?: boolean
 	isAudioEvent?: boolean
+}
+
+export interface AgentSubtitleState {
+	text: string
+	isVisible: boolean
+	isPartial: boolean
+	status: AgentSubtitleStatus
+	updatedAt: number | null
 }

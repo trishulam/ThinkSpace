@@ -6,23 +6,29 @@ Current implementation status:
 
 - Story 1 is complete and working end to end in the browser.
 - Story 2 is complete and working on the real `tldraw` canvas.
+- Story 3 is complete and working on the real `tldraw` canvas.
+- Story 4 is complete and working on the real `tldraw` canvas.
 - The hosted frontend now runs the full gesture pipeline client-side.
 - Webcam access, browser MediaPipe hand tracking, browser TFLite classification, stability filtering, and a virtual cursor are all wired into the real canvas route.
 - Gesture-driven drawing now uses the native `tldraw` draw tool through public editor APIs, instead of manually assembling draw shapes.
+- Gesture-driven pan now uses a dedicated close-fist gesture channel with camera delta updates, gesture arbitration against draw, and safe exit on release or tracking loss.
+- Gesture-driven zoom now uses classifier gesture `3`, a temporary exclusive zoom mode, landmark `8` vertical motion for zoom control, and viewport-centered zoom for stability.
 - Gesture diagnostics have moved out of the canvas overlay and into the live agent sidebar under a dedicated `Gestures` tab.
-- Structured gesture logs now stream into the sidebar alongside runtime state, preview, timings, and native draw-session diagnostics.
+- Structured gesture logs now stream into the sidebar alongside runtime state, preview, timings, native draw-session diagnostics, pan lifecycle telemetry, and zoom lifecycle telemetry.
 
 Current known issue:
 
 - The gesture label CSV and classifier output count are mismatched, so some labels should not yet be treated as final source of truth.
 - The current native draw path still needs UX tuning for brush feel parity with normal mouse drawing.
+- The current pan behavior is good for demo navigation, but may still be refined from simple hand-following toward a stronger anchored "grab and pull" interaction model.
+- Story 4 still needs live manual feel-tuning for gesture `3` zoom thresholds, deadzone, and zoom sensitivity on real webcam input.
 
 Recommended next build order:
 
 1. Fix the label mapping mismatch so gesture names are trustworthy.
 2. Tune native draw feel so thickness and stroke behavior match normal cursor drawing more closely.
-3. Implement Story 3: viewport pan.
-4. Implement Story 4: simple zoom.
+3. Decide whether pan should stay hand-following or evolve into anchored grab-and-pull.
+4. Tune gesture zoom feel on real hardware and lock its final thresholds.
 5. Implement Story 5: low-frequency tool switching.
 
 ## Goal
