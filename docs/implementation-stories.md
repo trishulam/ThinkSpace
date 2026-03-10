@@ -184,6 +184,33 @@ Done means:
 - multiple tools end up meaning the same thing
 - subagent roles overlap and create hidden orchestration duplication
 
+### Current Tracking Status
+
+Story Group A now has a living reference in `docs/agent-tool-catalog.md`.
+
+Current planning status:
+
+- Story A1 is locked enough for the v1 tool surface
+- Story A2 execution-style decisions are locked for the current v1 tools
+- Story A3 ownership decisions are locked for the current v1 tools
+
+Current locked v1 tool surface:
+
+- `canvas.generate_visual`
+- `canvas.generate_widget`
+- `canvas.enhance`
+- `canvas.delegate_task`
+- `flashcards.create`
+- `flashcards.next`
+- `flashcards.reveal_answer`
+- `flashcards.end`
+
+Future-scope candidates currently noted but not part of v1:
+
+- `knowledge.lookup`
+- `research.lookup`
+- web-search-backed retrieval
+
 ## Story Group B: Backend Tool Result Contract
 
 ### Goal
@@ -245,6 +272,35 @@ Done means:
 
 - tool outputs become too custom
 - job lifecycle semantics differ per tool and cause orchestration chaos
+
+### Current Tracking Status
+
+Story Group B now has a living reference in `docs/tool-result-contract.md`.
+
+Current planning status:
+
+- Story B1 has a locked v1 baseline result envelope
+- Story B2 has a locked v1 baseline lifecycle model
+
+Current locked v1 result envelope:
+
+- `status`
+- `tool`
+- `job?`
+- `summary?`
+- `payload?`
+- `frontend_action?`
+
+Current locked v1 lifecycle statuses:
+
+- `accepted`
+- `completed`
+- `failed`
+
+Current v1 contract boundary:
+
+- `memory_updates` is intentionally excluded from the locked v1 result envelope
+- memory remains orchestrator-owned for now
 
 ## Story Group C: Backend-To-Frontend Action Contract
 
@@ -315,6 +371,37 @@ Done means:
 
 - action formats become fragmented
 - backend assumes success without frontend confirmation
+
+### Current Tracking Status
+
+Story Group C now has a living reference in `docs/frontend-action-contract.md`.
+
+Current planning status:
+
+- Story C1 has a locked v1 baseline action envelope
+- Story C2 has a locked v1 baseline acknowledgement envelope
+
+Current locked v1 frontend action envelope:
+
+- `type`
+- `source_tool`
+- `job_id?`
+- `payload`
+
+Current locked v1 frontend action types:
+
+- `canvas.insert_visual`
+- `canvas.insert_widget`
+- `flashcards.show`
+- `flashcards.next`
+- `flashcards.reveal_answer`
+- `flashcards.clear`
+
+Current v1 contract boundary:
+
+- `canvas.delegate_task` remains a special execution path rather than being
+  forced into a simple single frontend action
+- acknowledgements are intentionally limited to `applied` and `failed` in v1
 
 ## Story Group D: Flashcards End-To-End
 

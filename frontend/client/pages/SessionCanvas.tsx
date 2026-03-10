@@ -27,12 +27,24 @@ import { TargetShapeTool } from "../tools/TargetShapeTool";
 import { DynamicIsland } from "../components/DynamicIsland";
 import { AgentSidebar } from "../components/AgentSidebar";
 import { AgentSubtitleOverlay } from "../components/AgentSubtitleOverlay";
+import { FlashcardPanel } from "../components/FlashcardPanel";
 import { GestureHost } from "../gesture/components/GestureHost";
 import { GestureLogEntry, GestureRuntimeState } from "../gesture/types";
 import { subscribeGestureLogs } from "../gesture/utils/logger";
+import {
+  EMPTY_FLASHCARD_STATE,
+  extractFlashcardAction,
+  reduceFlashcardState,
+  type FlashcardDeck,
+  type FlashcardState,
+} from "../flashcards";
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useAudioWorklets } from "../hooks/useAudioWorklets";
-import type { ConnectionState, TalkingState } from "../types/agent-live";
+import type {
+  AgentLogEntry,
+  ConnectionState,
+  TalkingState,
+} from "../types/agent-live";
 
 // Customize tldraw's styles to play to the agent's strengths
 DefaultSizeStyle.setDefaultValue("s");
@@ -88,6 +100,32 @@ const overrides: TLUiOverrides = {
   },
 };
 
+const FLASHCARD_DEMO_DECK: FlashcardDeck = {
+  id: "demo-recursion-deck",
+  title: "Recursion Basics",
+  cards: [
+    {
+      id: "recursion-1",
+      front: "What is the base case in a recursive function?",
+      back: "The stopping condition that returns a value without making another recursive call.",
+    },
+    {
+      id: "recursion-2",
+      front: "Why does every recursive problem need progress toward a smaller version?",
+      back: "Without shrinking the problem, the function keeps calling itself forever and never reaches the base case.",
+    },
+    {
+      id: "recursion-3",
+      front: "How is the recursive step different from the base case?",
+      back: "The recursive step reduces the problem and delegates part of the work to the next call, while the base case finishes it directly.",
+    },
+  ],
+};
+
+function isFlashcardLogEntry(entry: AgentLogEntry): boolean {
+  return entry.type === "tool-result" && entry.rawEvent != null;
+}
+
 export const SessionCanvas: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [app, setApp] = useState<TldrawAgentApp | null>(null);
@@ -97,6 +135,12 @@ export const SessionCanvas: React.FC = () => {
   );
   const [gestureLogs, setGestureLogs] = useState<GestureLogEntry[]>([]);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const processedFlashcardLogIndexRef = useRef(0);
+  const flashcardDemoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const [flashcardState, setFlashcardState] =
+    useState<FlashcardState>(EMPTY_FLASHCARD_STATE);
 
   // Temporary testing state for Dynamic Island
   const [testConnState, setTestConnState] = useState<ConnectionState | null>(
@@ -149,40 +193,87 @@ export const SessionCanvas: React.FC = () => {
     setGestureLogs([]);
   }, []);
 
-  const handleExportGestureTrace = useCallback(() => {
-    const sanitizedState = gestureState
-      ? {
-          ...gestureState,
-          stream: gestureState.stream ? "[MediaStream omitted]" : null,
-        }
-      : null;
+  const clearFlashcardDemoTimer = useCallback(() => {
+    if (flashcardDemoTimerRef.current) {
+      clearTimeout(flashcardDemoTimerRef.current);
+      flashcardDemoTimerRef.current = null;
+    }
+  }, []);
 
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      routeSessionId: sessionId,
-      gestureState: sanitizedState,
-      gestureLogs: gestureLogs.map((entry) => ({
-        ...entry,
-        timestamp: entry.timestamp.toISOString(),
-      })),
-    };
+  const applyFlashcardAction = useCallback(
+    (action: Parameters<typeof reduceFlashcardState>[1]) => {
+      setFlashcardState((current) => reduceFlashcardState(current, action));
+    },
+    [],
+  );
 
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: "application/json",
+  const handleRevealFlashcardAnswer = useCallback(() => {
+    applyFlashcardAction({ type: "flashcards.reveal_answer" });
+  }, [applyFlashcardAction]);
+
+  const handleNextFlashcard = useCallback(() => {
+    applyFlashcardAction({ type: "flashcards.next" });
+  }, [applyFlashcardAction]);
+
+  const handleEndFlashcards = useCallback(() => {
+    clearFlashcardDemoTimer();
+    applyFlashcardAction({ type: "flashcards.end" });
+  }, [applyFlashcardAction, clearFlashcardDemoTimer]);
+
+  const handleFlashcardDemo = useCallback(() => {
+    clearFlashcardDemoTimer();
+    setFlashcardState({
+      ...EMPTY_FLASHCARD_STATE,
+      status: "creating",
     });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `gesture-trace-${Date.now()}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, [gestureLogs, gestureState, sessionId]);
+
+    flashcardDemoTimerRef.current = setTimeout(() => {
+      applyFlashcardAction({
+        type: "flashcards.create",
+        payload: FLASHCARD_DEMO_DECK,
+      });
+      flashcardDemoTimerRef.current = null;
+    }, 700);
+  }, [applyFlashcardAction, clearFlashcardDemoTimer]);
 
   React.useEffect(() => {
     return subscribeGestureLogs((entry) => {
       setGestureLogs((previous) => [...previous.slice(-399), entry]);
     });
   }, []);
+
+  React.useEffect(() => {
+    return () => {
+      clearFlashcardDemoTimer();
+    };
+  }, [clearFlashcardDemoTimer]);
+
+  React.useEffect(() => {
+    if (ws.eventLog.length < processedFlashcardLogIndexRef.current) {
+      processedFlashcardLogIndexRef.current = 0;
+    }
+
+    if (processedFlashcardLogIndexRef.current === ws.eventLog.length) return;
+
+    const nextEntries = ws.eventLog.slice(processedFlashcardLogIndexRef.current);
+    processedFlashcardLogIndexRef.current = ws.eventLog.length;
+
+    const flashcardEntries = nextEntries.filter(isFlashcardLogEntry);
+    if (flashcardEntries.length === 0) return;
+
+    setFlashcardState((current) => {
+      let nextState = current;
+
+      for (const entry of flashcardEntries) {
+        const action = extractFlashcardAction(entry.rawEvent);
+        if (action) {
+          nextState = reduceFlashcardState(nextState, action);
+        }
+      }
+
+      return nextState;
+    });
+  }, [ws.eventLog]);
 
   // Custom components to visualize what the agent is doing
   const components: TLComponents = useMemo(() => {
@@ -211,6 +302,14 @@ export const SessionCanvas: React.FC = () => {
     return <div>Session not found</div>;
   }
 
+  const isFlashcardActive = flashcardState.status === "active";
+  const isFlashcardCreating = flashcardState.status === "creating";
+  const flashcardDeckSize = flashcardState.deck?.cards.length ?? 0;
+  const isFlashcardLastCard =
+    isFlashcardActive &&
+    flashcardDeckSize > 0 &&
+    flashcardState.currentIndex >= flashcardDeckSize - 1;
+
   return (
     <>
       <TldrawUiToastsProvider>
@@ -233,6 +332,7 @@ export const SessionCanvas: React.FC = () => {
               />
             </Tldraw>
             <AgentSubtitleOverlay subtitle={ws.agentSubtitle} />
+            <FlashcardPanel state={flashcardState} />
           </div>
           {/* ChatPanel replaced by live agent sidebar */}
           {/* <ErrorBoundary fallback={ChatPanelFallback}>
@@ -258,7 +358,6 @@ export const SessionCanvas: React.FC = () => {
             onClearLog={ws.clearLog}
             onClearGestureLogs={handleClearGestureLogs}
             onToggleGestures={handleToggleGestures}
-            onExportGestureTrace={handleExportGestureTrace}
           />
         </div>
       </TldrawUiToastsProvider>
@@ -367,6 +466,58 @@ export const SessionCanvas: React.FC = () => {
             }}
           >
             Reset to Live
+          </button>
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: "#374151",
+            marginTop: 4,
+          }}
+        >
+          Flashcards
+        </div>
+        <div
+          style={{ display: "flex", gap: 8, flexWrap: "wrap", maxWidth: 300 }}
+        >
+          <button
+            className="mindpad-btn-ghost"
+            style={{ padding: "4px 8px", height: "auto", fontSize: 12 }}
+            onClick={handleFlashcardDemo}
+            disabled={isFlashcardCreating}
+          >
+            {isFlashcardCreating ? "Creating..." : "Flashcard Demo"}
+          </button>
+          <button
+            className="mindpad-btn-ghost"
+            style={{ padding: "4px 8px", height: "auto", fontSize: 12 }}
+            onClick={handleRevealFlashcardAnswer}
+            disabled={!isFlashcardActive || flashcardState.isAnswerRevealed}
+          >
+            Reveal
+          </button>
+          <button
+            className="mindpad-btn-ghost"
+            style={{ padding: "4px 8px", height: "auto", fontSize: 12 }}
+            onClick={handleNextFlashcard}
+            disabled={!isFlashcardActive || isFlashcardLastCard}
+          >
+            Next
+          </button>
+          <button
+            className="mindpad-btn-ghost"
+            style={{
+              padding: "4px 8px",
+              height: "auto",
+              fontSize: 12,
+              border: "1px solid #ef4444",
+              color: "#ef4444",
+            }}
+            onClick={handleEndFlashcards}
+            disabled={flashcardState.status === "idle"}
+          >
+            End
           </button>
         </div>
       </div>
