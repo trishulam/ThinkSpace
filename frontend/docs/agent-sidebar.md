@@ -4,6 +4,9 @@
 
 The Agent Sidebar replaces the original tldraw `ChatPanel` in the `SessionCanvas` page with a live WebSocket connection to the FastAPI backend running Google's ADK (Agent Development Kit) with the Gemini Live API. It provides real-time bidirectional communication including text chat, audio streaming, transcription display, and an event log.
 
+For the canvas subtitle / caption system that was added on top of this live
+connection, see `frontend/docs/agent-subtitles.md`.
+
 ## Architecture
 
 ```
