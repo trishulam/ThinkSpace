@@ -30,8 +30,16 @@ This directory contains shared architecture and product-design notes for the pro
 - `adk-live-integration.md`
   Official-ADK-aligned notes for how Google ADK Live maps onto the ThinkSpace architecture, including `send_content()`, `send_realtime()`, `run_live()`, event handling, modality constraints, and tool execution implications.
 
+<<<<<<< Updated upstream
 - `session-persistence-architecture.md`
   Shared persistence design for durable session management across the GCP frontend, Cloudflare canvas agent, and GCP FastAPI ADK backend, including session metadata, transcript storage, Tldraw checkpointing, and resume flows.
+=======
+- `gemini-live-tool-integration-reference.md`
+  End-to-end implementation reference for adding tool-driven behavior to the
+  ThinkSpace Gemini Live agent, including backend/frontend contracts, ack
+  handling, semantic feedback timing, flashcards lessons learned, and the
+  recommended pattern for future tool families.
+>>>>>>> Stashed changes
 
 ## Related
 

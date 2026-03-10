@@ -419,6 +419,9 @@ Flashcards are one of the clearest ways to prove that the tutor can both create 
 Story Group D now has a working scratchpad in
 `docs/flashcards-end-to-end-scratchpad.md`.
 
+Story Group D also now has an implementation reference in
+`docs/gemini-live-tool-integration-reference.md`.
+
 Current implementation status:
 
 - Phase 1 frontend contract alignment is implemented enough for v1
@@ -442,10 +445,22 @@ Current boundary:
 - flashcard frontend acknowledgements are now semantically interpreted by the
   backend as session-state updates, but this bridge is still specific to the
   flashcard flow rather than being generalized across all tool families
-- only the deck-created-and-visible milestone currently feeds a semantic update
-  back into the live agent loop
-- reveal-before-next is currently enforced by prompt policy rather than a strict
-  backend-only flashcard state machine
+- successful `flashcards.show`, `flashcards.reveal_answer`, and
+  `flashcards.next` acknowledgements now feed selective semantic updates back
+  into the live agent loop
+- reveal-before-next is currently encouraged by prompt policy and by the minimal
+  tool-result design, not by a heavy backend-only flashcard state machine
+- duplicate `flashcards.next` calls are now lightly deduped using backend
+  session state by comparing logical current index with the index currently
+  visible in the UI
+- the scratchpad can be deleted once Story Group D is considered fully closed
+  and no longer needed as a tactical working pad
+
+Recommended next implementation target:
+
+- Story Group E: Image Output And Enhancement
+- start with Story E1 and reuse the implementation pattern captured in
+  `docs/gemini-live-tool-integration-reference.md`
 
 ### Stories
 
