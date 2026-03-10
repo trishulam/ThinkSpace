@@ -1,10 +1,11 @@
 export type FlashcardStatus = "idle" | "creating" | "active";
 
 export type FlashcardActionType =
-  | "flashcards.create"
+  | "flashcards.begin"
+  | "flashcards.show"
   | "flashcards.next"
   | "flashcards.reveal_answer"
-  | "flashcards.end";
+  | "flashcards.clear";
 
 export interface FlashcardCard {
   id: string;
@@ -23,6 +24,7 @@ export interface FlashcardState {
   deck: FlashcardDeck | null;
   currentIndex: number;
   isAnswerRevealed: boolean;
+  jobId: string | null;
 }
 
 export interface FlashcardAction {
@@ -33,18 +35,26 @@ export interface FlashcardAction {
   payload?: unknown;
 }
 
+export interface FlashcardActionApplicationResult {
+  nextState: FlashcardState;
+  applied: boolean;
+  summary: string;
+}
+
 export const EMPTY_FLASHCARD_STATE: FlashcardState = {
   status: "idle",
   deck: null,
   currentIndex: 0,
   isAnswerRevealed: false,
+  jobId: null,
 };
 
 const FLASHCARD_ACTION_TYPES = new Set<FlashcardActionType>([
-  "flashcards.create",
+  "flashcards.begin",
+  "flashcards.show",
   "flashcards.next",
   "flashcards.reveal_answer",
-  "flashcards.end",
+  "flashcards.clear",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -65,23 +75,6 @@ function getRecordValue<T = unknown>(
     if (key in record) return record[key] as T;
   }
   return undefined;
-}
-
-function parseJsonCandidate(input: string): unknown {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (!fencedMatch?.[1]) return null;
-    try {
-      return JSON.parse(fencedMatch[1].trim());
-    } catch {
-      return null;
-    }
-  }
 }
 
 function normalizeCard(input: unknown, index: number): FlashcardCard | null {
@@ -154,82 +147,6 @@ function normalizeDeck(input: unknown): FlashcardDeck | null {
   return null;
 }
 
-function normalizeActionCandidate(candidate: unknown): FlashcardAction | null {
-  if (!isRecord(candidate)) return null;
-
-  const directType = asNonEmptyString(candidate.type);
-  if (directType && FLASHCARD_ACTION_TYPES.has(directType as FlashcardActionType)) {
-    return {
-      type: directType as FlashcardActionType,
-      status: asNonEmptyString(candidate.status),
-      requestId: asNonEmptyString(candidate.request_id) ?? asNonEmptyString(candidate.requestId),
-      jobId: asNonEmptyString(candidate.job_id) ?? asNonEmptyString(candidate.jobId),
-      payload: getRecordValue(candidate, ["payload", "data", "deck", "flashcards"]),
-    };
-  }
-
-  const nestedAction = getRecordValue<unknown>(candidate, [
-    "action",
-    "frontend_action",
-    "frontendAction",
-  ]);
-  if (nestedAction) return normalizeActionCandidate(nestedAction);
-
-  return null;
-}
-
-export function extractFlashcardAction(rawEvent: unknown): FlashcardAction | null {
-  const queue: unknown[] = [rawEvent];
-  const seen = new Set<unknown>();
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (current == null || seen.has(current)) continue;
-    seen.add(current);
-
-    const directAction = normalizeActionCandidate(current);
-    if (directAction) return directAction;
-
-    if (typeof current === "string") {
-      const parsed = parseJsonCandidate(current);
-      if (parsed != null) queue.push(parsed);
-      continue;
-    }
-
-    if (!isRecord(current)) continue;
-
-    const content = getRecordValue<unknown>(current, ["content"]);
-    const parts = isRecord(content) ? getRecordValue<unknown>(content, ["parts"]) : undefined;
-    if (Array.isArray(parts)) {
-      for (const part of parts) {
-        if (!isRecord(part)) continue;
-
-        if (part.codeExecutionResult && isRecord(part.codeExecutionResult)) {
-          queue.push(part.codeExecutionResult);
-          const output = asNonEmptyString(part.codeExecutionResult.output);
-          if (output) queue.push(output);
-        }
-
-        if (part.text) queue.push(part.text);
-      }
-    }
-
-    for (const key of [
-      "payload",
-      "data",
-      "result",
-      "output",
-      "action",
-      "frontend_action",
-      "frontendAction",
-    ]) {
-      if (key in current) queue.push(current[key]);
-    }
-  }
-
-  return null;
-}
-
 function deckFromPayload(payload: unknown): FlashcardDeck | null {
   return normalizeDeck(payload);
 }
@@ -265,15 +182,19 @@ export function reduceFlashcardState(
   action: FlashcardAction,
 ): FlashcardState {
   switch (action.type) {
-    case "flashcards.create": {
+    case "flashcards.begin":
+      return {
+        ...EMPTY_FLASHCARD_STATE,
+        status: "creating",
+        jobId: action.jobId ?? state.jobId,
+      };
+
+    case "flashcards.show": {
       if (action.status === "failed") return EMPTY_FLASHCARD_STATE;
 
       const deck = deckFromPayload(action.payload);
       if (!deck) {
-        return {
-          ...EMPTY_FLASHCARD_STATE,
-          status: "creating",
-        };
+        return state;
       }
 
       const lastIndex = deck.cards.length - 1;
@@ -285,6 +206,7 @@ export function reduceFlashcardState(
         deck,
         currentIndex,
         isAnswerRevealed: getRevealStateFromPayload(action.payload) ?? false,
+        jobId: action.jobId ?? state.jobId,
       };
     }
 
@@ -312,10 +234,168 @@ export function reduceFlashcardState(
       };
     }
 
-    case "flashcards.end":
+    case "flashcards.clear":
       return EMPTY_FLASHCARD_STATE;
 
     default:
       return state;
   }
+}
+
+export function applyFlashcardAction(
+  state: FlashcardState,
+  action: FlashcardAction,
+): FlashcardActionApplicationResult {
+  if (!FLASHCARD_ACTION_TYPES.has(action.type)) {
+    return {
+      nextState: state,
+      applied: false,
+      summary: `Unsupported flashcard action: ${action.type}`,
+    };
+  }
+
+  if (action.type === "flashcards.begin") {
+    if (
+      state.status === "active" &&
+      state.jobId != null &&
+      action.jobId != null &&
+      state.jobId === action.jobId
+    ) {
+      return {
+        nextState: state,
+        applied: false,
+        summary: "Ignored stale flashcard loading action",
+      };
+    }
+
+    if (
+      state.status === "creating" &&
+      state.jobId != null &&
+      action.jobId != null &&
+      state.jobId === action.jobId
+    ) {
+      return {
+        nextState: state,
+        applied: false,
+        summary: "Flashcards are already entering the creating state",
+      };
+    }
+
+    return {
+      nextState: reduceFlashcardState(state, action),
+      applied: true,
+      summary: "Entered flashcard creating state",
+    };
+  }
+
+  if (action.type === "flashcards.show") {
+    if (
+      state.status === "active" &&
+      state.jobId != null &&
+      action.jobId != null &&
+      state.jobId === action.jobId
+    ) {
+      const incomingDeck = deckFromPayload(action.payload);
+      if (!incomingDeck) {
+        return {
+          nextState: state,
+          applied: false,
+          summary: "Ignored stale flashcard loading action",
+        };
+      }
+    }
+
+    const nextState = reduceFlashcardState(state, action);
+    if (action.status === "failed") {
+      return {
+        nextState,
+        applied: true,
+        summary: "Cleared flashcards after failed show action",
+      };
+    }
+
+    const deck = deckFromPayload(action.payload);
+    if (!deck) {
+      return {
+        nextState: state,
+        applied: false,
+        summary: "Flashcard deck payload was missing from flashcards.show",
+      };
+    }
+    return {
+      nextState,
+      applied: true,
+      summary: `Displayed flashcard deck with ${deck.cards.length} cards`,
+    };
+  }
+
+  if (action.type === "flashcards.next") {
+    if (!state.deck) {
+      return {
+        nextState: state,
+        applied: false,
+        summary: "Cannot advance flashcards without an active deck",
+      };
+    }
+
+    const nextState = reduceFlashcardState(state, action);
+    if (nextState.currentIndex === state.currentIndex) {
+      return {
+        nextState,
+        applied: false,
+        summary: "Already at the last flashcard",
+      };
+    }
+
+    return {
+      nextState,
+      applied: true,
+      summary: `Advanced to flashcard ${nextState.currentIndex + 1}`,
+    };
+  }
+
+  if (action.type === "flashcards.reveal_answer") {
+    if (!state.deck) {
+      return {
+        nextState: state,
+        applied: false,
+        summary: "Cannot reveal an answer without an active deck",
+      };
+    }
+    if (state.isAnswerRevealed) {
+      return {
+        nextState: state,
+        applied: false,
+        summary: "Flashcard answer is already revealed",
+      };
+    }
+
+    return {
+      nextState: reduceFlashcardState(state, action),
+      applied: true,
+      summary: "Revealed the current flashcard answer",
+    };
+  }
+
+  if (action.type === "flashcards.clear") {
+    if (state.status === "idle") {
+      return {
+        nextState: state,
+        applied: false,
+        summary: "No active flashcards to clear",
+      };
+    }
+
+    return {
+      nextState: reduceFlashcardState(state, action),
+      applied: true,
+      summary: "Cleared the active flashcard session",
+    };
+  }
+
+  return {
+    nextState: state,
+    applied: false,
+    summary: `Unsupported flashcard action: ${action.type}`,
+  };
 }

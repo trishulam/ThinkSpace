@@ -31,6 +31,30 @@ Every frontend action should fit this common envelope:
 - `job_id?`
 - `payload`
 
+## Transport Messages
+
+The websocket transport should carry typed app-level messages alongside the raw
+ADK event stream.
+
+### Backend To Frontend
+
+Frontend actions travel as:
+
+- `type: "frontend_action"`
+- `action: { ...frontend action envelope... }`
+
+### Frontend To Backend
+
+Frontend acknowledgements travel as:
+
+- `type: "frontend_ack"`
+- `ack: { ...frontend acknowledgement envelope... }`
+
+Design rule:
+
+- this transport layer is additive and should not replace the existing raw ADK
+  event relay
+
 ## Field Definitions
 
 ### `type`
@@ -69,6 +93,7 @@ Action-specific data needed by the frontend to execute the action.
 - `canvas.insert_visual`
 - `canvas.insert_widget`
 - `flashcards.show`
+- `flashcards.begin`
 - `flashcards.next`
 - `flashcards.reveal_answer`
 - `flashcards.clear`
@@ -106,16 +131,34 @@ Payload will likely need:
 - size data
 - optional widget metadata
 
-### `flashcards.show`
+### `flashcards.begin`
 
-Show the created flashcard deck in the frontend.
+Enter the flashcard creating/loading state in the frontend.
 
 Typical source:
 
 - `flashcards.create`
 
-This is why there is no separate `flashcards.show_set` tool in the locked v1
-tool surface.
+Behavior notes:
+
+- this is the dedicated loading action for flashcard generation
+- unlike `flashcards.show`, this action does not carry a populated deck payload
+
+### `flashcards.show`
+
+Show the flashcard study surface in the frontend.
+
+Typical source:
+
+- `flashcards.create`
+
+Behavior notes:
+
+- with a populated deck payload, this shows the created flashcard deck
+- this action is for showing a populated deck, not for entering the loading
+  state
+- this is why there is no separate `flashcards.show_set` tool in the locked v1
+  tool surface
 
 ### `flashcards.next`
 

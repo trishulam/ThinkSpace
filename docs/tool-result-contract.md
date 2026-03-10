@@ -182,6 +182,8 @@ Initial result:
 - `tool`: `flashcards.create`
 - `job.id`: generated job identifier
 - `summary`: `Flashcard generation started`
+- `frontend_action`: enter the frontend flashcard creating state, typically via
+  `flashcards.begin`
 
 Later completion:
 
@@ -191,6 +193,18 @@ Later completion:
 - `summary`: `Flashcards created`
 - `payload`: generated deck metadata
 - `frontend_action`: show created flashcards
+
+## Async Delivery Note
+
+For background jobs that complete after the original ADK tool-call event has
+already returned, the backend may relay the same result envelope over the
+websocket inside an app-level message such as:
+
+- `type`: `tool_result`
+- `result`: full tool result envelope
+
+This does not change the result contract itself. It only defines how a later
+async completion can be delivered back to the active frontend session.
 
 ## Open For Later Expansion
 

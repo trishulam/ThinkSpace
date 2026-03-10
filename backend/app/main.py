@@ -24,6 +24,10 @@ load_dotenv(Path(__file__).parent / ".env")
 # Import agent after loading environment variables
 # pylint: disable=wrong-import-position
 from thinkspace_agent.agent import agent  # noqa: E402
+from thinkspace_agent.tools.flashcard_jobs import (  # noqa: E402
+    flashcard_job_outbox,
+    flashcard_session_store,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -40,6 +44,252 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 # Application name constant
 APP_NAME = "bidi-demo"
+
+
+def _is_record(value: object) -> bool:
+    return isinstance(value, dict)
+
+
+def _parse_json_candidate(value: str) -> object | None:
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+
+
+def _normalize_frontend_action(
+    candidate: object,
+    fallback_tool: str | None = None,
+    fallback_job_id: str | None = None,
+) -> dict[str, object] | None:
+    if not _is_record(candidate):
+        return None
+
+    action_type = candidate.get("type")
+    payload = candidate.get("payload")
+    if not isinstance(action_type, str) or payload is None:
+        return None
+
+    source_tool = candidate.get("source_tool") or fallback_tool
+    if not isinstance(source_tool, str) or not source_tool.strip():
+        return None
+
+    action: dict[str, object] = {
+        "type": action_type,
+        "source_tool": source_tool,
+        "payload": payload,
+    }
+
+    job_id = candidate.get("job_id") or fallback_job_id
+    if isinstance(job_id, str) and job_id.strip():
+        action["job_id"] = job_id
+
+    return action
+
+
+def extract_frontend_action(raw_event: object) -> dict[str, object] | None:
+    queue: list[tuple[object, str | None, str | None]] = [(raw_event, None, None)]
+    seen: set[int] = set()
+
+    while queue:
+        current, fallback_tool, fallback_job_id = queue.pop(0)
+        current_id = id(current)
+        if current is None or current_id in seen:
+            continue
+        seen.add(current_id)
+
+        if isinstance(current, str):
+            parsed = _parse_json_candidate(current)
+            if parsed is not None:
+                queue.append((parsed, fallback_tool, fallback_job_id))
+            continue
+
+        action = _normalize_frontend_action(current, fallback_tool, fallback_job_id)
+        if action is not None:
+            return action
+
+        if not _is_record(current):
+            continue
+
+        next_fallback_tool = fallback_tool
+        tool_name = current.get("tool")
+        if isinstance(tool_name, str) and tool_name.strip():
+            next_fallback_tool = tool_name
+
+        next_fallback_job_id = fallback_job_id
+        job = current.get("job")
+        if _is_record(job):
+            job_id = job.get("id")
+            if isinstance(job_id, str) and job_id.strip():
+                next_fallback_job_id = job_id
+
+        for key in (
+            "frontend_action",
+            "frontendAction",
+            "payload",
+            "data",
+            "result",
+            "output",
+            "action",
+            "content",
+            "response",
+        ):
+            if key in current:
+                queue.append(
+                    (current[key], next_fallback_tool, next_fallback_job_id)
+                )
+
+        parts = current.get("parts")
+        if isinstance(parts, list):
+            for part in parts:
+                queue.append((part, next_fallback_tool, next_fallback_job_id))
+
+        code_execution_result = current.get("codeExecutionResult")
+        if _is_record(code_execution_result):
+            queue.append(
+                (
+                    code_execution_result,
+                    next_fallback_tool,
+                    next_fallback_job_id,
+                )
+            )
+            output = code_execution_result.get("output")
+            if isinstance(output, str):
+                queue.append((output, next_fallback_tool, next_fallback_job_id))
+
+        function_response = current.get("functionResponse")
+        if _is_record(function_response):
+            response_name = function_response.get("name")
+            response_tool = (
+                response_name if isinstance(response_name, str) and response_name.strip() else None
+            )
+            queue.append(
+                (
+                    function_response,
+                    response_tool or next_fallback_tool,
+                    next_fallback_job_id,
+                )
+            )
+
+    return None
+
+
+def _build_tool_result_message(result: dict[str, object]) -> dict[str, object]:
+    return {
+        "type": "tool_result",
+        "result": result,
+    }
+
+
+def _normalize_frontend_ack(candidate: object) -> dict[str, str] | None:
+    if not _is_record(candidate):
+        return None
+
+    status = candidate.get("status")
+    action_type = candidate.get("action_type")
+    source_tool = candidate.get("source_tool")
+    summary = candidate.get("summary")
+
+    if not isinstance(status, str) or not isinstance(action_type, str):
+        return None
+    if not isinstance(source_tool, str) or not source_tool.strip():
+        return None
+
+    normalized: dict[str, str] = {
+        "status": status,
+        "action_type": action_type,
+        "source_tool": source_tool,
+    }
+    if isinstance(summary, str) and summary.strip():
+        normalized["summary"] = summary.strip()
+
+    job_id = candidate.get("job_id")
+    if isinstance(job_id, str) and job_id.strip():
+        normalized["job_id"] = job_id.strip()
+
+    return normalized
+
+
+def _apply_flashcard_ack_state(
+    ack: dict[str, str], user_id: str, session_id: str
+) -> str | None:
+    action_type = ack["action_type"]
+    status = ack["status"]
+
+    if not action_type.startswith("flashcards."):
+        return None
+
+    if status == "failed":
+        return None
+
+    if status != "applied":
+        return None
+
+    if action_type == "flashcards.show":
+        snapshot = flashcard_session_store.mark_deck_rendered(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        current_card = snapshot.get("current_card") if isinstance(snapshot, dict) else None
+        front = (
+            current_card.get("front")
+            if isinstance(current_card, dict) and isinstance(current_card.get("front"), str)
+            else None
+        )
+        if front:
+            return (
+                "The flashcards are now visible in the UI. "
+                f"The first question is: {front}"
+            )
+        return "The flashcards are now visible in the UI."
+
+    if action_type == "flashcards.reveal_answer":
+        snapshot = flashcard_session_store.mark_answer_rendered(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        current_card = snapshot.get("current_card") if isinstance(snapshot, dict) else None
+        answer = (
+            current_card.get("back")
+            if isinstance(current_card, dict) and isinstance(current_card.get("back"), str)
+            else None
+        )
+        if answer:
+            return (
+                "The current flashcard answer is now visible in the UI. "
+                f"The revealed answer is: {answer}. "
+                "Briefly explain it, then pause and wait for the learner."
+            )
+        return (
+            "The current flashcard answer is now visible in the UI. "
+            "Explain it briefly, then pause and wait for the learner."
+        )
+
+    if action_type == "flashcards.next":
+        snapshot = flashcard_session_store.mark_next_rendered(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        current_card = snapshot.get("current_card") if isinstance(snapshot, dict) else None
+        front = (
+            current_card.get("front")
+            if isinstance(current_card, dict) and isinstance(current_card.get("front"), str)
+            else None
+        )
+        if front:
+            return (
+                "The next flashcard is now visible in the UI. "
+                f"Ask the learner this question: {front}"
+            )
+        return "The next flashcard is now visible in the UI. Ask the next question."
+
+    if action_type == "flashcards.clear":
+        return None
+
+    return None
 
 # ========================================
 # Phase 1: Application Initialization (once at startup)
@@ -166,6 +416,7 @@ async def websocket_endpoint(
         )
 
     live_request_queue = LiveRequestQueue()
+    background_result_queue = await flashcard_job_outbox.subscribe(user_id, session_id)
 
     # ========================================
     # Phase 3: Active Session (concurrent bidirectional communication)
@@ -236,6 +487,28 @@ async def websocket_endpoint(
                     image_blob = types.Blob(mime_type=mime_type, data=image_data)
                     live_request_queue.send_realtime(image_blob)
 
+                # Handle frontend acknowledgements
+                elif json_message.get("type") == "frontend_ack":
+                    logger.debug(
+                        "Received frontend ack: %s",
+                        json.dumps(json_message.get("ack", {})),
+                    )
+                    ack = _normalize_frontend_ack(json_message.get("ack"))
+                    if ack is None:
+                        continue
+                    semantic_text = _apply_flashcard_ack_state(
+                        ack,
+                        user_id,
+                        session_id,
+                    )
+                    if semantic_text:
+                        logger.debug(
+                            "Sending flashcard creation semantic update: %s",
+                            semantic_text,
+                        )
+                        content = types.Content(parts=[types.Part(text=semantic_text)])
+                        live_request_queue.send_content(content)
+
     async def downstream_task() -> None:
         """Receives Events from run_live() and sends to WebSocket."""
         logger.debug("downstream_task started, calling runner.run_live()")
@@ -251,19 +524,70 @@ async def websocket_endpoint(
             run_config=run_config,
         ):
             event_json = event.model_dump_json(exclude_none=True, by_alias=True)
+            event_payload = json.loads(event_json)
+            frontend_action = extract_frontend_action(event_payload)
             logger.debug(f"[SERVER] Event: {event_json}")
             await websocket.send_text(event_json)
+            if frontend_action is not None:
+                logger.debug(
+                    "Sending frontend action: %s", json.dumps(frontend_action)
+                )
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "frontend_action",
+                            "action": frontend_action,
+                        }
+                    )
+                )
         logger.debug("run_live() generator completed")
+
+    async def background_tool_result_task() -> None:
+        """Relays background tool results to the websocket session."""
+
+        logger.debug(
+            "background_tool_result_task started for user_id=%s, session_id=%s",
+            user_id,
+            session_id,
+        )
+        while True:
+            result = await background_result_queue.get()
+            logger.debug(
+                "Sending background tool result: %s",
+                json.dumps(result),
+            )
+            await websocket.send_text(
+                json.dumps(_build_tool_result_message(result))
+            )
+            frontend_action = extract_frontend_action(result)
+            if frontend_action is not None:
+                logger.debug(
+                    "Sending background frontend action: %s",
+                    json.dumps(frontend_action),
+                )
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "frontend_action",
+                            "action": frontend_action,
+                        }
+                    )
+                )
 
     # Run both tasks concurrently
     # Exceptions from either task will propagate and cancel the other task
     upstream = asyncio.create_task(upstream_task(), name="websocket-upstream")
     downstream = asyncio.create_task(downstream_task(), name="websocket-downstream")
+    background_results = asyncio.create_task(
+        background_tool_result_task(),
+        name="websocket-background-tool-results",
+    )
 
     try:
         logger.debug("Starting asyncio.gather for upstream and downstream tasks")
         done, _ = await asyncio.wait(
-            {upstream, downstream}, return_when=asyncio.FIRST_COMPLETED
+            {upstream, downstream, background_results},
+            return_when=asyncio.FIRST_COMPLETED,
         )
         logger.debug("One websocket task completed, beginning shutdown")
 
@@ -284,10 +608,16 @@ async def websocket_endpoint(
         logger.debug("Closing live_request_queue")
         live_request_queue.close()
 
-        for task in (upstream, downstream):
+        await flashcard_job_outbox.unsubscribe(
+            user_id,
+            session_id,
+            background_result_queue,
+        )
+
+        for task in (upstream, downstream, background_results):
             if not task.done():
                 task.cancel()
 
-        for task in (upstream, downstream):
+        for task in (upstream, downstream, background_results):
             with suppress(asyncio.CancelledError):
                 await task

@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap");
 @import url("tldraw/tldraw.css");
 @import "./styles/mindpad.css";
 @import "./styles/tailwind-utilities.css";
@@ -324,11 +324,14 @@ body {
 .flashcard-panel-face-copy {
   flex: 1;
   margin: 0;
-  font-size: 26px;
-  line-height: 1.38;
-  font-weight: 600;
+  font-family: "Newsreader", Georgia, serif;
+  font-size: 24px;
+  line-height: 1.34;
+  font-weight: 400;
+  letter-spacing: -0.01em;
   color: var(--mindpad-text-primary, #111827);
   white-space: pre-wrap;
+  text-wrap: balance;
 }
 
 .flashcard-panel-face-hint {
@@ -518,7 +521,7 @@ body {
 
 @media (max-width: 1200px) {
   .flashcard-panel-face-copy {
-    font-size: 24px;
+    font-size: 23px;
   }
 }
 

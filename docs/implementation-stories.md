@@ -390,6 +390,7 @@ Current locked v1 frontend action envelope:
 
 Current locked v1 frontend action types:
 
+- `flashcards.begin`
 - `canvas.insert_visual`
 - `canvas.insert_widget`
 - `flashcards.show`
@@ -412,6 +413,39 @@ Make flashcards a complete agent-controlled product surface.
 ### Why This Story Is Important
 
 Flashcards are one of the clearest ways to prove that the tutor can both create and control UI beyond voice.
+
+### Current Tracking Status
+
+Story Group D now has a working scratchpad in
+`docs/flashcards-end-to-end-scratchpad.md`.
+
+Current implementation status:
+
+- Phase 1 frontend contract alignment is implemented enough for v1
+- Phase 2 typed frontend action and acknowledgement transport is implemented
+  enough for v1
+- Phase 3 backend flashcard tools are implemented enough for the first backend
+  slice
+- Phase 4 async flashcard generation worker is implemented enough for the first
+  real deck-generation path
+- Phase 5 end-to-end wiring and cleanup are implemented enough for the typed
+  flashcard flow to be the primary path
+
+Current boundary:
+
+- flashcard generation currently uses topic plus requested card count with an
+  auto-size heuristic, not yet richer lecture/session context
+- completion delivery currently uses an in-memory per-session outbox rather than
+  a durable external job system
+- flashcard study controls are still agent-driven rather than exposed as a
+  dedicated direct user-control surface in the panel
+- flashcard frontend acknowledgements are now semantically interpreted by the
+  backend as session-state updates, but this bridge is still specific to the
+  flashcard flow rather than being generalized across all tool families
+- only the deck-created-and-visible milestone currently feeds a semantic update
+  back into the live agent loop
+- reveal-before-next is currently enforced by prompt policy rather than a strict
+  backend-only flashcard state machine
 
 ### Stories
 

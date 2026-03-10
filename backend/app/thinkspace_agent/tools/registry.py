@@ -5,13 +5,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from .flashcards import get_flashcard_tools
+
 
 def get_tools() -> Sequence[Any]:
     """Return the currently enabled ThinkSpace tools.
 
-    Story Group A will define the real tool families and contracts. For now, the
-    ThinkSpace agent starts with an explicit empty registry so the product agent
-    structure exists without inheriting demo-only tool behavior.
+    The tool registry should expose only the capabilities that are actually
+    implemented and aligned with the current ThinkSpace contracts.
     """
 
-    return []
+    return [
+        *get_flashcard_tools(),
+    ]
