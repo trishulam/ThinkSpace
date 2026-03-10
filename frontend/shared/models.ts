@@ -48,7 +48,7 @@ export const AGENT_MODEL_DEFINITIONS = {
 	},
 } as const
 
-export const DEFAULT_MODEL_NAME: AgentModelName = 'claude-sonnet-4-5'
+export const DEFAULT_MODEL_NAME: AgentModelName = 'gemini-3-flash-preview'
 
 /**
  * Check if a string is a valid AgentModelName.

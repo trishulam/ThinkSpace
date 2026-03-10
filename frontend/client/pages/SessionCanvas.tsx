@@ -1,16 +1,24 @@
 import React from "react";
 import { useParams } from "react-router-dom";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // import { useSession } from '../context/SessionContext'
 import {
   DefaultSizeStyle,
   // ErrorBoundary,
+  Editor,
   TLComponents,
   Tldraw,
   TldrawOverlays,
   TldrawUiToastsProvider,
   TLUiOverrides,
+  getSnapshot,
+  loadSnapshot,
 } from "tldraw";
+import {
+  createCheckpoint,
+  getSessionResume,
+  transcriptToEventLog,
+} from "../api/sessions";
 import { TldrawAgentApp } from "../agent/TldrawAgentApp";
 import {
   TldrawAgentAppContextProvider,
@@ -27,12 +35,13 @@ import { TargetShapeTool } from "../tools/TargetShapeTool";
 import { DynamicIsland } from "../components/DynamicIsland";
 import { AgentSidebar } from "../components/AgentSidebar";
 import { AgentSubtitleOverlay } from "../components/AgentSubtitleOverlay";
+import { SessionRestoreOverlay } from "../components/SessionRestoreOverlay";
 import { GestureHost } from "../gesture/components/GestureHost";
 import { GestureLogEntry, GestureRuntimeState } from "../gesture/types";
 import { subscribeGestureLogs } from "../gesture/utils/logger";
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useAudioWorklets } from "../hooks/useAudioWorklets";
-import type { ConnectionState, TalkingState } from "../types/agent-live";
+import type { AgentLogEntry } from "../types/agent-live";
 
 // Customize tldraw's styles to play to the agent's strengths
 DefaultSizeStyle.setDefaultValue("s");
@@ -91,22 +100,54 @@ const overrides: TLUiOverrides = {
 export const SessionCanvas: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [app, setApp] = useState<TldrawAgentApp | null>(null);
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [gestureEnabled, setGestureEnabled] = useState(false);
   const [gestureState, setGestureState] = useState<GestureRuntimeState | null>(
     null,
   );
   const [gestureLogs, setGestureLogs] = useState<GestureLogEntry[]>([]);
-  const canvasRef = useRef<HTMLDivElement | null>(null);
-
-  // Temporary testing state for Dynamic Island
-  const [testConnState, setTestConnState] = useState<ConnectionState | null>(
-    null,
+  const [persistedEventLog, setPersistedEventLog] = useState<AgentLogEntry[]>(
+    [],
   );
-  const [testTalkState, setTestTalkState] = useState<TalkingState | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const hasLoadedRemoteSnapshotRef = useRef(false);
+  const isSavingCheckpointRef = useRef(false);
 
   const handleUnmount = useCallback(() => {
     setApp(null);
   }, []);
+
+  const saveCheckpoint = useCallback(
+    async (saveReason: string, triggerSource: string) => {
+      if (!sessionId || !editor || isSavingCheckpointRef.current) {
+        return;
+      }
+
+      try {
+        isSavingCheckpointRef.current = true;
+        const { document, session } = getSnapshot(editor.store);
+        await createCheckpoint(sessionId, {
+          checkpointType: "material",
+          saveReason,
+          triggerSource,
+          document,
+          session,
+          payload: {
+            source: "session-canvas",
+            savedAt: new Date().toISOString(),
+          },
+          clientUpdatedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error("Failed to save session checkpoint", error);
+      } finally {
+        isSavingCheckpointRef.current = false;
+      }
+    },
+    [editor, sessionId],
+  );
 
   // Audio worklets
   const { isAudioActive, startAudio, stopAudio, playAudioChunk, stopPlayback } =
@@ -121,6 +162,7 @@ export const SessionCanvas: React.FC = () => {
     sessionId: wsSessionId,
     onPlayAudio: playAudioChunk,
     onStopPlayback: stopPlayback,
+    initialEventLog: persistedEventLog,
   });
 
   // Audio start/stop handlers that wire into the WS
@@ -184,6 +226,93 @@ export const SessionCanvas: React.FC = () => {
     });
   }, []);
 
+  useEffect(() => {
+    hasLoadedRemoteSnapshotRef.current = false;
+    setResumeError(null);
+
+    if (!sessionId) {
+      setIsRestoringSession(false);
+      return;
+    }
+
+    if (!editor) {
+      setIsRestoringSession(true);
+      return;
+    }
+
+    let cancelled = false;
+    setIsRestoringSession(true);
+
+    void getSessionResume(sessionId)
+      .then((resumePayload) => {
+        if (cancelled || !editor) {
+          return;
+        }
+
+        const latestCheckpoint = resumePayload.latestCheckpoint;
+        if (
+          latestCheckpoint?.document &&
+          latestCheckpoint.session &&
+          !hasLoadedRemoteSnapshotRef.current
+        ) {
+          editor.setCurrentTool("select");
+          loadSnapshot(editor.store, {
+            document: latestCheckpoint.document,
+            session: latestCheckpoint.session,
+          });
+          hasLoadedRemoteSnapshotRef.current = true;
+        }
+
+        if (resumePayload.transcript?.length) {
+          setPersistedEventLog(transcriptToEventLog(resumePayload.transcript));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setResumeError(
+            error instanceof Error ? error.message : "Unable to restore session",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsRestoringSession(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editor, sessionId]);
+
+  useEffect(() => {
+    if (!editor || !sessionId) {
+      return;
+    }
+
+    const handleBeforeUnload = () => {
+      void saveCheckpoint("before_unload", "frontend_manual");
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      void saveCheckpoint("disconnect", "frontend_manual");
+    };
+  }, [editor, saveCheckpoint, sessionId]);
+
+  useEffect(() => {
+    const latestEvent = ws.eventLog[ws.eventLog.length - 1];
+    if (
+      latestEvent &&
+      latestEvent.type === "system" &&
+      latestEvent.content === "Turn complete"
+    ) {
+      void saveCheckpoint("turn_complete", "frontend_manual");
+    }
+  }, [saveCheckpoint, ws.eventLog]);
+
   // Custom components to visualize what the agent is doing
   const components: TLComponents = useMemo(() => {
     return {
@@ -215,9 +344,15 @@ export const SessionCanvas: React.FC = () => {
     <>
       <TldrawUiToastsProvider>
         <div className="tldraw-agent-container">
+          <SessionRestoreOverlay
+            isRestoring={isRestoringSession}
+            error={resumeError}
+          />
           <div className="tldraw-canvas" ref={canvasRef}>
             <Tldraw
               persistenceKey={`session-${sessionId}`}
+              onMount={setEditor}
+              licenseKey="tldraw-2026-06-18/WyJIUVlKamNRTCIsWyIqIl0sMTYsIjIwMjYtMDYtMTgiXQ.quVBu6P7tCMq3MRg6LyYhHKOvgiHA4PJpP1CiA3D2qPpLTuOPTHjvNNZjrkyFKtNsrvtiKocSV+PLk44uh6j2Q"
               tools={tools}
               overrides={overrides}
               components={components}
@@ -267,109 +402,9 @@ export const SessionCanvas: React.FC = () => {
 
       {/* Dynamic Island for AI Voice Agent */}
       <DynamicIsland
-        connectionState={testConnState ?? ws.connectionState}
-        talkingState={testTalkState ?? ws.talkingState}
+        connectionState={ws.connectionState}
+        talkingState={ws.talkingState}
       />
-
-      {/* Temporary Test Panel */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: 80,
-          left: 20,
-          zIndex: 99999,
-          background: "white",
-          padding: 12,
-          borderRadius: 8,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-          border: "1px solid #e5e7eb",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            color: "#111827",
-            marginBottom: 4,
-          }}
-        >
-          Dynamic Island Tests
-        </div>
-        <div
-          style={{ display: "flex", gap: 8, flexWrap: "wrap", maxWidth: 300 }}
-        >
-          <button
-            className="mindpad-btn-ghost"
-            style={{ padding: "4px 8px", height: "auto", fontSize: 12 }}
-            onClick={() => {
-              setTestConnState("connecting");
-              setTestTalkState("none");
-            }}
-          >
-            Connecting
-          </button>
-          <button
-            className="mindpad-btn-ghost"
-            style={{ padding: "4px 8px", height: "auto", fontSize: 12 }}
-            onClick={() => {
-              setTestConnState("connected");
-              setTestTalkState("none");
-            }}
-          >
-            Connected (Idle)
-          </button>
-          <button
-            className="mindpad-btn-ghost"
-            style={{ padding: "4px 8px", height: "auto", fontSize: 12 }}
-            onClick={() => {
-              setTestConnState("connected");
-              setTestTalkState("agent");
-            }}
-          >
-            Agent Speaking
-          </button>
-
-          <button
-            className="mindpad-btn-ghost"
-            style={{ padding: "4px 8px", height: "auto", fontSize: 12 }}
-            onClick={() => {
-              setTestConnState("connected");
-              setTestTalkState("thinking");
-            }}
-          >
-            Thinking
-          </button>
-          <button
-            className="mindpad-btn-ghost"
-            style={{ padding: "4px 8px", height: "auto", fontSize: 12 }}
-            onClick={() => {
-              setTestConnState("disconnecting");
-              setTestTalkState("none");
-            }}
-          >
-            Disconnect(ing)
-          </button>
-          <button
-            className="mindpad-btn-ghost"
-            style={{
-              padding: "4px 8px",
-              height: "auto",
-              fontSize: 12,
-              border: "1px solid #ef4444",
-              color: "#ef4444",
-            }}
-            onClick={() => {
-              setTestConnState(null);
-              setTestTalkState(null);
-            }}
-          >
-            Reset to Live
-          </button>
-        </div>
-      </div>
     </>
   );
 };

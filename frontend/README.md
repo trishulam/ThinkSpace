@@ -24,6 +24,26 @@ Run the development server with `yarn dev` or `npm run dev`.
 
 Open `http://localhost:5173/` in your browser to see the app.
 
+## Frontend backend endpoints
+
+This app now supports two separate backend integrations:
+
+- `VITE_AGENT_BACKEND_URL` for the live WebSocket session agent used by `/#/session/:sessionId`
+- `VITE_SESSION_API_BASE_URL` for the FastAPI session-management REST API used by the dashboard and new-session flow
+- `VITE_TLDRAW_AGENT_STREAM_URL` for the original tldraw canvas agent used by `/#/canvas`
+
+### Production example
+
+```bash
+VITE_AGENT_BACKEND_URL=wss://your-gcp-fastapi-domain
+VITE_SESSION_API_BASE_URL=https://your-gcp-fastapi-domain
+VITE_TLDRAW_AGENT_STREAM_URL=https://thinkspace-canvas-agent.pradeeshxdev.workers.dev/stream
+```
+
+If `VITE_TLDRAW_AGENT_STREAM_URL` is not set, the canvas agent falls back to same-origin `/stream`, which is useful for local Cloudflare Worker development.
+
+If `VITE_SESSION_API_BASE_URL` is not set, the frontend derives it from `VITE_AGENT_BACKEND_URL` by converting `ws://` to `http://` and `wss://` to `https://`.
+
 ## Agent overview
 
 With its default configuration, the agent can perform the following actions:

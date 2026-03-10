@@ -6,17 +6,31 @@ import json
 import logging
 import warnings
 from contextlib import suppress
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
 from google.genai import types
+from adk_session_service import create_adk_session_service
+from session_store import (
+    CheckpointCreateRequest,
+    CheckpointRecord,
+    SessionCreateRequest,
+    SessionListResponse,
+    SessionRecord,
+    SessionResumeResponse,
+    TranscriptEntryRecord,
+    TranscriptTurnRecord,
+    create_session_store,
+)
 
 # Load environment variables from .env file BEFORE importing agent
 load_dotenv(Path(__file__).parent / ".env")
@@ -46,13 +60,20 @@ APP_NAME = "bidi-demo"
 # ========================================
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Mount static files
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-# Define your session service
-session_service = InMemorySessionService()
+# Define your session services
+session_service = create_adk_session_service()
+session_store = create_session_store()
 
 # Define your runner
 runner = Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
@@ -66,6 +87,63 @@ runner = Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
 async def root():
     """Serve the index.html page."""
     return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
+@app.get("/v1/sessions", response_model=SessionListResponse)
+async def list_sessions(user_id: str | None = Query(default=None, alias="userId")):
+    """List session metadata for the dashboard."""
+    return SessionListResponse(sessions=session_store.list_sessions(user_id))
+
+
+@app.post("/v1/sessions", response_model=SessionRecord, status_code=201)
+async def create_session(request: SessionCreateRequest):
+    """Create a new session record and initialize ADK session state."""
+    try:
+        session = session_store.create_session(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    await session_service.create_session(
+        app_name=APP_NAME, user_id=session.user_id, session_id=session.session_id
+    )
+    return session
+
+
+@app.get("/v1/sessions/{session_id}/resume", response_model=SessionResumeResponse)
+async def resume_session(session_id: str):
+    """Return session metadata, latest checkpoint, and persisted transcript."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    transcript = session_store.list_turns(session_id)
+    return SessionResumeResponse(
+        session=session,
+        latest_checkpoint=session_store.get_latest_checkpoint(session_id),
+        transcript=transcript,
+    )
+
+
+@app.post(
+    "/v1/sessions/{session_id}/checkpoints",
+    response_model=CheckpointRecord,
+    status_code=201,
+)
+async def create_checkpoint(session_id: str, request: CheckpointCreateRequest):
+    """Store a dummy checkpoint payload for session-management scaffolding."""
+    try:
+        return session_store.create_checkpoint(session_id, request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Session not found") from exc
+
+
+@app.post("/v1/sessions/{session_id}/complete", response_model=SessionRecord)
+async def complete_session(session_id: str):
+    """Mark a session as completed."""
+    try:
+        return session_store.complete_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Session not found") from exc
 
 
 # ========================================
@@ -167,6 +245,58 @@ async def websocket_endpoint(
 
     live_request_queue = LiveRequestQueue()
 
+    # Transcript persistence: shared buffer and lock for upstream/downstream
+    transcript_buffer: list[TranscriptEntryRecord] = []
+    transcript_lock = asyncio.Lock()
+    existing_turns = session_store.list_turns(session_id)
+    turn_sequence = len(existing_turns)
+
+    async def _add_transcript_entry(
+        entry_type: str, content: str, is_partial: bool = False
+    ) -> None:
+        """Append entry to transcript buffer."""
+        async with transcript_lock:
+            transcript_buffer.append(
+                TranscriptEntryRecord(
+                    type=entry_type,
+                    content=content,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    is_partial=is_partial,
+                )
+            )
+
+    async def _persist_turn(status: str = "completed") -> None:
+        """Persist current buffer as a turn and clear it."""
+        nonlocal turn_sequence
+        async with transcript_lock:
+            if not transcript_buffer:
+                return
+            turn_sequence += 1
+            entries = list(transcript_buffer)
+            # Add system entry for turn status (matches frontend display)
+            entries.append(
+                TranscriptEntryRecord(
+                    type="system",
+                    content="Turn complete" if status == "completed" else "Interrupted",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    is_partial=False,
+                )
+            )
+            turn = TranscriptTurnRecord(
+                turn_id=uuid4().hex,
+                sequence=turn_sequence,
+                session_id=session_id,
+                entries=entries,
+                status=status,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            transcript_buffer.clear()
+        try:
+            session_store.create_turn(session_id, turn)
+            logger.debug("Persisted transcript turn %s with %d entries", turn.turn_id, len(turn.entries))
+        except Exception as e:
+            logger.warning("Failed to persist transcript turn: %s", e)
+
     # ========================================
     # Phase 3: Active Session (concurrent bidirectional communication)
     # ========================================
@@ -212,9 +342,11 @@ async def websocket_endpoint(
 
                 # Extract text from JSON and send to LiveRequestQueue
                 if json_message.get("type") == "text":
-                    logger.debug(f"Sending text content: {json_message['text']}")
+                    user_text = json_message.get("text", "")
+                    logger.debug(f"Sending text content: {user_text}")
+                    await _add_transcript_entry("user-text", user_text)
                     content = types.Content(
-                        parts=[types.Part(text=json_message["text"])]
+                        parts=[types.Part(text=user_text)]
                     )
                     live_request_queue.send_content(content)
 
@@ -253,6 +385,39 @@ async def websocket_endpoint(
             event_json = event.model_dump_json(exclude_none=True, by_alias=True)
             logger.debug(f"[SERVER] Event: {event_json}")
             await websocket.send_text(event_json)
+
+            # Parse event for transcript persistence
+            ev = event.model_dump(exclude_none=True, by_alias=True)
+
+            if ev.get("turnComplete"):
+                await _persist_turn("completed")
+                continue
+            if ev.get("interrupted"):
+                await _persist_turn("interrupted")
+                continue
+
+            if ev.get("inputTranscription", {}).get("text"):
+                it = ev["inputTranscription"]
+                await _add_transcript_entry(
+                    "user-transcription",
+                    it["text"],
+                    is_partial=not it.get("finished", False),
+                )
+            if ev.get("outputTranscription", {}).get("text"):
+                ot = ev["outputTranscription"]
+                await _add_transcript_entry(
+                    "agent-transcription",
+                    ot["text"],
+                    is_partial=not ot.get("finished", False),
+                )
+            if ev.get("content", {}).get("parts"):
+                for part in ev["content"]["parts"]:
+                    if part.get("text") and not part.get("thought"):
+                        await _add_transcript_entry(
+                            "agent-text",
+                            part["text"],
+                            is_partial=bool(ev.get("partial")),
+                        )
         logger.debug("run_live() generator completed")
 
     # Run both tasks concurrently

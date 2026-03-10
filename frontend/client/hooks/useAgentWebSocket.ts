@@ -22,6 +22,30 @@ interface UseAgentWebSocketOptions {
 	sessionId: string
 	onPlayAudio?: (base64Data: string) => void
 	onStopPlayback?: () => void
+	/** Persisted transcript entries to restore on mount (e.g. from session resume). */
+	initialEventLog?: AgentLogEntry[]
+}
+
+function getAgentWebSocketBaseUrl(): string {
+	const configuredUrl = import.meta.env.VITE_AGENT_BACKEND_URL?.trim()
+	if (configuredUrl) {
+		if (configuredUrl.startsWith('https://')) {
+			return `wss://${configuredUrl.slice('https://'.length)}`
+		}
+		if (configuredUrl.startsWith('http://')) {
+			return `ws://${configuredUrl.slice('http://'.length)}`
+		}
+		return configuredUrl
+	}
+
+	if (
+		window.location.hostname === 'localhost' ||
+		window.location.hostname === '127.0.0.1'
+	) {
+		return 'ws://localhost:8000'
+	}
+
+	return `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
 }
 
 const NORMAL_SUBTITLE_LINGER_MS = 1600
@@ -53,6 +77,7 @@ export function useAgentWebSocket({
 	sessionId,
 	onPlayAudio,
 	onStopPlayback,
+	initialEventLog,
 }: UseAgentWebSocketOptions) {
 	const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
 	const [talkingState, setTalkingState] = useState<TalkingState>('none')
@@ -62,6 +87,7 @@ export function useAgentWebSocket({
 	const wsRef = useRef<WebSocket | null>(null)
 	const intentionalDisconnectRef = useRef(false)
 	const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const hasAppliedInitialLogRef = useRef(false)
 	const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const subtitleRevealLoopRef = useRef<ReturnType<typeof setInterval> | null>(null)
 	const subtitleReceivedTextRef = useRef('')
@@ -97,7 +123,20 @@ export function useAgentWebSocket({
 
 	const clearLog = useCallback(() => {
 		setEventLog([])
+		hasAppliedInitialLogRef.current = false
 	}, [])
+
+	// Restore persisted transcript when initialEventLog becomes available (e.g. from session resume)
+	useEffect(() => {
+		if (
+			initialEventLog &&
+			initialEventLog.length > 0 &&
+			!hasAppliedInitialLogRef.current
+		) {
+			hasAppliedInitialLogRef.current = true
+			setEventLog(initialEventLog)
+		}
+	}, [initialEventLog])
 
 	const clearSubtitleTimer = useCallback(() => {
 		if (subtitleTimerRef.current) {
@@ -316,7 +355,7 @@ export function useAgentWebSocket({
 		// Connect directly to the backend. The Cloudflare Vite plugin intercepts
 		// upgrade requests before the Vite proxy can forward them, so we bypass
 		// the proxy and connect to the FastAPI backend directly.
-		const backendHost = import.meta.env.VITE_AGENT_BACKEND_URL || 'ws://localhost:8000'
+		const backendHost = getAgentWebSocketBaseUrl()
 		const wsUrl = `${backendHost}/ws/${userId}/${sessionId}`
 
 		const ws = new WebSocket(wsUrl)

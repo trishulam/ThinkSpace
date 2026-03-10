@@ -12,7 +12,9 @@
 	"scripts": {
 		"build": "vite build",
 		"dev": "vite",
-		"preview": "vite preview"
+		"preview": "vite preview",
+		"cf:deploy": "npm run build && wrangler deploy",
+		"cf:tail": "wrangler tail"
 	},
 	"dependencies": {
 		"@ai-sdk/anthropic": "^2.0.2",

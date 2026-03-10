@@ -683,7 +683,8 @@ export class TldrawAgent {
 		prompt: BaseAgentPrompt
 		signal: AbortSignal
 	}): AsyncGenerator<Streaming<AgentAction>> {
-		const res = await fetch('/stream', {
+		const streamUrl = import.meta.env.VITE_TLDRAW_AGENT_STREAM_URL || '/stream'
+		const res = await fetch(streamUrl, {
 			method: 'POST',
 			body: JSON.stringify(prompt),
 			headers: {

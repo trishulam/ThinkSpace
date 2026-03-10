@@ -1744,3 +1744,182 @@ button.prompt-tag span {
     width: 100vw;
   }
 }
+
+/* ============================================
+   Session Restore Overlay
+   ============================================ */
+
+.session-restore-overlay {
+  position: absolute;
+  inset: 0;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: session-restore-fade-in 0.3s ease-out;
+}
+
+.session-restore-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(15, 23, 42, 0.97) 0%,
+    rgba(30, 41, 59, 0.96) 50%,
+    rgba(15, 23, 42, 0.97) 100%
+  );
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.session-restore-overlay__content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 40px;
+  border-radius: 20px;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+@keyframes session-restore-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Loading state */
+.session-restore-overlay__loader {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin-bottom: 24px;
+}
+
+.session-restore-overlay__loader-ring {
+  position: absolute;
+  inset: 0;
+  border: 3px solid rgba(148, 163, 184, 0.2);
+  border-top-color: #10b981;
+  border-radius: 50%;
+  animation: session-restore-spin 0.9s linear infinite;
+}
+
+.session-restore-overlay__loader-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #10b981;
+  animation: session-restore-icon-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes session-restore-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes session-restore-icon-pulse {
+  0%,
+  100% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.95);
+  }
+}
+
+.session-restore-overlay__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #f8fafc;
+  letter-spacing: -0.02em;
+}
+
+.session-restore-overlay__subtitle {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.session-restore-overlay__dots {
+  display: flex;
+  gap: 6px;
+  margin-top: 20px;
+}
+
+.session-restore-overlay__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  animation: session-restore-dot-bounce 1.4s ease-in-out infinite;
+}
+
+.session-restore-overlay__dot:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.session-restore-overlay__dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.session-restore-overlay__dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes session-restore-dot-bounce {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+/* Error state */
+.session-restore-overlay__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.session-restore-overlay__error-icon {
+  color: #f87171;
+  margin-bottom: 16px;
+}
+
+.session-restore-overlay__error-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.session-restore-overlay__error-message {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: #94a3b8;
+  max-width: 320px;
+  line-height: 1.5;
+}

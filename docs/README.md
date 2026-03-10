@@ -13,6 +13,9 @@ This directory contains shared architecture and product-design notes for the pro
 - `adk-live-integration.md`
   Official-ADK-aligned notes for how Google ADK Live maps onto the ThinkSpace architecture, including `send_content()`, `send_realtime()`, `run_live()`, event handling, modality constraints, and tool execution implications.
 
+- `session-persistence-architecture.md`
+  Shared persistence design for durable session management across the GCP frontend, Cloudflare canvas agent, and GCP FastAPI ADK backend, including session metadata, transcript storage, Tldraw checkpointing, and resume flows.
+
 ## Related
 
 - `../PROACTIVE_TUTOR_ARCHITECTURE.md`

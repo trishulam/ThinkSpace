@@ -4,7 +4,8 @@ import { NewSessionData } from '../types/session'
 interface NewSessionModalProps {
   isOpen: boolean
   onClose: () => void
-  onCreateSession: (data: NewSessionData) => void
+  onCreateSession: (data: NewSessionData) => Promise<void> | void
+  isSubmitting?: boolean
 }
 
 const XIcon: React.FC<{ className?: string }> = ({ className = "" }) => (
@@ -16,7 +17,8 @@ const XIcon: React.FC<{ className?: string }> = ({ className = "" }) => (
 export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   isOpen,
   onClose,
-  onCreateSession
+  onCreateSession,
+  isSubmitting = false
 }) => {
   const [formData, setFormData] = useState<NewSessionData>({
     topic: '',
@@ -27,7 +29,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
 
   const [errors, setErrors] = useState<{ topic?: string }>({})
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
     // Validation
@@ -42,13 +44,12 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     }
 
     // Create session
-    onCreateSession({
+    await onCreateSession({
       ...formData,
       topic: formData.topic.trim(),
       goal: formData.goal?.trim() || undefined
     })
-    
-    // Reset form
+
     setFormData({
       topic: '',
       goal: '',
@@ -56,7 +57,6 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
       level: 'beginner'
     })
     setErrors({})
-    onClose()
   }
 
   const handleCancel = () => {
@@ -81,7 +81,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   if (!isOpen) return null
 
   return (
-    <div className="mindpad-modal-overlay" onClick={handleCancel}>
+    <div className="mindpad-modal-overlay" onClick={isSubmitting ? undefined : handleCancel}>
       <div className="mindpad-modal" onClick={(e) => e.stopPropagation()}>
         <div className="mindpad-modal-header">
           <h2 className="mindpad-modal-title">Start a New Session</h2>
@@ -89,6 +89,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
             onClick={handleCancel}
             className="mindpad-modal-close"
             type="button"
+            disabled={isSubmitting}
           >
             <XIcon className="mindpad-modal-close-icon" />
           </button>
@@ -109,6 +110,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                 value={formData.topic}
                 onChange={(e) => handleInputChange('topic', e.target.value)}
                 autoFocus
+                disabled={isSubmitting}
               />
               {errors.topic && (
                 <span className="mindpad-form-error-text">{errors.topic}</span>
@@ -127,6 +129,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                 placeholder="Understand gradient flow intuitively"
                 value={formData.goal}
                 onChange={(e) => handleInputChange('goal', e.target.value)}
+                disabled={isSubmitting}
               />
             </div>
 
@@ -138,6 +141,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                   type="button"
                   className={`mindpad-segmented-option ${formData.mode === 'guided' ? 'active' : ''}`}
                   onClick={() => handleInputChange('mode', 'guided')}
+                  disabled={isSubmitting}
                 >
                   Guided
                 </button>
@@ -145,6 +149,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                   type="button"
                   className={`mindpad-segmented-option ${formData.mode === 'socratic' ? 'active' : ''}`}
                   onClick={() => handleInputChange('mode', 'socratic')}
+                  disabled={isSubmitting}
                 >
                   Socratic
                 </button>
@@ -152,6 +157,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                   type="button"
                   className={`mindpad-segmented-option ${formData.mode === 'challenge' ? 'active' : ''}`}
                   onClick={() => handleInputChange('mode', 'challenge')}
+                  disabled={isSubmitting}
                 >
                   Challenge
                 </button>
@@ -168,6 +174,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                   id="level"
                   value={formData.level}
                   onChange={(e) => handleInputChange('level', e.target.value as 'beginner' | 'intermediate' | 'advanced')}
+                  disabled={isSubmitting}
                 >
                   <option value="beginner">Beginner</option>
                   <option value="intermediate">Intermediate</option>
@@ -183,14 +190,16 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
               type="button"
               className="mindpad-btn-ghost"
               onClick={handleCancel}
+              disabled={isSubmitting}
             >
               Cancel
             </button>
             <button
               type="submit"
               className="mindpad-btn-primary"
+              disabled={isSubmitting}
             >
-              Create Session
+              {isSubmitting ? 'Creating...' : 'Create Session'}
             </button>
           </div>
         </form>

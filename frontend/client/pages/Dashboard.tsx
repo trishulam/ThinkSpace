@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSession } from "../context/SessionContext";
 import { TopNavigation } from "../components/TopNavigation";
@@ -30,24 +30,23 @@ const SkeletonRows: React.FC = () => (
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { sessions, createSession } = useSession();
+  const { sessions, createSession, isLoading, error } = useSession();
   const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setIsLoading(false), 480);
-    return () => clearTimeout(timer);
-  }, []);
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
 
   const handleNewSession = () => setIsNewSessionModalOpen(true);
 
-  const handleCreateSession = (data: NewSessionData) => {
-    const newSession = createSession({
-      ...data,
-      lastActive: new Date(),
-      duration: 0,
-    });
-    navigate(`/session/${newSession.id}`);
+  const handleCreateSession = async (data: NewSessionData) => {
+    setIsCreatingSession(true);
+    try {
+      const newSession = await createSession(data);
+      setIsNewSessionModalOpen(false);
+      navigate(`/session/${newSession.id}`);
+    } catch {
+      // The shared session context already exposes the API error message.
+    } finally {
+      setIsCreatingSession(false);
+    }
   };
 
   const handleResumeSession = (sessionId: string) =>
@@ -67,6 +66,12 @@ export const Dashboard: React.FC = () => {
             <span className="ts-section-count">{sessions.length}</span>
           )}
         </div>
+
+        {error && (
+          <p className="mindpad-page-subtitle" style={{ marginBottom: 16 }}>
+            {error}
+          </p>
+        )}
 
         {/* Content */}
         {isLoading ? (
@@ -91,6 +96,7 @@ export const Dashboard: React.FC = () => {
         isOpen={isNewSessionModalOpen}
         onClose={() => setIsNewSessionModalOpen(false)}
         onCreateSession={handleCreateSession}
+        isSubmitting={isCreatingSession}
       />
     </div>
   );
