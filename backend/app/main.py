@@ -23,7 +23,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 # Import agent after loading environment variables
 # pylint: disable=wrong-import-position
-from google_search_agent.agent import agent  # noqa: E402
+from thinkspace_agent.agent import agent  # noqa: E402
 
 # Configure logging
 logging.basicConfig(
