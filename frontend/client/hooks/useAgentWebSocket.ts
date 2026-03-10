@@ -11,6 +11,12 @@ function nextLogId(): string {
 	return `log-${Date.now()}-${++logIdCounter}`
 }
 
+function base64AudioByteLength(base64: string): number {
+	const normalized = base64.replace(/-/g, '+').replace(/_/g, '/')
+	const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0
+	return Math.floor((normalized.length * 3) / 4) - padding
+}
+
 interface UseAgentWebSocketOptions {
 	userId: string
 	sessionId: string
@@ -21,7 +27,14 @@ interface UseAgentWebSocketOptions {
 const NORMAL_SUBTITLE_LINGER_MS = 1600
 const INTERRUPTED_FINAL_LINGER_MS = 500
 const INTERRUPTED_PARTIAL_LINGER_MS = 120
-const BASE_REVEAL_CPS = 15
+const BASE_REVEAL_CPS = 14
+const MIN_REVEAL_CPS = 12.5
+const MAX_REVEAL_CPS = 16.5
+const MIN_AUDIO_MS_FOR_ADJUSTMENT = 600
+const MIN_TEXT_LENGTH_FOR_ADJUSTMENT = 24
+const CPS_SMOOTHING_FACTOR = 0.2
+const OUTPUT_AUDIO_SAMPLE_RATE = 24000
+const OUTPUT_AUDIO_BYTES_PER_SAMPLE = 2
 const REVEAL_TICK_MS = 50
 
 const EMPTY_SUBTITLE: AgentSubtitleState = {
@@ -54,6 +67,9 @@ export function useAgentWebSocket({
 	const subtitleReceivedTextRef = useRef('')
 	const subtitleRevealedLengthRef = useRef(0)
 	const subtitleRevealCarryRef = useRef(0)
+	const subtitleAudioDurationMsRef = useRef(0)
+	const currentRevealCpsRef = useRef(BASE_REVEAL_CPS)
+	const targetRevealCpsRef = useRef(BASE_REVEAL_CPS)
 	const hasOutputTranscriptionRef = useRef(false)
 	const hasFinalSubtitleRef = useRef(false)
 	const pendingTurnCompleteRef = useRef(false)
@@ -103,6 +119,9 @@ export function useAgentWebSocket({
 		subtitleReceivedTextRef.current = ''
 		subtitleRevealedLengthRef.current = 0
 		subtitleRevealCarryRef.current = 0
+		subtitleAudioDurationMsRef.current = 0
+		currentRevealCpsRef.current = BASE_REVEAL_CPS
+		targetRevealCpsRef.current = BASE_REVEAL_CPS
 		hasOutputTranscriptionRef.current = false
 		hasFinalSubtitleRef.current = false
 		pendingTurnCompleteRef.current = false
@@ -128,6 +147,9 @@ export function useAgentWebSocket({
 				subtitleReceivedTextRef.current = ''
 				subtitleRevealedLengthRef.current = 0
 				subtitleRevealCarryRef.current = 0
+				subtitleAudioDurationMsRef.current = 0
+				currentRevealCpsRef.current = BASE_REVEAL_CPS
+				targetRevealCpsRef.current = BASE_REVEAL_CPS
 				pendingTurnCompleteRef.current = false
 				setAgentSubtitle(EMPTY_SUBTITLE)
 			}, delayMs)
@@ -165,8 +187,12 @@ export function useAgentWebSocket({
 				return
 			}
 
+			currentRevealCpsRef.current =
+				currentRevealCpsRef.current +
+				(targetRevealCpsRef.current - currentRevealCpsRef.current) * CPS_SMOOTHING_FACTOR
 			const revealAmount =
-				BASE_REVEAL_CPS * (REVEAL_TICK_MS / 1000) + subtitleRevealCarryRef.current
+				currentRevealCpsRef.current * (REVEAL_TICK_MS / 1000) +
+				subtitleRevealCarryRef.current
 			const wholeChars = Math.max(1, Math.floor(revealAmount))
 			subtitleRevealCarryRef.current = revealAmount - wholeChars
 
@@ -190,6 +216,26 @@ export function useAgentWebSocket({
 		}, REVEAL_TICK_MS)
 	}, [clearRevealLoop, scheduleSubtitleClear])
 
+	const updateTargetRevealCps = useCallback(() => {
+		const receivedTextLength = subtitleReceivedTextRef.current.length
+		const audioDurationMs = subtitleAudioDurationMsRef.current
+
+		if (
+			audioDurationMs < MIN_AUDIO_MS_FOR_ADJUSTMENT ||
+			receivedTextLength < MIN_TEXT_LENGTH_FOR_ADJUSTMENT
+		) {
+			targetRevealCpsRef.current = BASE_REVEAL_CPS
+			return
+		}
+
+		const audioDurationSeconds = audioDurationMs / 1000
+		const rawCps = receivedTextLength / audioDurationSeconds
+		targetRevealCpsRef.current = Math.min(
+			MAX_REVEAL_CPS,
+			Math.max(MIN_REVEAL_CPS, rawCps)
+		)
+	}, [])
+
 	const updateSubtitleFromOutput = useCallback(
 		(textChunk: string, isFinal: boolean) => {
 			clearSubtitleTimer()
@@ -202,6 +248,7 @@ export function useAgentWebSocket({
 				: `${subtitleReceivedTextRef.current}${textChunk}`
 			subtitleReceivedTextRef.current = nextText
 			hasFinalSubtitleRef.current = isFinal
+			updateTargetRevealCps()
 
 			setAgentSubtitle((current) => ({
 				...current,
@@ -216,7 +263,7 @@ export function useAgentWebSocket({
 				updatedAt: Date.now(),
 			}))
 		},
-		[clearSubtitleTimer, startRevealLoop]
+		[clearSubtitleTimer, startRevealLoop, updateTargetRevealCps]
 	)
 
 	const updateSubtitleFromTextFallback = useCallback(
@@ -231,6 +278,7 @@ export function useAgentWebSocket({
 				: textChunk
 			subtitleReceivedTextRef.current = nextText
 			hasFinalSubtitleRef.current = !isPartial
+			updateTargetRevealCps()
 
 			setAgentSubtitle((current) => ({
 				...current,
@@ -245,7 +293,7 @@ export function useAgentWebSocket({
 				updatedAt: Date.now(),
 			}))
 		},
-		[clearSubtitleTimer, startRevealLoop]
+		[clearSubtitleTimer, startRevealLoop, updateTargetRevealCps]
 	)
 
 	useEffect(() => {
@@ -376,6 +424,13 @@ export function useAgentWebSocket({
 					if (part.inlineData) {
 						const mimeType: string = part.inlineData.mimeType || ''
 						if (mimeType.startsWith('audio/pcm')) {
+							const byteLength = base64AudioByteLength(part.inlineData.data)
+							const chunkDurationMs =
+								(byteLength /
+									(OUTPUT_AUDIO_SAMPLE_RATE * OUTPUT_AUDIO_BYTES_PER_SAMPLE)) *
+								1000
+							subtitleAudioDurationMsRef.current += chunkDurationMs
+							updateTargetRevealCps()
 							onPlayAudioRef.current?.(part.inlineData.data)
 							setTalkingState('agent')
 						}
@@ -436,6 +491,7 @@ export function useAgentWebSocket({
 		addLogEntry,
 		resetSubtitle,
 		scheduleSubtitleClear,
+		updateTargetRevealCps,
 		updateSubtitleFromOutput,
 		updateSubtitleFromTextFallback,
 	])
