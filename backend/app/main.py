@@ -38,6 +38,9 @@ load_dotenv(Path(__file__).parent / ".env")
 # Import agent after loading environment variables
 # pylint: disable=wrong-import-position
 from thinkspace_agent.agent import agent  # noqa: E402
+from thinkspace_agent.tools.canvas_visual_jobs import (  # noqa: E402
+    canvas_visual_job_outbox,
+)
 from thinkspace_agent.tools.flashcard_jobs import (  # noqa: E402
     flashcard_job_outbox,
     flashcard_session_store,
@@ -305,6 +308,22 @@ def _apply_flashcard_ack_state(
 
     return None
 
+
+def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
+    action_type = ack["action_type"]
+    status = ack["status"]
+
+    if action_type != "canvas.insert_visual":
+        return None
+
+    if status != "applied":
+        return None
+
+    summary = ack.get("summary")
+    if summary:
+        return f"The visual is now inserted on the canvas. {summary}"
+    return "The visual is now inserted on the canvas."
+
 # ========================================
 # Phase 1: Application Initialization (once at startup)
 # ========================================
@@ -494,7 +513,12 @@ async def websocket_endpoint(
         )
 
     live_request_queue = LiveRequestQueue()
-    background_result_queue = await flashcard_job_outbox.subscribe(user_id, session_id)
+    flashcard_background_result_queue = await flashcard_job_outbox.subscribe(
+        user_id, session_id
+    )
+    canvas_background_result_queue = await canvas_visual_job_outbox.subscribe(
+        user_id, session_id
+    )
 
     # Transcript persistence: shared buffer and lock for upstream/downstream
     transcript_buffer: list[TranscriptEntryRecord] = []
@@ -547,6 +571,17 @@ async def websocket_endpoint(
             logger.debug("Persisted transcript turn %s with %d entries", turn.turn_id, len(turn.entries))
         except Exception as e:
             logger.warning("Failed to persist transcript turn: %s", e)
+
+    async def _send_frontend_action_message(frontend_action: dict[str, object]) -> None:
+        logger.debug("Sending frontend action: %s", json.dumps(frontend_action))
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "frontend_action",
+                    "action": frontend_action,
+                }
+            )
+        )
 
     # ========================================
     # Phase 3: Active Session (concurrent bidirectional communication)
@@ -633,9 +668,11 @@ async def websocket_endpoint(
                         user_id,
                         session_id,
                     )
+                    if semantic_text is None:
+                        semantic_text = _apply_canvas_ack_state(ack)
                     if semantic_text:
                         logger.debug(
-                            "Sending flashcard creation semantic update: %s",
+                            "Sending frontend acknowledgement semantic update: %s",
                             semantic_text,
                         )
                         content = types.Content(parts=[types.Part(text=semantic_text)])
@@ -694,31 +731,27 @@ async def websocket_endpoint(
                             is_partial=bool(ev.get("partial")),
                         )
             if frontend_action is not None:
-                logger.debug(
-                    "Sending frontend action: %s", json.dumps(frontend_action)
-                )
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "frontend_action",
-                            "action": frontend_action,
-                        }
-                    )
-                )
+                await _send_frontend_action_message(frontend_action)
         logger.debug("run_live() generator completed")
 
-    async def background_tool_result_task() -> None:
-        """Relays background tool results to the websocket session."""
+    async def background_tool_result_task(
+        *,
+        result_queue: asyncio.Queue[dict[str, object]],
+        task_label: str,
+    ) -> None:
+        """Relay background tool results to the websocket session."""
 
         logger.debug(
-            "background_tool_result_task started for user_id=%s, session_id=%s",
+            "%s started for user_id=%s, session_id=%s",
+            task_label,
             user_id,
             session_id,
         )
         while True:
-            result = await background_result_queue.get()
+            result = await result_queue.get()
             logger.debug(
-                "Sending background tool result: %s",
+                "Sending background tool result from %s: %s",
+                task_label,
                 json.dumps(result),
             )
             await websocket.send_text(
@@ -726,32 +759,36 @@ async def websocket_endpoint(
             )
             frontend_action = extract_frontend_action(result)
             if frontend_action is not None:
-                logger.debug(
-                    "Sending background frontend action: %s",
-                    json.dumps(frontend_action),
-                )
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "frontend_action",
-                            "action": frontend_action,
-                        }
-                    )
-                )
+                await _send_frontend_action_message(frontend_action)
 
     # Run both tasks concurrently
     # Exceptions from either task will propagate and cancel the other task
     upstream = asyncio.create_task(upstream_task(), name="websocket-upstream")
     downstream = asyncio.create_task(downstream_task(), name="websocket-downstream")
-    background_results = asyncio.create_task(
-        background_tool_result_task(),
-        name="websocket-background-tool-results",
+    flashcard_background_results = asyncio.create_task(
+        background_tool_result_task(
+            result_queue=flashcard_background_result_queue,
+            task_label="flashcard_background_tool_result_task",
+        ),
+        name="websocket-flashcard-background-tool-results",
+    )
+    canvas_background_results = asyncio.create_task(
+        background_tool_result_task(
+            result_queue=canvas_background_result_queue,
+            task_label="canvas_background_tool_result_task",
+        ),
+        name="websocket-canvas-background-tool-results",
     )
 
     try:
         logger.debug("Starting asyncio.gather for upstream and downstream tasks")
         done, _ = await asyncio.wait(
-            {upstream, downstream, background_results},
+            {
+                upstream,
+                downstream,
+                flashcard_background_results,
+                canvas_background_results,
+            },
             return_when=asyncio.FIRST_COMPLETED,
         )
         logger.debug("One websocket task completed, beginning shutdown")
@@ -776,13 +813,28 @@ async def websocket_endpoint(
         await flashcard_job_outbox.unsubscribe(
             user_id,
             session_id,
-            background_result_queue,
+            flashcard_background_result_queue,
+        )
+        await canvas_visual_job_outbox.unsubscribe(
+            user_id,
+            session_id,
+            canvas_background_result_queue,
         )
 
-        for task in (upstream, downstream, background_results):
+        for task in (
+            upstream,
+            downstream,
+            flashcard_background_results,
+            canvas_background_results,
+        ):
             if not task.done():
                 task.cancel()
 
-        for task in (upstream, downstream, background_results):
+        for task in (
+            upstream,
+            downstream,
+            flashcard_background_results,
+            canvas_background_results,
+        ):
             with suppress(asyncio.CancelledError):
                 await task

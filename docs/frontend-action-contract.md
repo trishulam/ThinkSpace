@@ -90,6 +90,7 @@ Action-specific data needed by the frontend to execute the action.
 
 ## Locked V1 Action Types
 
+- `canvas.job_started`
 - `canvas.insert_visual`
 - `canvas.insert_widget`
 - `flashcards.show`
@@ -100,6 +101,23 @@ Action-specific data needed by the frontend to execute the action.
 
 ## Action Meanings
 
+### `canvas.job_started`
+
+Enter a lightweight toast-style loading state for a long-running canvas job.
+
+Typical sources:
+
+- `canvas.generate_visual`
+- `canvas.generate_widget`
+- `canvas.enhance`
+
+Behavior notes:
+
+- this is a lightweight loading affordance, not a separate job dashboard
+- the payload should stay small and user-facing
+- the toast can be cleared when the final visible insertion action arrives or
+  when the job fails
+
 ### `canvas.insert_visual`
 
 Insert a generated visual artifact into the canvas.
@@ -109,12 +127,21 @@ Typical sources:
 - `canvas.generate_visual`
 - `canvas.enhance`
 
-Payload will likely need:
+Locked E1 payload direction:
 
-- visual asset reference or URL
-- placement data
-- size data
-- optional title or label metadata
+- `artifact_id`
+- `image_url`
+- `title`
+- `caption?`
+- `x`
+- `y`
+- `w`
+- `h`
+
+Locked E1 placement direction:
+
+- the planner determines exact bounded geometry for insertion
+- the frontend should apply the image exactly at the provided `x/y/w/h`
 
 ### `canvas.insert_widget`
 

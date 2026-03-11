@@ -630,12 +630,21 @@
  * Base notch shell — flush with top of viewport.
  * Only bottom corners are rounded; top edge merges with browser chrome.
  */
-.ts-notch {
+.ts-notch-stack {
   position: fixed;
   top: 0;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.ts-notch {
+  position: relative;
+  z-index: 1;
 
   /* Size — transitions smoothly between states */
   width: 130px;
@@ -665,6 +674,92 @@
   will-change: width, height;
   contain: layout style paint;
   isolation: isolate;
+}
+
+.ts-notch-status {
+  margin-top: 8px;
+  min-width: 0;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 0;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(
+    180deg,
+    rgba(17, 18, 20, 0.82) 0%,
+    rgba(17, 18, 20, 0.74) 100%
+  );
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px) saturate(115%);
+  color: rgba(248, 250, 252, 0.92);
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  transition:
+    opacity 180ms ease,
+    transform 220ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+  overflow: hidden;
+}
+
+.ts-notch-status.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.ts-notch-status.is-error {
+  border-color: rgba(248, 113, 113, 0.22);
+  box-shadow:
+    0 12px 34px rgba(127, 29, 29, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.ts-notch-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 8px 12px 4px;
+}
+
+.ts-notch-status-indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: rgba(52, 211, 153, 0.92);
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.36);
+}
+
+.ts-notch-status-indicator.is-loading {
+  animation: notchDotIdle 1.1s ease-in-out infinite;
+}
+
+.ts-notch-status.is-error .ts-notch-status-indicator {
+  background: rgba(248, 113, 113, 0.95);
+  box-shadow: 0 0 12px rgba(248, 113, 113, 0.32);
+}
+
+.ts-notch-status-title {
+  max-width: 100%;
+  font-family: var(--mindpad-font-family);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ts-notch-status-message {
+  padding: 0 12px 10px;
+  text-align: center;
+  font-family: var(--mindpad-font-family);
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgba(226, 232, 240, 0.72);
 }
 
 /* Inner layout container */
@@ -937,6 +1032,10 @@
 
 /* Mobile: slightly smaller notch */
 @media (max-width: 768px) {
+  .ts-notch-stack {
+    width: calc(100vw - 24px);
+  }
+
   .ts-notch {
     width: 110px;
     height: 28px;
@@ -964,6 +1063,28 @@
   .ts-notch-waveform-bar {
     width: 2.5px;
   }
+
+  .ts-notch-status {
+    max-width: min(320px, calc(100vw - 24px));
+    margin-top: 7px;
+    border-radius: 14px;
+  }
+
+  .ts-notch-status-row {
+    min-height: 30px;
+    padding: 7px 11px 3px;
+    gap: 7px;
+  }
+
+  .ts-notch-status-title {
+    font-size: 11px;
+  }
+
+  .ts-notch-status-message {
+    font-size: 10px;
+    padding: 0 11px 9px;
+  }
+
   @keyframes notchWavePulse {
     0% {
       height: 4px;

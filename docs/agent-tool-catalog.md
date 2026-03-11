@@ -47,7 +47,12 @@ Examples:
 
 Behavior notes:
 
-- placement is primarily viewport-based
+- the orchestrator should provide the full semantic brief for what to generate
+- image generation and placement planning should run in parallel
+- placement planning should reuse the same hybrid bounded context style already
+  used by the tldraw canvas agent
+- placement may use an optional semantic placement hint, but the planner should
+  still choose the final bounded geometry
 - this uses direct output insertion rather than the full tldraw agent path
 
 ### `canvas.generate_widget`
@@ -131,9 +136,12 @@ Design rule:
 
 For generated visuals and widgets, the current v1 direction is:
 
-- placement should be fast and simple
+- placement should reuse the same hybrid bounded context primitives already used
+  by the tldraw canvas agent
 - placement should run in parallel with generation work where possible
-- viewport is the primary placement anchor
+- the orchestrator may supply a semantic placement hint
+- viewport remains the default anchor when no stronger cue is provided
+- the placement planner should choose final bounded `x/y/w/h`
 - selection helps determine enhancement targets, but not the default placement
   anchor for generated outputs
 

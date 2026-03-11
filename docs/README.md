@@ -21,6 +21,11 @@ This directory contains shared architecture and product-design notes for the pro
   Working scratchpad for Story Group D. Use this as the tactical thinking pad
   for sequencing flashcard implementation across frontend and backend.
 
+- `image-output-and-enhancement-scratchpad.md`
+  Working scratchpad for Story Group E. Use this as the tactical thinking pad
+  for locking `canvas.generate_visual` scope, contracts, and phased
+  implementation before coding.
+
 - `implementation-stories.md`
   Ordered implementation story plan with dependencies, tasks, execution notes, and a two-day coding sequence for building the full proactive tutor system.
 

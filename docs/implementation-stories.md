@@ -530,6 +530,53 @@ Make the tutor able to create polished visual artifacts and place them into the 
 
 This is one of the most magical parts of the product.
 
+### Current Tracking Status
+
+Story Group E now has a working scratchpad in
+`docs/image-output-and-enhancement-scratchpad.md`.
+
+Current implementation status:
+
+- E1 is now implemented as the first working slice for Story Group E
+- `canvas.generate_visual` is wired as a long-running backend tool
+- accepted-state UX is now implemented through `canvas.job_started`
+- frontend insertion is now implemented through `canvas.insert_visual`
+- current live placement implementation is still simple and deterministic, but
+  the next locked E1 refinement is to move `canvas.generate_visual` to a real
+  placement planner
+- successful `canvas.insert_visual` acknowledgement now triggers one semantic
+  completion update back into the live agent loop
+- the current visual-generation path now uses a planner model plus
+  `gemini-2.5-flash-image` for image output
+- the canvas loading affordance is now presented as a subtle notch-attached
+  status surface rather than a generic floating toast
+- the locked direction for the next E1 refinement is:
+  - the orchestrator provides the full visual brief
+  - image generation and placement planning run in parallel
+  - the orchestrator may provide `aspect_ratio_hint` and `placement_hint`
+  - the placement planner should reuse the same hybrid bounded context style as
+    the tldraw canvas agent
+  - the placement planner should return final bounded `x/y/w/h`
+
+Current boundary:
+
+- `canvas.enhance`, `canvas.generate_widget`, and `canvas.delegate_task` are not
+  part of the first implementation slice
+- Story Group E should reuse the typed tool-result plus frontend-action plus
+  frontend-ack loop already proven by flashcards rather than inventing a new
+  transport path
+- E1 still inserts only one new static visual and does not yet inspect selected
+  content as an enhancement target
+- `canvas.enhance`, `canvas.generate_widget`, and `canvas.delegate_task` remain
+  outside the current implementation slice while the richer `generate_visual`
+  placement contract is being locked
+
+Recommended next implementation target:
+
+- Story E2: Enhancement Planner
+- add the decision layer that determines when to enhance existing selection or
+  viewport context and what kind of artifact should be created
+
 ### Stories
 
 #### Story E1: Generic Image Output Tool

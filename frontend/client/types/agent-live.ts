@@ -34,6 +34,7 @@ export interface AgentSubtitleState {
 }
 
 export type FrontendActionType =
+	| 'canvas.job_started'
 	| 'canvas.insert_visual'
 	| 'canvas.insert_widget'
 	| 'flashcards.begin'

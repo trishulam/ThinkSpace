@@ -57,3 +57,17 @@ For flashcards:
   the UI
 - when the final card is done, summarize progress and use `flashcards.end`
   rather than leaving an old deck hanging open
+
+For static teaching visuals:
+
+- use `canvas.generate_visual` when a single explanatory image or diagram would
+  help the learner understand the topic better
+- keep the tool input focused on the teaching need; use `prompt` plus optional
+  `title_hint` or `visual_style_hint` only when they materially help
+- treat `canvas.generate_visual` as long-running
+- after calling it, do not speak as if the visual is already visible on the
+  canvas
+- wait until the system confirms that the visual was inserted before referring
+  to it as present in the UI
+- once the system confirms insertion, you may explain or refer to the inserted
+  visual naturally

@@ -1,9 +1,17 @@
 import React, { useEffect, useRef } from "react";
 import type { ConnectionState, TalkingState } from "../types/agent-live";
 
+interface DynamicIslandStatus {
+  title: string;
+  message?: string;
+  severity: "info" | "error";
+  isLoading: boolean;
+}
+
 interface DynamicIslandProps {
   connectionState: ConnectionState;
   talkingState: TalkingState;
+  status?: DynamicIslandStatus | null;
 }
 
 /* ── Waveform bars rendered for speaking states ── */
@@ -45,6 +53,7 @@ const StatusDot: React.FC<{ state: "idle" | "disconnecting" }> = ({
 export const DynamicIsland: React.FC<DynamicIslandProps> = ({
   connectionState,
   talkingState,
+  status,
 }) => {
   const notchRef = useRef<HTMLDivElement>(null);
 
@@ -111,13 +120,37 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
   };
 
   return (
-    <div
-      ref={notchRef}
-      className={`ts-notch ts-notch--${mode}`}
-      role="status"
-      aria-label={ariaLabels[mode] ?? "Agent status"}
-    >
-      <div className="ts-notch-inner">{renderInner()}</div>
+    <div className="ts-notch-stack">
+      <div
+        ref={notchRef}
+        className={`ts-notch ts-notch--${mode}`}
+        role="status"
+        aria-label={ariaLabels[mode] ?? "Agent status"}
+      >
+        <div className="ts-notch-inner">{renderInner()}</div>
+      </div>
+      <div
+        className={`ts-notch-status${status ? " is-visible" : ""}${
+          status?.severity === "error" ? " is-error" : ""
+        }`}
+        aria-hidden={status ? undefined : true}
+      >
+        {status && (
+          <>
+            <div className="ts-notch-status-row">
+              <span
+                className={`ts-notch-status-indicator${
+                  status.isLoading ? " is-loading" : ""
+                }`}
+              />
+              <span className="ts-notch-status-title">{status.title}</span>
+            </div>
+            {status.message && (
+              <div className="ts-notch-status-message">{status.message}</div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 };

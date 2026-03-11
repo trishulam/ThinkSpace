@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // import { useSession } from '../context/SessionContext'
 import {
+  AssetRecordType,
   DefaultSizeStyle,
   // ErrorBoundary,
   Editor,
@@ -11,6 +12,7 @@ import {
   TldrawOverlays,
   TldrawUiToastsProvider,
   TLUiOverrides,
+  createShapeId,
   getSnapshot,
   loadSnapshot,
 } from "tldraw";
@@ -108,6 +110,148 @@ const overrides: TLUiOverrides = {
   },
 };
 
+type CanvasInsertVisualPayload = {
+  artifact_id: string;
+  image_url: string;
+  title: string;
+  caption?: string | null;
+  width: number;
+  height: number;
+  placement_intent: "viewport_center";
+  mime_type?: string;
+};
+
+type CanvasJobToastState = {
+  jobId?: string;
+  title: string;
+  message?: string;
+  severity: "info" | "error";
+  isLoading: boolean;
+};
+
+const CANVAS_ERROR_TOAST_VISIBLE_MS = 4000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizeCanvasInsertVisualPayload(
+  payload: unknown,
+): CanvasInsertVisualPayload | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const artifactId = payload.artifact_id;
+  const imageUrl = payload.image_url;
+  const title = payload.title;
+  const width = payload.width;
+  const height = payload.height;
+  const placementIntent = payload.placement_intent;
+  const caption = payload.caption;
+  const mimeType = payload.mime_type;
+
+  if (
+    typeof artifactId !== "string" ||
+    typeof imageUrl !== "string" ||
+    typeof title !== "string" ||
+    typeof width !== "number" ||
+    typeof height !== "number" ||
+    placementIntent !== "viewport_center"
+  ) {
+    return null;
+  }
+
+  return {
+    artifact_id: artifactId,
+    image_url: imageUrl,
+    title,
+    caption: typeof caption === "string" ? caption : null,
+    width,
+    height,
+    placement_intent: placementIntent,
+    mime_type: typeof mimeType === "string" ? mimeType : undefined,
+  };
+}
+
+function normalizeCanvasJobToastPayload(
+  payload: unknown,
+): Pick<CanvasJobToastState, "title" | "message"> | null {
+  if (!isRecord(payload) || typeof payload.title !== "string") {
+    return null;
+  }
+
+  return {
+    title: payload.title,
+    message: typeof payload.message === "string" ? payload.message : undefined,
+  };
+}
+
+function insertVisualIntoCanvas(
+  editor: Editor,
+  payload: CanvasInsertVisualPayload,
+): { applied: boolean; summary: string } {
+  if (payload.placement_intent !== "viewport_center") {
+    return {
+      applied: false,
+      summary: `Unsupported placement intent: ${payload.placement_intent}`,
+    };
+  }
+
+  const viewportBounds = editor.getViewportPageBounds();
+  const x = viewportBounds.x + (viewportBounds.w - payload.width) / 2;
+  const y = viewportBounds.y + (viewportBounds.h - payload.height) / 2;
+  const assetId = AssetRecordType.createId();
+  const shapeId = createShapeId();
+
+  editor.createAssets([
+    {
+      id: assetId,
+      typeName: "asset",
+      type: "image",
+      props: {
+        name: payload.title || payload.artifact_id,
+        src: payload.image_url,
+        w: payload.width,
+        h: payload.height,
+        mimeType: payload.mime_type ?? "image/png",
+        isAnimated: false,
+      },
+      meta: {
+        artifactId: payload.artifact_id,
+        title: payload.title,
+      },
+    } as never,
+  ]);
+
+  editor.createShapes([
+    {
+      id: shapeId,
+      type: "image",
+      x,
+      y,
+      props: {
+        assetId,
+        w: payload.width,
+        h: payload.height,
+      },
+      meta: {
+        artifactId: payload.artifact_id,
+        title: payload.title,
+      },
+    } as never,
+  ]);
+
+  editor.select(shapeId);
+
+  return {
+    applied: true,
+    summary: payload.title
+      ? `Title: ${payload.title}`
+      : "Visual inserted into canvas",
+  };
+}
+
 export const SessionCanvas: React.FC = () => {
   const FLASHCARD_BEGIN_VISIBLE_MS = 350;
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -128,10 +272,13 @@ export const SessionCanvas: React.FC = () => {
   const isSavingCheckpointRef = useRef(false);
   const [flashcardState, setFlashcardState] =
     useState<FlashcardState>(EMPTY_FLASHCARD_STATE);
+  const [canvasJobToast, setCanvasJobToast] =
+    useState<CanvasJobToastState | null>(null);
   const flashcardStateRef = useRef<FlashcardState>(EMPTY_FLASHCARD_STATE);
   const flashcardActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const canvasToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processedFlashcardActionKeyRef = useRef<string | null>(null);
 
   // Temporary testing state for Dynamic Island
@@ -226,9 +373,116 @@ export const SessionCanvas: React.FC = () => {
     [],
   );
 
-  const handleFrontendFlashcardAction = useCallback(
+  const clearCanvasToastTimer = useCallback(() => {
+    if (canvasToastTimerRef.current) {
+      clearTimeout(canvasToastTimerRef.current);
+      canvasToastTimerRef.current = null;
+    }
+  }, []);
+
+  const clearCanvasToast = useCallback(() => {
+    clearCanvasToastTimer();
+    setCanvasJobToast(null);
+  }, [clearCanvasToastTimer]);
+
+  const showCanvasToast = useCallback(
+    (nextToast: CanvasJobToastState, autoDismissMs?: number) => {
+      clearCanvasToastTimer();
+      setCanvasJobToast(nextToast);
+
+      if (autoDismissMs && autoDismissMs > 0) {
+        canvasToastTimerRef.current = setTimeout(() => {
+          setCanvasJobToast((current) =>
+            current?.jobId === nextToast.jobId ? null : current,
+          );
+          canvasToastTimerRef.current = null;
+        }, autoDismissMs);
+      }
+    },
+    [clearCanvasToastTimer],
+  );
+
+  const handleFrontendAction = useCallback(
     (action: FrontendAction) => {
       switch (action.type) {
+        case "canvas.job_started": {
+          const toastPayload = normalizeCanvasJobToastPayload(action.payload);
+          if (!toastPayload) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Invalid canvas job toast payload",
+            });
+            return;
+          }
+
+          showCanvasToast({
+            jobId: action.job_id,
+            title: toastPayload.title,
+            message: toastPayload.message,
+            severity: "info",
+            isLoading: true,
+          });
+          ws.sendFrontendAck({
+            status: "applied",
+            action_type: action.type,
+            source_tool: action.source_tool,
+            job_id: action.job_id,
+            summary: "Canvas loading toast shown",
+          });
+          return;
+        }
+        case "canvas.insert_visual": {
+          if (!editor) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Canvas editor is not ready",
+            });
+            return;
+          }
+
+          const insertPayload = normalizeCanvasInsertVisualPayload(action.payload);
+          if (!insertPayload) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Invalid canvas visual payload",
+            });
+            return;
+          }
+
+          const result = insertVisualIntoCanvas(editor, insertPayload);
+          if (result.applied) {
+            clearCanvasToast();
+          } else {
+            showCanvasToast(
+              {
+                jobId: action.job_id,
+                title: "Visual insertion failed",
+                message: result.summary,
+                severity: "error",
+                isLoading: false,
+              },
+              CANVAS_ERROR_TOAST_VISIBLE_MS,
+            );
+          }
+
+          ws.sendFrontendAck({
+            status: result.applied ? "applied" : "failed",
+            action_type: action.type,
+            source_tool: action.source_tool,
+            job_id: action.job_id,
+            summary: result.summary,
+          });
+          return;
+        }
         case "flashcards.begin":
         case "flashcards.show":
         case "flashcards.next":
@@ -258,7 +512,7 @@ export const SessionCanvas: React.FC = () => {
           });
       }
     },
-    [applyFrontendFlashcardState, ws],
+    [applyFrontendFlashcardState, clearCanvasToast, editor, showCanvasToast, ws],
   );
 
   React.useEffect(() => {
@@ -360,9 +614,53 @@ export const SessionCanvas: React.FC = () => {
         clearTimeout(flashcardActionTimerRef.current);
         flashcardActionTimerRef.current = null;
       }
+      if (canvasToastTimerRef.current) {
+        clearTimeout(canvasToastTimerRef.current);
+        canvasToastTimerRef.current = null;
+      }
       processedFlashcardActionKeyRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const latestEvent = ws.eventLog[ws.eventLog.length - 1];
+    if (
+      !latestEvent ||
+      latestEvent.type !== "tool-result" ||
+      !isRecord(latestEvent.rawEvent)
+    ) {
+      return;
+    }
+
+    const result = latestEvent.rawEvent.result;
+    if (!isRecord(result)) {
+      return;
+    }
+
+    if (
+      result.tool !== "canvas.generate_visual" ||
+      result.status !== "failed"
+    ) {
+      return;
+    }
+
+    const summary =
+      typeof result.summary === "string"
+        ? result.summary
+        : "Visual generation failed";
+    showCanvasToast(
+      {
+        jobId: typeof result.job === "object" && result.job && "id" in result.job
+          ? String((result.job as { id?: unknown }).id ?? "")
+          : undefined,
+        title: "Visual generation failed",
+        message: summary,
+        severity: "error",
+        isLoading: false,
+      },
+      CANVAS_ERROR_TOAST_VISIBLE_MS,
+    );
+  }, [showCanvasToast, ws.eventLog]);
 
   React.useEffect(() => {
     if (ws.frontendActions.length === 0) {
@@ -385,7 +683,7 @@ export const SessionCanvas: React.FC = () => {
     }
 
     processedFlashcardActionKeyRef.current = actionKey;
-    handleFrontendFlashcardAction(nextAction);
+    handleFrontendAction(nextAction);
 
     if (flashcardActionTimerRef.current) {
       clearTimeout(flashcardActionTimerRef.current);
@@ -408,7 +706,7 @@ export const SessionCanvas: React.FC = () => {
 
     flashcardActionTimerRef.current = setTimeout(finalizeAction, delayMs);
   }, [
-    handleFrontendFlashcardAction,
+    handleFrontendAction,
     ws,
     ws.frontendActions,
     ws.shiftFrontendAction,
@@ -509,6 +807,7 @@ export const SessionCanvas: React.FC = () => {
       <DynamicIsland
         connectionState={ws.connectionState}
         talkingState={ws.talkingState}
+        status={canvasJobToast}
       />
     </>
   );
