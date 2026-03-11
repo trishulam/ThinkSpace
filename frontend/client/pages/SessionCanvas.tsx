@@ -49,6 +49,7 @@ import {
 } from "../flashcards";
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useAudioWorklets } from "../hooks/useAudioWorklets";
+import { buildCanvasPlacementPlannerContext } from "../canvasPlacementPlannerContext";
 import type { AgentLogEntry } from "../types/agent-live";
 import type {
   ConnectionState,
@@ -115,9 +116,10 @@ type CanvasInsertVisualPayload = {
   image_url: string;
   title: string;
   caption?: string | null;
-  width: number;
-  height: number;
-  placement_intent: "viewport_center";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
   mime_type?: string;
 };
 
@@ -145,9 +147,10 @@ function normalizeCanvasInsertVisualPayload(
   const artifactId = payload.artifact_id;
   const imageUrl = payload.image_url;
   const title = payload.title;
-  const width = payload.width;
-  const height = payload.height;
-  const placementIntent = payload.placement_intent;
+  const x = payload.x;
+  const y = payload.y;
+  const w = payload.w;
+  const h = payload.h;
   const caption = payload.caption;
   const mimeType = payload.mime_type;
 
@@ -155,9 +158,10 @@ function normalizeCanvasInsertVisualPayload(
     typeof artifactId !== "string" ||
     typeof imageUrl !== "string" ||
     typeof title !== "string" ||
-    typeof width !== "number" ||
-    typeof height !== "number" ||
-    placementIntent !== "viewport_center"
+    typeof x !== "number" ||
+    typeof y !== "number" ||
+    typeof w !== "number" ||
+    typeof h !== "number"
   ) {
     return null;
   }
@@ -167,9 +171,10 @@ function normalizeCanvasInsertVisualPayload(
     image_url: imageUrl,
     title,
     caption: typeof caption === "string" ? caption : null,
-    width,
-    height,
-    placement_intent: placementIntent,
+    x,
+    y,
+    w,
+    h,
     mime_type: typeof mimeType === "string" ? mimeType : undefined,
   };
 }
@@ -191,16 +196,6 @@ function insertVisualIntoCanvas(
   editor: Editor,
   payload: CanvasInsertVisualPayload,
 ): { applied: boolean; summary: string } {
-  if (payload.placement_intent !== "viewport_center") {
-    return {
-      applied: false,
-      summary: `Unsupported placement intent: ${payload.placement_intent}`,
-    };
-  }
-
-  const viewportBounds = editor.getViewportPageBounds();
-  const x = viewportBounds.x + (viewportBounds.w - payload.width) / 2;
-  const y = viewportBounds.y + (viewportBounds.h - payload.height) / 2;
   const assetId = AssetRecordType.createId();
   const shapeId = createShapeId();
 
@@ -212,8 +207,8 @@ function insertVisualIntoCanvas(
       props: {
         name: payload.title || payload.artifact_id,
         src: payload.image_url,
-        w: payload.width,
-        h: payload.height,
+        w: payload.w,
+        h: payload.h,
         mimeType: payload.mime_type ?? "image/png",
         isAnimated: false,
       },
@@ -228,12 +223,12 @@ function insertVisualIntoCanvas(
     {
       id: shapeId,
       type: "image",
-      x,
-      y,
+      x: payload.x,
+      y: payload.y,
       props: {
         assetId,
-        w: payload.width,
-        h: payload.height,
+        w: payload.w,
+        h: payload.h,
       },
       meta: {
         artifactId: payload.artifact_id,
@@ -348,6 +343,13 @@ export const SessionCanvas: React.FC = () => {
     stopAudio();
   }, [stopAudio]);
 
+  const handleSendText = useCallback(
+    (message: string) => {
+      ws.sendText(message);
+    },
+    [ws.sendText],
+  );
+
   const handleToggleGestures = useCallback(() => {
     setGestureEnabled((current) => !current);
   }, []);
@@ -434,6 +436,77 @@ export const SessionCanvas: React.FC = () => {
           });
           return;
         }
+        case "canvas.context_requested": {
+          const toastPayload = normalizeCanvasJobToastPayload(action.payload);
+          if (!toastPayload) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Invalid canvas context request payload",
+            });
+            return;
+          }
+
+          showCanvasToast({
+            jobId: action.job_id,
+            title: toastPayload.title,
+            message: toastPayload.message,
+            severity: "info",
+            isLoading: true,
+          });
+
+          if (!editor) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Canvas editor is not ready",
+            });
+            return;
+          }
+
+          if (!action.job_id) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              summary: "Canvas context request missing job id",
+            });
+            return;
+          }
+
+          void (async () => {
+            try {
+              const context = await buildCanvasPlacementPlannerContext(editor, app);
+              ws.sendCanvasContextResponse({
+                type: "canvas_context_response",
+                source_tool: action.source_tool,
+                job_id: action.job_id,
+                context,
+              });
+              ws.sendFrontendAck({
+                status: "applied",
+                action_type: action.type,
+                source_tool: action.source_tool,
+                job_id: action.job_id,
+                summary: "Fresh canvas context captured and returned",
+              });
+            } catch (error) {
+              console.error("Failed to build fresh canvas placement context", error);
+              ws.sendFrontendAck({
+                status: "failed",
+                action_type: action.type,
+                source_tool: action.source_tool,
+                job_id: action.job_id,
+                summary: "Failed to build fresh canvas context",
+              });
+            }
+          })();
+          return;
+        }
         case "canvas.insert_visual": {
           if (!editor) {
             ws.sendFrontendAck({
@@ -512,7 +585,7 @@ export const SessionCanvas: React.FC = () => {
           });
       }
     },
-    [applyFrontendFlashcardState, clearCanvasToast, editor, showCanvasToast, ws],
+    [app, applyFrontendFlashcardState, clearCanvasToast, editor, showCanvasToast, ws],
   );
 
   React.useEffect(() => {
@@ -791,7 +864,7 @@ export const SessionCanvas: React.FC = () => {
             isAudioActive={isAudioActive}
             onConnect={ws.connect}
             onDisconnect={ws.disconnect}
-            onSendText={ws.sendText}
+            onSendText={handleSendText}
             onStartAudio={handleStartAudio}
             onStopAudio={handleStopAudio}
             onClearLog={ws.clearLog}

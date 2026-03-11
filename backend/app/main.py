@@ -41,6 +41,12 @@ from thinkspace_agent.agent import agent  # noqa: E402
 from thinkspace_agent.tools.canvas_visual_jobs import (  # noqa: E402
     canvas_visual_job_outbox,
 )
+from thinkspace_agent.tools.canvas_context_requests import (  # noqa: E402
+    canvas_context_request_store,
+)
+from thinkspace_agent.tools.canvas_context_store import (  # noqa: E402
+    canvas_placement_context_store,
+)
 from thinkspace_agent.tools.flashcard_jobs import (  # noqa: E402
     flashcard_job_outbox,
     flashcard_session_store,
@@ -678,6 +684,37 @@ async def websocket_endpoint(
                         content = types.Content(parts=[types.Part(text=semantic_text)])
                         live_request_queue.send_content(content)
 
+                elif json_message.get("type") == "canvas_context":
+                    context_payload = json_message.get("context")
+                    if _is_record(context_payload):
+                        await canvas_placement_context_store.set_context(
+                            user_id=user_id,
+                            session_id=session_id,
+                            payload=context_payload,
+                        )
+
+                elif json_message.get("type") == "canvas_context_response":
+                    context_payload = json_message.get("context")
+                    source_tool = json_message.get("source_tool")
+                    job_id = json_message.get("job_id")
+                    if (
+                        _is_record(context_payload)
+                        and isinstance(source_tool, str)
+                        and isinstance(job_id, str)
+                        and job_id.strip()
+                    ):
+                        await canvas_placement_context_store.set_context(
+                            user_id=user_id,
+                            session_id=session_id,
+                            payload=context_payload,
+                        )
+                        canvas_context_request_store.resolve_response(
+                            user_id=user_id,
+                            session_id=session_id,
+                            job_id=job_id,
+                            payload=context_payload,
+                        )
+
     async def downstream_task() -> None:
         """Receives Events from run_live() and sends to WebSocket."""
         logger.debug("downstream_task started, calling runner.run_live()")
@@ -819,6 +856,14 @@ async def websocket_endpoint(
             user_id,
             session_id,
             canvas_background_result_queue,
+        )
+        await canvas_placement_context_store.clear_context(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        canvas_context_request_store.clear_session(
+            user_id=user_id,
+            session_id=session_id,
         )
 
         for task in (

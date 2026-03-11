@@ -48,6 +48,8 @@ Examples:
 Behavior notes:
 
 - the orchestrator should provide the full semantic brief for what to generate
+- `aspect_ratio_hint` should be supplied as a normal part of the request
+- `placement_hint` is optional semantic steering, not final geometry
 - image generation and placement planning should run in parallel
 - placement planning should reuse the same hybrid bounded context style already
   used by the tldraw canvas agent
@@ -290,9 +292,10 @@ Execution shape:
 Notes:
 
 - the orchestrator decides why a visual is needed
-- the planner determines the artifact goal and output framing
-- the visual generator produces the actual image or teaching visual
-- the placement executor determines viewport-based placement for insertion
+- the visual generator follows the orchestrator brief directly
+- the placement planner consumes hybrid canvas context and returns final
+  `x/y/w/h`
+- the frontend insertion step applies the returned geometry exactly
 
 ### `canvas.generate_widget`
 

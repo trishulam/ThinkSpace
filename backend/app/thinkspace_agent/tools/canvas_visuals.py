@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from uuid import uuid4
 
 from google.adk.tools import LongRunningFunctionTool, ToolContext
 
+from .canvas_context_requests import canvas_context_request_store
+from .canvas_visual_trace import now_iso, summarize_context, write_generate_visual_trace
 from .canvas_visual_jobs import (
     generate_canvas_visual_artifact,
     publish_canvas_visual_job_result,
@@ -17,7 +20,9 @@ logger = logging.getLogger(__name__)
 
 CANVAS_GENERATE_VISUAL_TOOL = "canvas.generate_visual"
 CANVAS_JOB_STARTED_ACTION = "canvas.job_started"
+CANVAS_CONTEXT_REQUESTED_ACTION = "canvas.context_requested"
 CANVAS_INSERT_VISUAL_ACTION = "canvas.insert_visual"
+CANVAS_CONTEXT_REQUEST_TIMEOUT_S = 10.0
 
 
 def _build_frontend_action(
@@ -75,15 +80,68 @@ async def _run_canvas_visual_job(
     session_id: str,
     job_id: str,
     prompt: str,
+    aspect_ratio_hint: str,
+    placement_hint: str,
     title_hint: str,
     visual_style_hint: str,
 ) -> None:
+    trace: dict[str, object] = {
+        "job_id": job_id,
+        "tool": CANVAS_GENERATE_VISUAL_TOOL,
+        "started_at": now_iso(),
+        "status": "running",
+        "inputs": {
+            "prompt": prompt,
+            "aspect_ratio_hint": aspect_ratio_hint,
+            "placement_hint": placement_hint,
+            "title_hint": title_hint,
+            "visual_style_hint": visual_style_hint,
+        },
+        "context_summary": None,
+        "placement_planner": None,
+        "image_generator": None,
+        "final_result": None,
+        "errors": None,
+    }
     try:
+        context_request_started_at = now_iso()
+        trace["context_request_started_at"] = context_request_started_at
+        placement_context = await canvas_context_request_store.wait_for_response(
+            user_id=user_id,
+            session_id=session_id,
+            job_id=job_id,
+            timeout_s=CANVAS_CONTEXT_REQUEST_TIMEOUT_S,
+        )
+        context_response_received_at = now_iso()
+        trace["context_response_received_at"] = context_response_received_at
+        context_summary = summarize_context(placement_context) or {}
+        context_summary["request_started_at"] = context_request_started_at
+        context_summary["response_received_at"] = context_response_received_at
+        captured_at = context_summary.get("captured_at")
+        if isinstance(captured_at, str):
+            try:
+                captured_dt = datetime.fromisoformat(
+                    captured_at.replace("Z", "+00:00")
+                )
+                response_dt = datetime.fromisoformat(context_response_received_at)
+                context_summary["context_age_ms_at_response"] = max(
+                    0,
+                    int((response_dt - captured_dt).total_seconds() * 1000),
+                )
+            except Exception:  # pragma: no cover
+                pass
+        trace["context_summary"] = context_summary
+
         artifact_payload = await generate_canvas_visual_artifact(
             prompt,
             title_hint=title_hint,
             visual_style_hint=visual_style_hint,
+            aspect_ratio_hint=aspect_ratio_hint,
+            placement_hint=placement_hint,
+            placement_context=placement_context,
         )
+        trace["placement_planner"] = artifact_payload.get("planner_trace")
+        trace["image_generator"] = artifact_payload.get("image_trace")
         result = _build_tool_result(
             status="completed",
             tool=CANVAS_GENERATE_VISUAL_TOOL,
@@ -93,6 +151,13 @@ async def _run_canvas_visual_job(
             payload={
                 "artifact_id": artifact_payload["artifact_id"],
                 "title": artifact_payload["title"],
+                "placement": {
+                    "x": artifact_payload["x"],
+                    "y": artifact_payload["y"],
+                    "w": artifact_payload["w"],
+                    "h": artifact_payload["h"],
+                },
+                "planner_trace": artifact_payload.get("planner_trace"),
             },
             frontend_action=_build_frontend_action(
                 CANVAS_INSERT_VISUAL_ACTION,
@@ -102,6 +167,23 @@ async def _run_canvas_visual_job(
             ),
             job_id=job_id,
         )
+        trace["status"] = "completed"
+        trace["final_result"] = {
+            "artifact_id": artifact_payload["artifact_id"],
+            "title": artifact_payload["title"],
+            "placement": {
+                "x": artifact_payload["x"],
+                "y": artifact_payload["y"],
+                "w": artifact_payload["w"],
+                "h": artifact_payload["h"],
+            },
+            "mime_type": artifact_payload.get("mime_type"),
+            "frontend_payload_summary": {
+                "title": artifact_payload["title"],
+                "has_caption": bool(artifact_payload.get("caption")),
+                "has_image_url": bool(artifact_payload.get("image_url")),
+            },
+        }
     except Exception as exc:  # pragma: no cover - defensive async boundary
         logger.exception(
             "Canvas visual generation failed: user_id=%s session_id=%s job_id=%s",
@@ -109,12 +191,26 @@ async def _run_canvas_visual_job(
             session_id,
             job_id,
         )
+        trace["status"] = "failed"
+        trace["errors"] = {
+            "message": str(exc),
+            "type": exc.__class__.__name__,
+        }
         result = _build_tool_result(
             status="failed",
             tool=CANVAS_GENERATE_VISUAL_TOOL,
             summary=f"Visual generation failed: {exc}",
             job_id=job_id,
         )
+    finally:
+        trace["completed_at"] = now_iso()
+        trace_path = write_generate_visual_trace(job_id, trace)
+        logger.info("Wrote canvas.generate_visual trace: %s", trace_path)
+
+    if result.get("payload") is None:
+        result["payload"] = {}
+    if isinstance(result.get("payload"), dict):
+        result["payload"]["trace_file"] = str(trace_path)
 
     await publish_canvas_visual_job_result(
         user_id=user_id,
@@ -125,6 +221,8 @@ async def _run_canvas_visual_job(
 
 def canvas_generate_visual(
     prompt: str,
+    aspect_ratio_hint: str,
+    placement_hint: str = "auto",
     title_hint: str = "",
     visual_style_hint: str = "",
     tool_context: ToolContext | None = None,
@@ -139,6 +237,15 @@ def canvas_generate_visual(
             summary="Visual generation requires a non-empty prompt",
         )
 
+    normalized_aspect_ratio_hint = aspect_ratio_hint.strip()
+    if not normalized_aspect_ratio_hint:
+        return _build_tool_result(
+            status="failed",
+            tool=CANVAS_GENERATE_VISUAL_TOOL,
+            summary="Visual generation requires an aspect_ratio_hint",
+        )
+
+    normalized_placement_hint = placement_hint.strip() or "auto"
     normalized_title_hint = title_hint.strip()
     normalized_style_hint = visual_style_hint.strip()
     job_id = f"visual-{uuid4()}"
@@ -152,12 +259,19 @@ def canvas_generate_visual(
             job_id=job_id,
         )
 
+    canvas_context_request_store.create_request(
+        user_id=user_id,
+        session_id=session_id,
+        job_id=job_id,
+    )
     asyncio.get_running_loop().create_task(
         _run_canvas_visual_job(
             user_id=user_id,
             session_id=session_id,
             job_id=job_id,
             prompt=normalized_prompt,
+            aspect_ratio_hint=normalized_aspect_ratio_hint,
+            placement_hint=normalized_placement_hint,
             title_hint=normalized_title_hint,
             visual_style_hint=normalized_style_hint,
         ),
@@ -166,6 +280,8 @@ def canvas_generate_visual(
 
     payload = {
         "prompt": normalized_prompt,
+        "aspect_ratio_hint": normalized_aspect_ratio_hint,
+        "placement_hint": normalized_placement_hint,
     }
     if normalized_title_hint:
         payload["title_hint"] = normalized_title_hint
@@ -178,11 +294,11 @@ def canvas_generate_visual(
         summary="Starting visual generation for the requested teaching artifact",
         payload=payload,
         frontend_action=_build_frontend_action(
-            CANVAS_JOB_STARTED_ACTION,
+            CANVAS_CONTEXT_REQUESTED_ACTION,
             CANVAS_GENERATE_VISUAL_TOOL,
             payload={
                 "title": "Creating visual",
-                "message": "Generating a teaching visual for the canvas",
+                "message": "Capturing the latest canvas context before generating the visual",
             },
             job_id=job_id,
         ),

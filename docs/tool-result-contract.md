@@ -202,6 +202,8 @@ Initial result:
 - `tool`: `canvas.generate_visual`
 - `job.id`: generated job identifier
 - `summary`: `Visual generation started`
+- `payload`: includes the requested `prompt`, required `aspect_ratio_hint`, and
+  resolved `placement_hint`
 - `frontend_action`: enter a lightweight canvas loading toast, typically via
   `canvas.job_started`
 
@@ -211,7 +213,8 @@ Later completion:
 - `tool`: `canvas.generate_visual`
 - `job.id`: same job identifier
 - `summary`: `Visual generated and ready for insertion`
-- `payload`: generated visual metadata, including planned placement geometry
+- `payload`: generated visual metadata plus planned `x/y/w/h` placement
+  geometry
 - `frontend_action`: insert the generated visual into the canvas
 
 ## Async Delivery Note

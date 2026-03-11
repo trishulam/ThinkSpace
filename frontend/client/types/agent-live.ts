@@ -35,6 +35,7 @@ export interface AgentSubtitleState {
 
 export type FrontendActionType =
 	| 'canvas.job_started'
+	| 'canvas.context_requested'
 	| 'canvas.insert_visual'
 	| 'canvas.insert_widget'
 	| 'flashcards.begin'
@@ -84,4 +85,11 @@ export interface FrontendAck {
 export interface FrontendAckMessage {
 	type: 'frontend_ack'
 	ack: FrontendAck
+}
+
+export interface CanvasContextResponseMessage {
+	type: 'canvas_context_response'
+	source_tool: string
+	job_id: string
+	context: unknown
 }

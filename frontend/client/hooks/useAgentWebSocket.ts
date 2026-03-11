@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
 	AgentLogEntry,
 	AgentSubtitleState,
+	CanvasContextResponseMessage,
 	ConnectionState,
 	FrontendAck,
 	FrontendAction,
@@ -94,6 +95,32 @@ function isToolResultMessage(value: unknown): value is ToolResultMessage {
 	if (typeof value.result.status !== 'string') return false
 	if (typeof value.result.tool !== 'string') return false
 	return true
+}
+
+function formatToolResultContent(message: ToolResultMessage): string {
+	const summary = message.result.summary || message.result.tool
+	if (message.result.tool !== 'canvas.generate_visual') {
+		return `${message.result.status}: ${summary}`
+	}
+
+	const payload = isRecord(message.result.payload) ? message.result.payload : null
+	const plannerTrace = payload && isRecord(payload.planner_trace) ? payload.planner_trace : null
+	if (!plannerTrace) {
+		return `${message.result.status}: ${summary}`
+	}
+
+	const rawPlan = isRecord(plannerTrace.raw_response_payload)
+		? plannerTrace.raw_response_payload
+		: isRecord(plannerTrace.parsed_plan)
+			? plannerTrace.parsed_plan
+			: null
+	const finalGeometry = isRecord(plannerTrace.final_geometry) ? plannerTrace.final_geometry : null
+	const hint =
+		typeof plannerTrace.placement_hint === 'string' ? plannerTrace.placement_hint : 'auto'
+	const rawPlanText = rawPlan ? JSON.stringify(rawPlan) : 'none'
+	const finalGeometryText = finalGeometry ? JSON.stringify(finalGeometry) : 'none'
+	const fallbackText = plannerTrace.used_fallback ? ' | fallback used' : ''
+	return `${message.result.status}: ${summary} | hint=${hint} | raw_plan=${rawPlanText} | final=${finalGeometryText}${fallbackText}`
 }
 
 export function useAgentWebSocket({
@@ -382,10 +409,9 @@ export function useAgentWebSocket({
 			}
 
 			if (isToolResultMessage(parsedMessage)) {
-				const summary = parsedMessage.result.summary || parsedMessage.result.tool
 				addLogEntry(
 					'tool-result',
-					`${parsedMessage.result.status}: ${summary}`,
+					formatToolResultContent(parsedMessage),
 					parsedMessage
 				)
 				return
@@ -578,6 +604,28 @@ export function useAgentWebSocket({
 		}
 	}, [addLogEntry])
 
+	const sendCanvasContext = useCallback((context: unknown) => {
+		if (wsRef.current?.readyState === WebSocket.OPEN) {
+			const payload = JSON.stringify({ type: 'canvas_context', context })
+			wsRef.current.send(payload)
+			addLogEntry('system', 'Updated canvas placement context', payload)
+		}
+	}, [addLogEntry])
+
+	const sendCanvasContextResponse = useCallback(
+		(message: CanvasContextResponseMessage) => {
+			if (wsRef.current?.readyState !== WebSocket.OPEN) return
+			const payload = JSON.stringify(message)
+			wsRef.current.send(payload)
+			addLogEntry(
+				'system',
+				`Sent canvas context response for ${message.job_id}`,
+				payload
+			)
+		},
+		[addLogEntry]
+	)
+
 	const sendAudioChunk = useCallback((data: ArrayBuffer) => {
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
 			wsRef.current.send(data)
@@ -604,6 +652,8 @@ export function useAgentWebSocket({
 		disconnect,
 		sendText,
 		sendImage,
+		sendCanvasContext,
+		sendCanvasContextResponse,
 		sendAudioChunk,
 		sendFrontendAck,
 		clearLog,

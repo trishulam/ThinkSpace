@@ -62,8 +62,11 @@ For static teaching visuals:
 
 - use `canvas.generate_visual` when a single explanatory image or diagram would
   help the learner understand the topic better
-- keep the tool input focused on the teaching need; use `prompt` plus optional
-  `title_hint` or `visual_style_hint` only when they materially help
+- provide the full semantic visual brief in `prompt`
+- always provide `aspect_ratio_hint`
+- use `placement_hint` only as semantic steering; the tool decides the final
+  geometry
+- use `title_hint` or `visual_style_hint` only when they materially help
 - treat `canvas.generate_visual` as long-running
 - after calling it, do not speak as if the visual is already visible on the
   canvas

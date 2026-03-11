@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Literal
 from uuid import uuid4
 
 from google.genai import Client
 from google.genai import types as genai_types
 from google.genai.types import GenerateContentResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from thinkspace_agent.tools.canvas_visual_trace import summarize_context
 
 from thinkspace_agent.config import (
     get_canvas_visual_image_model,
@@ -22,18 +23,20 @@ from thinkspace_agent.config import (
 
 logger = logging.getLogger(__name__)
 
-CANVAS_VISUAL_WIDTH = 960
-CANVAS_VISUAL_HEIGHT = 720
-CANVAS_VISUAL_PLACEMENT_INTENT = "viewport_center"
+MIN_VISUAL_SIZE = 180
+DEFAULT_VIEWPORT_WIDTH = 1440
+DEFAULT_VIEWPORT_HEIGHT = 900
+DEFAULT_CANVAS_PADDING = 48
+SUPPORTED_ASPECT_RATIOS = {"1:1", "4:3", "3:4", "16:9", "9:16"}
 
 
-class CanvasVisualPlan(BaseModel):
-    """Structured planner output for a generated teaching visual."""
+class CanvasVisualPlacementPlan(BaseModel):
+    """Structured output for final canvas placement geometry."""
 
-    title: str = Field(min_length=1)
-    caption: str | None = None
-    visual_prompt: str = Field(min_length=1)
-    placement_intent: Literal["viewport_center"] = "viewport_center"
+    x: float
+    y: float
+    w: float
+    h: float
 
 
 @dataclass
@@ -101,7 +104,178 @@ def _build_client() -> Client:
     return Client(api_key=api_key) if api_key else Client()
 
 
-def _build_visual_planner_prompt(
+def _normalize_aspect_ratio_hint(aspect_ratio_hint: str) -> str:
+    normalized = aspect_ratio_hint.strip()
+    if normalized not in SUPPORTED_ASPECT_RATIOS:
+        supported = ", ".join(sorted(SUPPORTED_ASPECT_RATIOS))
+        raise ValueError(
+            f"Unsupported aspect_ratio_hint '{aspect_ratio_hint}'. Expected one of: {supported}"
+        )
+    return normalized
+
+
+def _extract_viewport_bounds(context: dict[str, object] | None) -> dict[str, float]:
+    fallback = {
+        "x": 0.0,
+        "y": 0.0,
+        "w": float(DEFAULT_VIEWPORT_WIDTH),
+        "h": float(DEFAULT_VIEWPORT_HEIGHT),
+    }
+    if not isinstance(context, dict):
+        return fallback
+
+    candidate = context.get("user_viewport_bounds")
+    if not isinstance(candidate, dict):
+        return fallback
+
+    try:
+        x = float(candidate.get("x", 0.0))
+        y = float(candidate.get("y", 0.0))
+        w = float(candidate.get("w", DEFAULT_VIEWPORT_WIDTH))
+        h = float(candidate.get("h", DEFAULT_VIEWPORT_HEIGHT))
+    except (TypeError, ValueError):
+        return fallback
+
+    return {
+        "x": x,
+        "y": y,
+        "w": max(w, float(MIN_VISUAL_SIZE)),
+        "h": max(h, float(MIN_VISUAL_SIZE)),
+    }
+
+
+def _aspect_ratio_value(aspect_ratio_hint: str) -> float:
+    width, height = aspect_ratio_hint.split(":", maxsplit=1)
+    return float(width) / float(height)
+
+
+def _derive_initial_size(aspect_ratio_hint: str, viewport_bounds: dict[str, float]) -> tuple[float, float]:
+    aspect_ratio = _aspect_ratio_value(aspect_ratio_hint)
+    viewport_w = viewport_bounds["w"]
+    viewport_h = viewport_bounds["h"]
+    usable_w = max(viewport_w - (DEFAULT_CANVAS_PADDING * 2), float(MIN_VISUAL_SIZE))
+    usable_h = max(viewport_h - (DEFAULT_CANVAS_PADDING * 2), float(MIN_VISUAL_SIZE))
+
+    max_w = usable_w * 0.46
+    max_h = usable_h * 0.48
+    width = min(max_w, max_h * aspect_ratio)
+    height = width / aspect_ratio
+
+    if height > max_h:
+        height = max_h
+        width = height * aspect_ratio
+
+    width = max(width, float(MIN_VISUAL_SIZE))
+    height = max(height, float(MIN_VISUAL_SIZE))
+    return round(width), round(height)
+
+
+def _clamp_geometry_to_viewport(
+    *,
+    plan: CanvasVisualPlacementPlan,
+    viewport_bounds: dict[str, float],
+    aspect_ratio_hint: str,
+) -> dict[str, float]:
+    viewport_x = viewport_bounds["x"]
+    viewport_y = viewport_bounds["y"]
+    viewport_w = viewport_bounds["w"]
+    viewport_h = viewport_bounds["h"]
+    aspect_ratio = _aspect_ratio_value(aspect_ratio_hint)
+
+    width = float(plan.w)
+    height = float(plan.h)
+
+    max_width = max(viewport_w - (DEFAULT_CANVAS_PADDING * 2), float(MIN_VISUAL_SIZE))
+    max_height = max(viewport_h - (DEFAULT_CANVAS_PADDING * 2), float(MIN_VISUAL_SIZE))
+
+    width = min(width, max_width)
+    height = min(height, max_height)
+
+    # Preserve the aspect ratio even after clamping model output.
+    height_from_width = width / aspect_ratio
+    if height_from_width <= max_height:
+        height = height_from_width
+    else:
+        height = max_height
+        width = height * aspect_ratio
+
+    width = max(width, float(MIN_VISUAL_SIZE))
+    height = max(height, float(MIN_VISUAL_SIZE))
+
+    min_x = viewport_x + DEFAULT_CANVAS_PADDING
+    min_y = viewport_y + DEFAULT_CANVAS_PADDING
+    max_x = viewport_x + viewport_w - DEFAULT_CANVAS_PADDING - width
+    max_y = viewport_y + viewport_h - DEFAULT_CANVAS_PADDING - height
+
+    if max_x < min_x:
+        centered_x = viewport_x + (viewport_w - width) / 2
+        x = centered_x
+    else:
+        x = min(max(float(plan.x), min_x), max_x)
+
+    if max_y < min_y:
+        centered_y = viewport_y + (viewport_h - height) / 2
+        y = centered_y
+    else:
+        y = min(max(float(plan.y), min_y), max_y)
+
+    return {
+        "x": round(x),
+        "y": round(y),
+        "w": round(width),
+        "h": round(height),
+    }
+
+
+def _build_fallback_placement(
+    *,
+    viewport_bounds: dict[str, float],
+    aspect_ratio_hint: str,
+    placement_hint: str,
+) -> dict[str, float]:
+    width, height = _derive_initial_size(aspect_ratio_hint, viewport_bounds)
+    viewport_x = viewport_bounds["x"]
+    viewport_y = viewport_bounds["y"]
+    viewport_w = viewport_bounds["w"]
+    viewport_h = viewport_bounds["h"]
+
+    centered_x = viewport_x + (viewport_w - width) / 2
+    centered_y = viewport_y + (viewport_h - height) / 2
+    x = centered_x
+    y = centered_y
+
+    if placement_hint == "viewport_right":
+        x = viewport_x + viewport_w - DEFAULT_CANVAS_PADDING - width
+    elif placement_hint == "viewport_left":
+        x = viewport_x + DEFAULT_CANVAS_PADDING
+    elif placement_hint == "viewport_top":
+        y = viewport_y + DEFAULT_CANVAS_PADDING
+    elif placement_hint == "viewport_bottom":
+        y = viewport_y + viewport_h - DEFAULT_CANVAS_PADDING - height
+
+    return _clamp_geometry_to_viewport(
+        plan=CanvasVisualPlacementPlan(x=x, y=y, w=width, h=height),
+        viewport_bounds=viewport_bounds,
+        aspect_ratio_hint=aspect_ratio_hint,
+    )
+
+
+def _parse_data_url(data_url: str) -> tuple[str, bytes] | None:
+    if not data_url or not data_url.startswith("data:"):
+        return None
+
+    header, _, encoded = data_url.partition(",")
+    if not header or not encoded:
+        return None
+
+    mime_type = header[5:].split(";", maxsplit=1)[0] or "image/jpeg"
+    try:
+        return mime_type, base64.b64decode(encoded)
+    except (ValueError, TypeError):
+        return None
+
+
+def _build_visual_generation_prompt(
     prompt: str,
     *,
     title_hint: str,
@@ -112,16 +286,11 @@ def _build_visual_planner_prompt(
     normalized_style_hint = visual_style_hint.strip()
 
     lines = [
-        "You plan a static teaching visual for ThinkSpace.",
-        "Return a concise visual plan for a single explanatory image.",
-        "Requirements:",
-        "- Output one static visual, not a widget or multi-step board edit.",
-        "- The visual should help a learner understand the topic clearly.",
-        "- The title should be short and learner-facing.",
-        "- The caption should be concise and optional.",
-        "- The visual prompt should be detailed enough for an image generator.",
-        "- Keep placement_intent as viewport_center.",
-        f"Prompt: {normalized_prompt}",
+        "You are generating one static teaching visual for ThinkSpace.",
+        "Follow the user-orchestrated brief exactly.",
+        "Return a single clean image, not a collage, UI mockup, or multi-panel board.",
+        "Prefer clear diagrammatic composition suited for learning.",
+        normalized_prompt,
     ]
     if normalized_title_hint:
         lines.append(f"Title hint: {normalized_title_hint}")
@@ -130,66 +299,134 @@ def _build_visual_planner_prompt(
     return "\n".join(lines)
 
 
-def _normalize_visual_plan(
+def _derive_visual_title(
     prompt: str,
     *,
     title_hint: str,
     visual_style_hint: str,
-    generated_plan: CanvasVisualPlan,
-) -> dict[str, str]:
-    title = generated_plan.title.strip() if generated_plan.title.strip() else ""
-    if not title:
-        title = title_hint.strip() or "Generated Visual"
+) -> tuple[str, str | None]:
+    normalized_title_hint = title_hint.strip()
+    if normalized_title_hint:
+        return normalized_title_hint, None
 
-    caption = generated_plan.caption.strip() if generated_plan.caption else ""
-    visual_prompt = (
-        generated_plan.visual_prompt.strip()
-        if generated_plan.visual_prompt.strip()
-        else prompt.strip()
+    first_sentence = prompt.strip().split(".", maxsplit=1)[0].strip()
+    collapsed = " ".join(first_sentence.split())
+    if not collapsed:
+        return "Generated Visual", None
+
+    title = collapsed[:72].rstrip(" ,:-")
+    caption = None
+    if visual_style_hint.strip():
+        caption = visual_style_hint.strip()[:140]
+    return title or "Generated Visual", caption
+
+
+def _build_placement_planner_prompt(
+    *,
+    context: dict[str, object],
+    aspect_ratio_hint: str,
+    placement_hint: str,
+    viewport_bounds: dict[str, float],
+) -> str:
+    serialized_context = {
+        key: value for key, value in context.items() if key != "screenshot_data_url"
+    }
+    suggested_w, suggested_h = _derive_initial_size(
+        aspect_ratio_hint,
+        viewport_bounds,
+    )
+    return "\n".join(
+        [
+            "You plan where a generated teaching visual should be inserted on a ThinkSpace canvas.",
+            "Return only the final page-space geometry for the image.",
+            "Requirements:",
+            "- Respect the provided viewport bounds and keep the image fully visible inside the viewport.",
+            "- Prefer low-overlap open space relative to existing blurry shapes and selected content.",
+            "- Use selected shapes and screenshot semantics to avoid covering the active teaching focus.",
+            "- The output width and height must preserve the requested aspect ratio.",
+            "- If placement_hint is auto, choose the clearest open area in the current viewport.",
+            "- If placement_hint is directional, honor it when reasonable without causing excessive overlap.",
+            f"Requested aspect ratio: {aspect_ratio_hint}",
+            f"Placement hint: {placement_hint}",
+            f"Suggested starting size: {suggested_w}x{suggested_h}",
+            "Canvas context JSON:",
+            json.dumps(serialized_context, ensure_ascii=True),
+        ]
     )
 
-    if visual_style_hint.strip() and visual_style_hint.strip().lower() not in visual_prompt.lower():
-        visual_prompt = f"{visual_prompt}\nStyle: {visual_style_hint.strip()}"
 
-    return {
-        "title": title,
-        "caption": caption,
-        "visual_prompt": visual_prompt,
-        "placement_intent": CANVAS_VISUAL_PLACEMENT_INTENT,
-    }
-
-
-def _plan_canvas_visual(
-    prompt: str,
+def _plan_canvas_visual_placement(
     *,
-    title_hint: str,
-    visual_style_hint: str,
-) -> dict[str, str]:
+    context: dict[str, object],
+    aspect_ratio_hint: str,
+    placement_hint: str,
+) -> dict[str, object]:
+    viewport_bounds = _extract_viewport_bounds(context)
+    screenshot_part = None
+    screenshot_data_url = context.get("screenshot_data_url")
+    if isinstance(screenshot_data_url, str):
+        parsed = _parse_data_url(screenshot_data_url)
+        if parsed is not None:
+            mime_type, image_bytes = parsed
+            screenshot_part = genai_types.Part(
+                inlineData=genai_types.Blob(
+                    data=image_bytes,
+                    mimeType=mime_type,
+                )
+            )
+
     client = _build_client()
+    contents: list[object] = [
+        _build_placement_planner_prompt(
+            context=context,
+            aspect_ratio_hint=aspect_ratio_hint,
+            placement_hint=placement_hint,
+            viewport_bounds=viewport_bounds,
+        )
+    ]
+    if screenshot_part is not None:
+        contents.append(screenshot_part)
+
     response = client.models.generate_content(
         model=get_canvas_visual_planner_model(),
-        contents=_build_visual_planner_prompt(
-            prompt,
-            title_hint=title_hint,
-            visual_style_hint=visual_style_hint,
-        ),
+        contents=contents,
         config=genai_types.GenerateContentConfig(
-            temperature=0.4,
+            temperature=0.2,
             response_mime_type="application/json",
-            response_schema=CanvasVisualPlan,
+            response_schema=CanvasVisualPlacementPlan,
         ),
     )
 
     if response.parsed is None:
-        raise ValueError("Canvas visual planner returned no structured payload")
+        raise ValueError("Canvas placement planner returned no structured payload")
 
-    generated_plan = CanvasVisualPlan.model_validate(response.parsed)
-    return _normalize_visual_plan(
-        prompt,
-        title_hint=title_hint,
-        visual_style_hint=visual_style_hint,
-        generated_plan=generated_plan,
+    raw_response_payload = (
+        response.parsed.model_dump()
+        if isinstance(response.parsed, BaseModel)
+        else response.parsed
     )
+    plan = CanvasVisualPlacementPlan.model_validate(response.parsed)
+    if plan.w <= 0 or plan.h <= 0:
+        raise ValueError(
+            f"Canvas placement planner returned non-positive geometry: w={plan.w}, h={plan.h}"
+        )
+    final_geometry = _clamp_geometry_to_viewport(
+        plan=plan,
+        viewport_bounds=viewport_bounds,
+        aspect_ratio_hint=aspect_ratio_hint,
+    )
+    return {
+        "geometry": final_geometry,
+        "trace": {
+            "planner_model": get_canvas_visual_planner_model(),
+            "placement_hint": placement_hint,
+            "planner_prompt": contents[0],
+            "raw_response_payload": raw_response_payload,
+            "parsed_plan": plan.model_dump(),
+            "final_geometry": final_geometry,
+            "used_fallback": False,
+        },
+    }
 
 
 def _build_data_url(*, mime_type: str, image_bytes: bytes) -> str:
@@ -218,26 +455,25 @@ def _extract_inline_image(response: GenerateContentResponse) -> tuple[bytes, str
     raise ValueError(f"Canvas visual generator returned no inline image.{suffix}")
 
 
-def _generate_canvas_visual_artifact(
+def _generate_canvas_visual_image(
     prompt: str,
     *,
     title_hint: str,
     visual_style_hint: str,
+    aspect_ratio_hint: str,
 ) -> dict[str, object]:
-    plan = _plan_canvas_visual(
-        prompt,
-        title_hint=title_hint,
-        visual_style_hint=visual_style_hint,
-    )
-
     client = _build_client()
     response = client.models.generate_content(
         model=get_canvas_visual_image_model(),
-        contents=plan["visual_prompt"],
+        contents=_build_visual_generation_prompt(
+            prompt,
+            title_hint=title_hint,
+            visual_style_hint=visual_style_hint,
+        ),
         config=genai_types.GenerateContentConfig(
             response_modalities=["IMAGE", "TEXT"],
             image_config=genai_types.ImageConfig(
-                aspect_ratio="4:3",
+                aspect_ratio=aspect_ratio_hint,
             ),
         ),
     )
@@ -247,17 +483,25 @@ def _generate_canvas_visual_artifact(
         mime_type=mime_type,
         image_bytes=image_bytes,
     )
-
-    artifact_id = f"visual-{uuid4()}"
+    title, caption = _derive_visual_title(
+        prompt,
+        title_hint=title_hint,
+        visual_style_hint=visual_style_hint,
+    )
     return {
-        "artifact_id": artifact_id,
         "image_url": image_url,
-        "title": plan["title"],
-        "caption": plan["caption"] or None,
-        "width": CANVAS_VISUAL_WIDTH,
-        "height": CANVAS_VISUAL_HEIGHT,
-        "placement_intent": plan["placement_intent"],
+        "title": title,
+        "caption": caption,
         "mime_type": mime_type,
+        "image_trace": {
+            "image_model": get_canvas_visual_image_model(),
+            "generation_prompt": _build_visual_generation_prompt(
+                prompt,
+                title_hint=title_hint,
+                visual_style_hint=visual_style_hint,
+            ),
+            "mime_type": mime_type,
+        },
     }
 
 
@@ -266,15 +510,83 @@ async def generate_canvas_visual_artifact(
     *,
     title_hint: str,
     visual_style_hint: str,
+    aspect_ratio_hint: str,
+    placement_hint: str,
+    placement_context: dict[str, object],
 ) -> dict[str, object]:
     """Generate a static canvas visual artifact without blocking the event loop."""
+    normalized_aspect_ratio = _normalize_aspect_ratio_hint(aspect_ratio_hint)
+    normalized_placement_hint = placement_hint.strip() or "auto"
+    viewport_bounds = _extract_viewport_bounds(placement_context)
 
-    return await asyncio.to_thread(
-        _generate_canvas_visual_artifact,
+    image_task = asyncio.to_thread(
+        _generate_canvas_visual_image,
         prompt,
         title_hint=title_hint,
         visual_style_hint=visual_style_hint,
+        aspect_ratio_hint=normalized_aspect_ratio,
     )
+    placement_task = asyncio.to_thread(
+        _plan_canvas_visual_placement,
+        context=placement_context,
+        aspect_ratio_hint=normalized_aspect_ratio,
+        placement_hint=normalized_placement_hint,
+    )
+
+    image_result, placement_result = await asyncio.gather(
+        image_task,
+        placement_task,
+        return_exceptions=True,
+    )
+
+    if isinstance(image_result, Exception):
+        raise image_result
+
+    if isinstance(placement_result, Exception):
+        logger.warning(
+            "Canvas placement planner failed, using fallback placement: %s",
+            placement_result,
+        )
+        fallback_geometry = _build_fallback_placement(
+            viewport_bounds=viewport_bounds,
+            aspect_ratio_hint=normalized_aspect_ratio,
+            placement_hint=normalized_placement_hint,
+        )
+        placement_result = {
+            "geometry": fallback_geometry,
+            "trace": {
+                "planner_model": get_canvas_visual_planner_model(),
+                "placement_hint": normalized_placement_hint,
+                "planner_prompt": None,
+                "raw_response_payload": None,
+                "parsed_plan": None,
+                "final_geometry": fallback_geometry,
+                "used_fallback": True,
+                "fallback_reason": str(placement_result),
+            },
+        }
+
+    artifact_id = f"visual-{uuid4()}"
+    geometry = placement_result["geometry"]
+    planner_trace = placement_result["trace"]
+    logger.info(
+        "Canvas placement planner trace: %s",
+        json.dumps(planner_trace, ensure_ascii=True),
+    )
+    return {
+        "artifact_id": artifact_id,
+        "image_url": image_result["image_url"],
+        "title": image_result["title"],
+        "caption": image_result["caption"],
+        "x": geometry["x"],
+        "y": geometry["y"],
+        "w": geometry["w"],
+        "h": geometry["h"],
+        "planner_trace": planner_trace,
+        "context_summary": summarize_context(placement_context),
+        "image_trace": image_result["image_trace"],
+        "mime_type": image_result["mime_type"],
+    }
 
 
 async def publish_canvas_visual_job_result(

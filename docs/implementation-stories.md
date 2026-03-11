@@ -537,45 +537,50 @@ Story Group E now has a working scratchpad in
 
 Current implementation status:
 
-- E1 is now implemented as the first working slice for Story Group E
+- E1 is now complete as the first finished slice for Story Group E
 - `canvas.generate_visual` is wired as a long-running backend tool
-- accepted-state UX is now implemented through `canvas.job_started`
+- accepted-state UX is now implemented through a lightweight canvas job status
+  action
 - frontend insertion is now implemented through `canvas.insert_visual`
-- current live placement implementation is still simple and deterministic, but
-  the next locked E1 refinement is to move `canvas.generate_visual` to a real
-  placement planner
+- `canvas.generate_visual` now requests fresh placement context from the
+  frontend at tool time rather than relying on stale background state
+- the tool input now requires `aspect_ratio_hint` and accepts optional
+  `placement_hint`
+- image generation and placement planning now run in parallel
+- the placement planner now returns final bounded `x/y/w/h`
 - successful `canvas.insert_visual` acknowledgement now triggers one semantic
   completion update back into the live agent loop
-- the current visual-generation path now uses a planner model plus
-  `gemini-2.5-flash-image` for image output
+- the current visual-generation path now uses `gemini-2.5-flash-image` for
+  image output and a planner model for placement
 - the canvas loading affordance is now presented as a subtle notch-attached
   status surface rather than a generic floating toast
-- the locked direction for the next E1 refinement is:
-  - the orchestrator provides the full visual brief
-  - image generation and placement planning run in parallel
-  - the orchestrator may provide `aspect_ratio_hint` and `placement_hint`
-  - the placement planner should reuse the same hybrid bounded context style as
-    the tldraw canvas agent
-  - the placement planner should return final bounded `x/y/w/h`
+- per-job trace files now exist for `canvas.generate_visual`, making planner
+  behavior and fresh-context timing inspectable
+- the reusable implementation lessons for future canvas-generation-style tools
+  are now captured in `docs/canvas-generation-tool-reference.md`
 
 Current boundary:
 
-- `canvas.enhance`, `canvas.generate_widget`, and `canvas.delegate_task` are not
-  part of the first implementation slice
+- `canvas.enhance` and `canvas.generate_widget` are intentionally deferred after
+  E1 rather than being implemented immediately
 - Story Group E should reuse the typed tool-result plus frontend-action plus
   frontend-ack loop already proven by flashcards rather than inventing a new
   transport path
 - E1 still inserts only one new static visual and does not yet inspect selected
   content as an enhancement target
-- `canvas.enhance`, `canvas.generate_widget`, and `canvas.delegate_task` remain
-  outside the current implementation slice while the richer `generate_visual`
-  placement contract is being locked
+- the key generation/prompt/placement learnings from E1 should be reused later
+  when `canvas.enhance` and `canvas.generate_widget` are revisited
+- the next product focus should move to `canvas.delegate_task`, then tutor
+  environment awareness and proactivity rather than spending more time on new
+  generation-style tools right now
 
 Recommended next implementation target:
 
-- Story E2: Enhancement Planner
-- add the decision layer that determines when to enhance existing selection or
-  viewport context and what kind of artifact should be created
+- Story Group G: Canvas Worker Integration
+- start with `canvas.delegate_task` so the voice tutor can hand work to the
+  canvas agent cleanly
+- after delegation is working, move to environment awareness and then
+  proactivity so the product feels complete
 
 ### Stories
 
@@ -592,6 +597,11 @@ Done means:
 
 - the orchestrator can ask for an explanatory image and place it on canvas
 
+Current state:
+
+- complete
+- use as the reference implementation for future canvas-generation-style tools
+
 #### Story E2: Enhancement Planner
 
 What needs to be done:
@@ -604,6 +614,10 @@ Done means:
 
 - enhancement has a clean planning layer instead of being an opaque single step
 
+Current state:
+
+- deferred until after canvas delegation and tutor proactivity work
+
 #### Story E3: Poster Placement And Canvas Insert
 
 What needs to be done:
@@ -615,6 +629,12 @@ What needs to be done:
 Done means:
 
 - a generated poster appears on the canvas where the agent intended
+
+Current state:
+
+- covered for the E1 `canvas.generate_visual` slice
+- future work here should only happen if later generation-style tools need a
+  materially different insertion pattern
 
 ### Relevant Resources
 
