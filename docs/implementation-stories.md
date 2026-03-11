@@ -718,6 +718,15 @@ What needs to be done:
 - define what context the canvas worker receives
 - define what immediate acknowledgement it returns
 
+Locked v1 slice:
+
+- backend tool: `canvas.delegate_task`
+- backend returns `accepted` plus frontend action `canvas.delegate_requested`
+- frontend runs the existing tldraw canvas agent over `viewport` or `selection`
+- frontend reports only completion or failure
+- backend reuses the original delegated goal for the semantic completion update
+  instead of adding a separate summarizer step
+
 Done means:
 
 - the orchestrator can tell the canvas worker to begin work and immediately resume conversation flow

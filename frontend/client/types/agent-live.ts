@@ -36,6 +36,7 @@ export interface AgentSubtitleState {
 export type FrontendActionType =
 	| 'canvas.job_started'
 	| 'canvas.context_requested'
+	| 'canvas.delegate_requested'
 	| 'canvas.insert_visual'
 	| 'canvas.insert_widget'
 	| 'flashcards.begin'
@@ -92,4 +93,12 @@ export interface CanvasContextResponseMessage {
 	source_tool: string
 	job_id: string
 	context: unknown
+}
+
+export interface CanvasDelegateResultMessage {
+	type: 'canvas_delegate_result'
+	source_tool: string
+	job_id: string
+	status: 'completed' | 'failed'
+	error?: string
 }

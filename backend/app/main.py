@@ -41,6 +41,14 @@ from thinkspace_agent.agent import agent  # noqa: E402
 from thinkspace_agent.tools.canvas_visual_jobs import (  # noqa: E402
     canvas_visual_job_outbox,
 )
+from thinkspace_agent.tools.canvas_delegate import (  # noqa: E402
+    CANVAS_DELEGATE_TASK_TOOL,
+)
+from thinkspace_agent.tools.canvas_delegate_jobs import (  # noqa: E402
+    canvas_delegate_job_outbox,
+    canvas_delegate_job_store,
+    publish_canvas_delegate_job_result,
+)
 from thinkspace_agent.tools.canvas_context_requests import (  # noqa: E402
     canvas_context_request_store,
 )
@@ -330,6 +338,24 @@ def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
         return f"The visual is now inserted on the canvas. {summary}"
     return "The visual is now inserted on the canvas."
 
+
+def _build_canvas_delegate_result(
+    *,
+    status: str,
+    job_id: str,
+    summary: str,
+    payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "status": status,
+        "tool": CANVAS_DELEGATE_TASK_TOOL,
+        "summary": summary,
+        "job": {"id": job_id},
+    }
+    if payload is not None:
+        result["payload"] = payload
+    return result
+
 # ========================================
 # Phase 1: Application Initialization (once at startup)
 # ========================================
@@ -525,6 +551,9 @@ async def websocket_endpoint(
     canvas_background_result_queue = await canvas_visual_job_outbox.subscribe(
         user_id, session_id
     )
+    canvas_delegate_background_result_queue = await canvas_delegate_job_outbox.subscribe(
+        user_id, session_id
+    )
 
     # Transcript persistence: shared buffer and lock for upstream/downstream
     transcript_buffer: list[TranscriptEntryRecord] = []
@@ -715,6 +744,69 @@ async def websocket_endpoint(
                             payload=context_payload,
                         )
 
+                elif json_message.get("type") == "canvas_delegate_result":
+                    source_tool = json_message.get("source_tool")
+                    job_id = json_message.get("job_id")
+                    delegate_status = json_message.get("status")
+                    error_summary = json_message.get("error")
+                    if (
+                        isinstance(source_tool, str)
+                        and source_tool == CANVAS_DELEGATE_TASK_TOOL
+                        and isinstance(job_id, str)
+                        and job_id.strip()
+                        and isinstance(delegate_status, str)
+                    ):
+                        job_record = await canvas_delegate_job_store.pop_job(
+                            user_id=user_id,
+                            session_id=session_id,
+                            job_id=job_id,
+                        )
+                        if job_record is None:
+                            continue
+
+                        if delegate_status == "completed":
+                            result = _build_canvas_delegate_result(
+                                status="completed",
+                                job_id=job_id,
+                                summary="Delegated canvas task completed",
+                                payload={
+                                    "goal": job_record.goal,
+                                    "target_scope": job_record.target_scope,
+                                },
+                            )
+                            await publish_canvas_delegate_job_result(
+                                user_id=user_id,
+                                session_id=session_id,
+                                result=result,
+                            )
+                            semantic_text = (
+                                "The canvas worker finished the delegated task: "
+                                f"{job_record.goal}. "
+                                "Briefly explain what was added or changed on the canvas."
+                            )
+                            content = types.Content(parts=[types.Part(text=semantic_text)])
+                            live_request_queue.send_content(content)
+                        else:
+                            failure_summary = (
+                                error_summary.strip()
+                                if isinstance(error_summary, str) and error_summary.strip()
+                                else "Canvas worker failed to complete the delegated task"
+                            )
+                            result = _build_canvas_delegate_result(
+                                status="failed",
+                                job_id=job_id,
+                                summary=failure_summary,
+                                payload={
+                                    "goal": job_record.goal,
+                                    "target_scope": job_record.target_scope,
+                                },
+                            )
+                            await publish_canvas_delegate_job_result(
+                                user_id=user_id,
+                                session_id=session_id,
+                                result=result,
+                            )
+
     async def downstream_task() -> None:
         """Receives Events from run_live() and sends to WebSocket."""
         logger.debug("downstream_task started, calling runner.run_live()")
@@ -816,6 +908,13 @@ async def websocket_endpoint(
         ),
         name="websocket-canvas-background-tool-results",
     )
+    canvas_delegate_background_results = asyncio.create_task(
+        background_tool_result_task(
+            result_queue=canvas_delegate_background_result_queue,
+            task_label="canvas_delegate_background_tool_result_task",
+        ),
+        name="websocket-canvas-delegate-background-tool-results",
+    )
 
     try:
         logger.debug("Starting asyncio.gather for upstream and downstream tasks")
@@ -825,6 +924,7 @@ async def websocket_endpoint(
                 downstream,
                 flashcard_background_results,
                 canvas_background_results,
+                canvas_delegate_background_results,
             },
             return_when=asyncio.FIRST_COMPLETED,
         )
@@ -857,11 +957,20 @@ async def websocket_endpoint(
             session_id,
             canvas_background_result_queue,
         )
+        await canvas_delegate_job_outbox.unsubscribe(
+            user_id,
+            session_id,
+            canvas_delegate_background_result_queue,
+        )
         await canvas_placement_context_store.clear_context(
             user_id=user_id,
             session_id=session_id,
         )
         canvas_context_request_store.clear_session(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        await canvas_delegate_job_store.clear_session(
             user_id=user_id,
             session_id=session_id,
         )
@@ -871,6 +980,7 @@ async def websocket_endpoint(
             downstream,
             flashcard_background_results,
             canvas_background_results,
+            canvas_delegate_background_results,
         ):
             if not task.done():
                 task.cancel()
@@ -880,6 +990,7 @@ async def websocket_endpoint(
             downstream,
             flashcard_background_results,
             canvas_background_results,
+            canvas_delegate_background_results,
         ):
             with suppress(asyncio.CancelledError):
                 await task

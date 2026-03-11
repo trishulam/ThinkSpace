@@ -3,6 +3,7 @@ import type {
 	AgentLogEntry,
 	AgentSubtitleState,
 	CanvasContextResponseMessage,
+	CanvasDelegateResultMessage,
 	ConnectionState,
 	FrontendAck,
 	FrontendAction,
@@ -626,6 +627,20 @@ export function useAgentWebSocket({
 		[addLogEntry]
 	)
 
+	const sendCanvasDelegateResult = useCallback(
+		(message: CanvasDelegateResultMessage) => {
+			if (wsRef.current?.readyState !== WebSocket.OPEN) return
+			const payload = JSON.stringify(message)
+			wsRef.current.send(payload)
+			addLogEntry(
+				'system',
+				`Sent canvas delegate result for ${message.job_id} (${message.status})`,
+				payload
+			)
+		},
+		[addLogEntry]
+	)
+
 	const sendAudioChunk = useCallback((data: ArrayBuffer) => {
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
 			wsRef.current.send(data)
@@ -654,6 +669,7 @@ export function useAgentWebSocket({
 		sendImage,
 		sendCanvasContext,
 		sendCanvasContextResponse,
+		sendCanvasDelegateResult,
 		sendAudioChunk,
 		sendFrontendAck,
 		clearLog,

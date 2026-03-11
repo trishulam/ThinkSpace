@@ -123,6 +123,15 @@ type CanvasInsertVisualPayload = {
   mime_type?: string;
 };
 
+type CanvasDelegatePayload = {
+  goal: string;
+  target_scope: "viewport" | "selection";
+  constraints?: string;
+  teaching_intent?: string;
+  title?: string;
+  message?: string;
+};
+
 type CanvasJobToastState = {
   jobId?: string;
   title: string;
@@ -192,6 +201,32 @@ function normalizeCanvasJobToastPayload(
   };
 }
 
+function normalizeCanvasDelegatePayload(
+  payload: unknown,
+): CanvasDelegatePayload | null {
+  if (!isRecord(payload) || typeof payload.goal !== "string") {
+    return null;
+  }
+
+  const targetScope = payload.target_scope;
+  if (targetScope !== "viewport" && targetScope !== "selection") {
+    return null;
+  }
+
+  return {
+    goal: payload.goal,
+    target_scope: targetScope,
+    constraints:
+      typeof payload.constraints === "string" ? payload.constraints : undefined,
+    teaching_intent:
+      typeof payload.teaching_intent === "string"
+        ? payload.teaching_intent
+        : undefined,
+    title: typeof payload.title === "string" ? payload.title : undefined,
+    message: typeof payload.message === "string" ? payload.message : undefined,
+  };
+}
+
 function insertVisualIntoCanvas(
   editor: Editor,
   payload: CanvasInsertVisualPayload,
@@ -245,6 +280,13 @@ function insertVisualIntoCanvas(
       ? `Title: ${payload.title}`
       : "Visual inserted into canvas",
   };
+}
+
+function getDelegateBounds(editor: Editor, payload: CanvasDelegatePayload) {
+  if (payload.target_scope === "selection") {
+    return editor.getSelectionPageBounds() ?? editor.getViewportPageBounds();
+  }
+  return editor.getViewportPageBounds();
 }
 
 export const SessionCanvas: React.FC = () => {
@@ -478,20 +520,22 @@ export const SessionCanvas: React.FC = () => {
             return;
           }
 
+          const jobId = action.job_id;
+
           void (async () => {
             try {
               const context = await buildCanvasPlacementPlannerContext(editor, app);
               ws.sendCanvasContextResponse({
                 type: "canvas_context_response",
                 source_tool: action.source_tool,
-                job_id: action.job_id,
+                job_id: jobId,
                 context,
               });
               ws.sendFrontendAck({
                 status: "applied",
                 action_type: action.type,
                 source_tool: action.source_tool,
-                job_id: action.job_id,
+                job_id: jobId,
                 summary: "Fresh canvas context captured and returned",
               });
             } catch (error) {
@@ -500,8 +544,145 @@ export const SessionCanvas: React.FC = () => {
                 status: "failed",
                 action_type: action.type,
                 source_tool: action.source_tool,
-                job_id: action.job_id,
+                job_id: jobId,
                 summary: "Failed to build fresh canvas context",
+              });
+            }
+          })();
+          return;
+        }
+        case "canvas.delegate_requested": {
+          const delegatePayload = normalizeCanvasDelegatePayload(action.payload);
+          if (!delegatePayload) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Invalid canvas delegate payload",
+            });
+            return;
+          }
+
+          if (!editor || !app) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Canvas agent is not ready",
+            });
+            if (action.job_id) {
+              ws.sendCanvasDelegateResult({
+                type: "canvas_delegate_result",
+                source_tool: action.source_tool,
+                job_id: action.job_id,
+                status: "failed",
+                error: "Canvas agent is not ready",
+              });
+            }
+            return;
+          }
+
+          if (!action.job_id) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              summary: "Canvas delegate request missing job id",
+            });
+            return;
+          }
+
+          const activeEditor = editor;
+          const activeApp = app;
+          const jobId = action.job_id;
+
+          showCanvasToast({
+            jobId,
+            title: delegatePayload.title ?? "Editing canvas",
+            message:
+              delegatePayload.message ?? "The canvas agent is working on the board",
+            severity: "info",
+            isLoading: true,
+          });
+
+          ws.sendFrontendAck({
+            status: "applied",
+            action_type: action.type,
+            source_tool: action.source_tool,
+            job_id: jobId,
+            summary: "Canvas delegate task started",
+          });
+
+          void (async () => {
+            const canvasAgent = activeApp.agents.getAgent();
+            if (!canvasAgent) {
+              showCanvasToast(
+                {
+                  jobId,
+                  title: "Canvas task failed",
+                  message: "Canvas agent is not available",
+                  severity: "error",
+                  isLoading: false,
+                },
+                CANVAS_ERROR_TOAST_VISIBLE_MS,
+              );
+              ws.sendCanvasDelegateResult({
+                type: "canvas_delegate_result",
+                source_tool: action.source_tool,
+                job_id: jobId,
+                status: "failed",
+                error: "Canvas agent is not available",
+              });
+              return;
+            }
+
+            const agentMessages = [delegatePayload.goal];
+            if (delegatePayload.constraints) {
+              agentMessages.push(`Constraints: ${delegatePayload.constraints}`);
+            }
+            if (delegatePayload.teaching_intent) {
+              agentMessages.push(`Teaching intent: ${delegatePayload.teaching_intent}`);
+            }
+
+            try {
+              await canvasAgent.prompt({
+                agentMessages,
+                userMessages: [],
+                source: "other-agent",
+                bounds: getDelegateBounds(activeEditor, delegatePayload),
+                contextItems: [],
+                data: [],
+              });
+              clearCanvasToast();
+              ws.sendCanvasDelegateResult({
+                type: "canvas_delegate_result",
+                source_tool: action.source_tool,
+                job_id: jobId,
+                status: "completed",
+              });
+            } catch (error) {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Canvas agent failed to complete the task";
+              showCanvasToast(
+                {
+                  jobId,
+                  title: "Canvas task failed",
+                  message,
+                  severity: "error",
+                  isLoading: false,
+                },
+                CANVAS_ERROR_TOAST_VISIBLE_MS,
+              );
+              ws.sendCanvasDelegateResult({
+                type: "canvas_delegate_result",
+                source_tool: action.source_tool,
+                job_id: jobId,
+                status: "failed",
+                error: message,
               });
             }
           })();
@@ -585,7 +766,14 @@ export const SessionCanvas: React.FC = () => {
           });
       }
     },
-    [app, applyFrontendFlashcardState, clearCanvasToast, editor, showCanvasToast, ws],
+    [
+      app,
+      applyFrontendFlashcardState,
+      clearCanvasToast,
+      editor,
+      showCanvasToast,
+      ws,
+    ],
   );
 
   React.useEffect(() => {

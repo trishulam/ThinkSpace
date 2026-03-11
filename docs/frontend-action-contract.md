@@ -211,18 +211,30 @@ Typical source:
 
 - `flashcards.end`
 
-## Explicit V1 Boundary: `canvas.delegate_task`
+## `canvas.delegate_requested`
 
-`canvas.delegate_task` does not currently map to one simple frontend action in
-the same way as the other v1 tools.
+Trigger the existing tldraw canvas agent to perform open-ended canvas work on
+behalf of the voice orchestrator.
 
-Current decision:
+Payload shape:
 
-- treat it as a special execution path tied to the tldraw canvas agent
-- do not force it into a simple single-action insertion model
+- `goal`
+- `target_scope`
+- optional `constraints`
+- optional `teaching_intent`
+- optional toast copy such as `title` and `message`
 
-This can be revisited later if a normalized canvas-agent result action becomes
-useful.
+Typical source:
+
+- `canvas.delegate_task`
+
+Design notes:
+
+- this is still a specialized handoff into the canvas worker, not a generic
+  deterministic insertion action
+- the frontend owns execution of the multi-step worker task
+- the backend owns the semantic completion follow-up when the worker reports
+  success or failure
 
 ## Design Rule
 

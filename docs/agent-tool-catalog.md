@@ -40,10 +40,11 @@ Generate a static visual teaching artifact and place it on the canvas.
 
 Examples:
 
-- diagram
 - poster
 - labeled explainer visual
 - concept illustration
+- complex illustrative diagram
+- polished rendered teaching visual
 
 Behavior notes:
 
@@ -56,6 +57,11 @@ Behavior notes:
 - placement may use an optional semantic placement hint, but the planner should
   still choose the final bounded geometry
 - this uses direct output insertion rather than the full tldraw agent path
+- this is for rendered artifacts rather than editable board-native structure
+- use this for complex illustrative diagrams when polished rendering matters more
+  than keeping the result editable as native canvas structure
+- do not use this for mindmaps, flowcharts, concept maps, timelines, or other
+  structured compositions that should stay editable on the canvas
 
 ### `canvas.generate_widget`
 
@@ -98,6 +104,10 @@ Hand off open-ended canvas manipulation to the existing tldraw canvas agent.
 
 Examples:
 
+- write notes directly on the canvas
+- build a mindmap
+- build a flowchart
+- build a simple editable diagram
 - reorganize a messy board
 - redraw or relayout content
 - perform multi-step canvas edits
@@ -106,7 +116,19 @@ Examples:
 Behavior notes:
 
 - this is the path for true canvas operations
+- prefer this whenever the desired result should remain editable as native
+  canvas text, shapes, connectors, or grouped structure
+- this includes structured compositions and writing on the canvas, not only
+  rearrangement tasks
 - this is not the default path for simple generated output placement
+- the orchestrator should give a detailed worker prompt that clearly instructs
+  what to create or change on the canvas
+- worker prompts should be explicit about structure, labels, relationships,
+  sections, and layout when those details matter
+- the backend issues a delegated goal and the frontend canvas agent executes it
+  over the current viewport or selection
+- the frontend reports only completion or failure, and the backend reuses the
+  original delegated goal for the tutor's semantic completion update
 
 ## Canvas Perception And Executor Context
 

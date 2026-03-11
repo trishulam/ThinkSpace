@@ -217,6 +217,28 @@ Later completion:
   geometry
 - `frontend_action`: insert the generated visual into the canvas
 
+### Long-running example: `canvas.delegate_task`
+
+Initial result:
+
+- `status`: `accepted`
+- `tool`: `canvas.delegate_task`
+- `job.id`: generated job identifier
+- `summary`: `Starting delegated canvas work`
+- `payload`: includes the delegated `goal`, `target_scope`, and optional
+  orchestration hints
+- `frontend_action`: `canvas.delegate_requested`
+
+Later completion:
+
+- `status`: `completed`
+- `tool`: `canvas.delegate_task`
+- `job.id`: same job identifier
+- `summary`: `Delegated canvas task completed`
+- `payload`: includes the original `goal` and `target_scope`
+- `frontend_action`: omitted; semantic follow-up is handled by the backend after
+  the frontend worker reports completion
+
 ## Async Delivery Note
 
 For background jobs that complete after the original ADK tool-call event has
