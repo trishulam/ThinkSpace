@@ -2,6 +2,8 @@ import React from "react";
 
 interface EmptyStateProps {
   onCreateSession: () => void;
+  title?: string;
+  subtitle?: string;
 }
 
 const PlusIcon: React.FC = () => (
@@ -10,21 +12,23 @@ const PlusIcon: React.FC = () => (
   </svg>
 );
 
-export const EmptyState: React.FC<EmptyStateProps> = ({ onCreateSession }) => {
+export const EmptyState: React.FC<EmptyStateProps> = ({
+  onCreateSession,
+  title = "Start your first learning session",
+  subtitle = "Pick a concept, ask questions, and build mastery with transcripts, replay, and study artifacts in one place.",
+}) => {
   return (
-    <div className="ts-empty-state">
-      <div className="ts-empty-state-glyph">🧠</div>
-      <h3 className="ts-empty-state-title">No sessions yet</h3>
-      <p className="ts-empty-state-sub">
-        Start your first AI-powered learning session. Pick a topic and dive in.
-      </p>
+    <div className="ts-home-empty-state">
+      <div className="ts-home-empty-state-glyph">🧠</div>
+      <h3 className="ts-home-empty-state-title">{title}</h3>
+      <p className="ts-home-empty-state-sub">{subtitle}</p>
       <button
-        className="mindpad-btn-primary"
+        className="ts-home-primary-btn"
         onClick={onCreateSession}
         type="button"
       >
         <PlusIcon />
-        Create your first session
+        New Session
       </button>
     </div>
   );

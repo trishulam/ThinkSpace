@@ -4,11 +4,15 @@ export interface Session {
   goal?: string
   mode: 'guided' | 'socratic' | 'challenge'
   level: 'beginner' | 'intermediate' | 'advanced'
+  status: string
+  summary?: string
   lastActive: Date
   duration: number // in minutes
   thumbnail?: string
   createdAt: Date
   updatedAt: Date
+  checkpointCount: number
+  milestoneCount: number
 }
 
 export interface NewSessionData {

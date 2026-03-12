@@ -81,31 +81,37 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   if (!isOpen) return null
 
   return (
-    <div className="mindpad-modal-overlay" onClick={isSubmitting ? undefined : handleCancel}>
-      <div className="mindpad-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="mindpad-modal-header">
-          <h2 className="mindpad-modal-title">Start a New Session</h2>
+    <div className="ts-session-modal-overlay" onClick={isSubmitting ? undefined : handleCancel}>
+      <div className="ts-session-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="ts-session-modal-header">
+          <div className="ts-session-modal-title-block">
+            <p className="ts-session-modal-kicker">New Session</p>
+            <h2 className="ts-session-modal-title">Start a learning session</h2>
+            <p className="ts-session-modal-subtitle">
+              Choose a topic, set your goal, and pick how ThinkSpace should guide the session.
+            </p>
+          </div>
           <button
             onClick={handleCancel}
-            className="mindpad-modal-close"
+            className="ts-session-modal-close"
             type="button"
             disabled={isSubmitting}
+            aria-label="Close modal"
           >
-            <XIcon className="mindpad-modal-close-icon" />
+            <XIcon className="ts-session-modal-close-icon" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div className="mindpad-modal-content">
-            {/* Topic Field */}
-            <div className="mindpad-form-group">
-              <label htmlFor="topic" className="mindpad-form-label">
+          <div className="ts-session-modal-content">
+            <div className="ts-session-form-group">
+              <label htmlFor="topic" className="ts-session-form-label">
                 Topic *
               </label>
               <input
                 id="topic"
                 type="text"
-                className={`mindpad-form-input ${errors.topic ? 'mindpad-form-input-error' : ''}`}
+                className={`ts-session-form-input ${errors.topic ? 'ts-session-form-input-error' : ''}`}
                 placeholder="e.g. Backpropagation in Neural Networks"
                 value={formData.topic}
                 onChange={(e) => handleInputChange('topic', e.target.value)}
@@ -113,19 +119,18 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                 disabled={isSubmitting}
               />
               {errors.topic && (
-                <span className="mindpad-form-error-text">{errors.topic}</span>
+                <span className="ts-session-form-error-text">{errors.topic}</span>
               )}
             </div>
 
-            {/* Goal Field */}
-            <div className="mindpad-form-group">
-              <label htmlFor="goal" className="mindpad-form-label">
+            <div className="ts-session-form-group">
+              <label htmlFor="goal" className="ts-session-form-label">
                 Goal
               </label>
               <input
                 id="goal"
                 type="text"
-                className="mindpad-form-input"
+                className="ts-session-form-input"
                 placeholder="Understand gradient flow intuitively"
                 value={formData.goal}
                 onChange={(e) => handleInputChange('goal', e.target.value)}
@@ -133,13 +138,12 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
               />
             </div>
 
-            {/* Mode Field */}
-            <div className="mindpad-form-group">
-              <label className="mindpad-form-label">Mode</label>
-              <div className="mindpad-segmented-control">
+            <div className="ts-session-form-group">
+              <label className="ts-session-form-label">Mode</label>
+              <div className="ts-session-segmented-control">
                 <button
                   type="button"
-                  className={`mindpad-segmented-option ${formData.mode === 'guided' ? 'active' : ''}`}
+                  className={`ts-session-segmented-option ${formData.mode === 'guided' ? 'active' : ''}`}
                   onClick={() => handleInputChange('mode', 'guided')}
                   disabled={isSubmitting}
                 >
@@ -147,7 +151,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                 </button>
                 <button
                   type="button"
-                  className={`mindpad-segmented-option ${formData.mode === 'socratic' ? 'active' : ''}`}
+                  className={`ts-session-segmented-option ${formData.mode === 'socratic' ? 'active' : ''}`}
                   onClick={() => handleInputChange('mode', 'socratic')}
                   disabled={isSubmitting}
                 >
@@ -155,7 +159,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                 </button>
                 <button
                   type="button"
-                  className={`mindpad-segmented-option ${formData.mode === 'challenge' ? 'active' : ''}`}
+                  className={`ts-session-segmented-option ${formData.mode === 'challenge' ? 'active' : ''}`}
                   onClick={() => handleInputChange('mode', 'challenge')}
                   disabled={isSubmitting}
                 >
@@ -164,12 +168,11 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
               </div>
             </div>
 
-            {/* Level Field */}
-            <div className="mindpad-form-group">
-              <label htmlFor="level" className="mindpad-form-label">
+            <div className="ts-session-form-group">
+              <label htmlFor="level" className="ts-session-form-label">
                 Level
               </label>
-              <div className="mindpad-select">
+              <div className="ts-session-select">
                 <select
                   id="level"
                   value={formData.level}
@@ -184,11 +187,10 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
             </div>
           </div>
 
-          {/* Modal Actions */}
-          <div className="mindpad-modal-actions">
+          <div className="ts-session-modal-actions">
             <button
               type="button"
-              className="mindpad-btn-ghost"
+              className="ts-home-secondary-btn"
               onClick={handleCancel}
               disabled={isSubmitting}
             >
@@ -196,7 +198,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
             </button>
             <button
               type="submit"
-              className="mindpad-btn-primary"
+              className="ts-home-primary-btn"
               disabled={isSubmitting}
             >
               {isSubmitting ? 'Creating...' : 'Create Session'}

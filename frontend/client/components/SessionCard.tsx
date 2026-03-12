@@ -1,8 +1,18 @@
 import React from "react";
 import { Session } from "../types/session";
 
+interface SessionAvailability {
+  hasTranscript: boolean;
+  transcriptTurns: number;
+  hasRecording: boolean;
+  recordingSegments: number;
+  hasFlashcards: boolean;
+  isLoading: boolean;
+}
+
 interface SessionCardProps {
   session: Session;
+  availability?: SessionAvailability;
   onResume: (sessionId: string) => void;
   onSummary: (sessionId: string) => void;
 }
@@ -23,12 +33,12 @@ const TOPIC_EMOJIS = [
   "🚀",
 ];
 const ICON_BGSCOLOR = [
-  "rgba(16,185,129,0.12)",
-  "rgba(59,130,246,0.12)",
-  "rgba(139,92,246,0.12)",
+  "rgba(91,43,238,0.12)",
+  "rgba(99,102,241,0.12)",
+  "rgba(14,165,233,0.12)",
+  "rgba(168,85,247,0.12)",
   "rgba(245,158,11,0.12)",
-  "rgba(239,68,68,0.1)",
-  "rgba(20,184,166,0.12)",
+  "rgba(244,63,94,0.1)",
 ];
 
 function topicHash(topic: string): number {
@@ -69,15 +79,16 @@ const formatDuration = (minutes: number): string => {
   return `${m}m`;
 };
 
-const TimeIcon: React.FC = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm.5 5v5.25l4.5 2.67-.75 1.23L11 13V7h1.5z" />
+const ClockIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 8v4.5l3 1.75" />
   </svg>
 );
 
-const ClockIcon: React.FC = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm5.01 15l-6-3.78V7h1.5v5.43l5.27 3.31L17 17z" />
+const SparkIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="m12 3 1.9 4.85L19 9.75l-4.1 2.4L13.5 17 10.8 12.3 6 9.75l5.1-1.9L12 3Z" />
   </svg>
 );
 
@@ -88,18 +99,70 @@ const PlayIcon: React.FC = () => (
 );
 
 const ReplayIcon: React.FC = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" />
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M4 12a8 8 0 0 0 13.66 5.66" />
+    <path d="M20 12A8 8 0 0 0 6.34 6.34" />
+    <path d="M4 4v5h5" />
   </svg>
 );
 
+const getModeLabel = (mode: Session["mode"]): string => {
+  switch (mode) {
+    case "guided":
+      return "Guided";
+    case "socratic":
+      return "Socratic";
+    case "challenge":
+      return "Challenge";
+    default:
+      return mode;
+  }
+};
+
+const getLevelLabel = (level: Session["level"]): string => {
+  switch (level) {
+    case "beginner":
+      return "Beginner";
+    case "intermediate":
+      return "Intermediate";
+    case "advanced":
+      return "Advanced";
+    default:
+      return level;
+  }
+};
+
+const getStatusMeta = (
+  status: string
+): { label: string; tone: "active" | "completed" | "pending" } => {
+  if (status === "completed") {
+    return { label: "Ready", tone: "completed" };
+  }
+  if (status === "processing") {
+    return { label: "Processing", tone: "pending" };
+  }
+  return { label: "In Progress", tone: "active" };
+};
+
 export const SessionCard: React.FC<SessionCardProps> = ({
   session,
+  availability,
   onResume,
   onSummary,
 }) => {
   const emoji = topicEmoji(session.topic);
   const bgColor = topicBg(session.topic);
+  const status = getStatusMeta(session.status);
+  const summaryText =
+    session.summary ||
+    session.goal ||
+    `Continue learning ${session.topic} with a ${getModeLabel(session.mode).toLowerCase()} study session.`;
+  const resources = [
+    availability?.hasTranscript ? "Transcript" : null,
+    availability?.hasRecording ? "Recording" : null,
+    availability?.hasFlashcards ? "Flashcards" : null,
+    session.summary || session.checkpointCount > 0 ? "Replay" : null,
+  ].filter((value): value is string => Boolean(value));
 
   const handleResume = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -112,54 +175,86 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   };
 
   return (
-    <div className="ts-session-row" onClick={() => onResume(session.id)}>
-      {/* Icon */}
-      <div className="ts-session-row-icon" style={{ background: bgColor }}>
-        {emoji}
+    <div className="ts-home-session-card" onClick={() => onResume(session.id)}>
+      <div className="ts-home-session-card-main">
+        <div className="ts-home-session-card-icon" style={{ background: bgColor }}>
+          {emoji}
+        </div>
+
+        <div className="ts-home-session-card-copy">
+          <div className="ts-home-session-card-header">
+            <div>
+              <h3 className="ts-home-session-card-title">{session.topic}</h3>
+              <p className="ts-home-session-card-summary">{summaryText}</p>
+            </div>
+            <span
+              className={`ts-home-status-pill ts-home-status-pill--${status.tone}`}
+            >
+              {status.label}
+            </span>
+          </div>
+
+          <div className="ts-home-session-card-meta">
+            <span>{getModeLabel(session.mode)}</span>
+            <span>{getLevelLabel(session.level)}</span>
+            <span>{formatLastActive(session.lastActive)}</span>
+            {session.duration > 0 && <span>{formatDuration(session.duration)}</span>}
+            {session.checkpointCount > 0 && <span>{session.checkpointCount} checkpoints</span>}
+            {session.milestoneCount > 0 && <span>{session.milestoneCount} milestones</span>}
+          </div>
+
+          <div className="ts-home-session-card-resources">
+            {resources.length > 0 ? (
+              resources.map((resource) => (
+                <span key={resource} className="ts-home-session-card-resource">
+                  {resource}
+                </span>
+              ))
+            ) : availability?.isLoading ? (
+              <span className="ts-home-session-card-resource ts-home-session-card-resource--muted">
+                Checking study materials...
+              </span>
+            ) : (
+              <span className="ts-home-session-card-resource ts-home-session-card-resource--muted">
+                Session workspace
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Body */}
-      <div className="ts-session-row-body">
-        <span className="ts-session-row-title">{session.topic}</span>
-        {session.goal && (
-          <span className="ts-session-row-goal">{session.goal}</span>
-        )}
-      </div>
-
-      {/* Meta */}
-      <div className="ts-session-row-meta">
-        <span className="ts-session-row-meta-chip">
-          <TimeIcon />
-          {formatLastActive(session.lastActive)}
-        </span>
-        {session.duration > 0 && (
-          <span className="ts-session-row-meta-chip">
+      <div className="ts-home-session-card-aside">
+        <div className="ts-home-session-card-stats">
+          <span className="ts-home-session-card-stat">
             <ClockIcon />
-            {formatDuration(session.duration)}
+            Updated {formatLastActive(session.lastActive)}
           </span>
-        )}
-      </div>
+          <span className="ts-home-session-card-stat">
+            <SparkIcon />
+            {session.summary ? "Summary ready" : "Continue building"}
+          </span>
+        </div>
 
-      {/* Actions */}
-      <div className="ts-session-row-actions">
-        <button
-          className="ts-row-btn ts-row-btn--ghost"
-          onClick={handleSummary}
-          type="button"
-          title="View session summary"
-        >
-          <ReplayIcon />
-          Session Summary
-        </button>
-        <button
-          className="ts-row-btn ts-row-btn--primary"
-          onClick={handleResume}
-          type="button"
-          title="Resume session"
-        >
-          <PlayIcon />
-          Resume
-        </button>
+        <div className="ts-home-session-card-actions">
+          <button
+            className="ts-home-inline-ghost-btn"
+            onClick={handleSummary}
+            type="button"
+            title="View replay"
+          >
+            <ReplayIcon />
+            View Replay
+          </button>
+          <button
+            className="ts-home-inline-primary-btn"
+            onClick={handleResume}
+            type="button"
+            title="Resume session"
+          >
+            <PlayIcon />
+            {session.status === "completed" ? "Open Session" : "Continue"}
+          </button>
+        </div>
       </div>
     </div>
   );

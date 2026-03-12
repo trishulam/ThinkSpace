@@ -208,10 +208,14 @@ export function apiSessionToSession(session: ApiSession): Session {
     goal: session.goal || undefined,
     mode: session.mode,
     level: session.level,
+    status: session.status,
+    summary: session.summary || undefined,
     lastActive: new Date(session.lastActiveAt),
     duration: Math.round(session.durationMs / 60000),
     createdAt: new Date(session.createdAt),
     updatedAt: new Date(session.updatedAt),
+    checkpointCount: session.checkpointCount,
+    milestoneCount: session.milestoneCount,
   };
 }
 

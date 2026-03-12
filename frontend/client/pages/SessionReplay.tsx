@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   finalizeSessionRecordings,
   generateSessionKeyMoments,
@@ -11,8 +11,10 @@ import {
   type ApiSessionKeyMomentArtifact,
   type ApiSessionRecordingManifest,
   type ApiSessionResumeResponse,
+  type ApiTranscriptEntry,
   type ApiTranscriptTurn,
 } from "../api/sessions";
+import { TopNavigation } from "../components/TopNavigation";
 
 type SessionFlashcard = {
   id: string;
@@ -117,6 +119,17 @@ function formatVideoTime(seconds: number): string {
   return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
+function toDisplayStatus(value: string | null | undefined): string {
+  if (!value) {
+    return "Idle";
+  }
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function buildFlashcards(
   session: ApiSessionResumeResponse["session"] | null,
   transcript: ApiTranscriptTurn[]
@@ -149,7 +162,27 @@ function buildFlashcards(
   ];
 }
 
+function getReplayTranscriptEntries(turn: ApiTranscriptTurn): ApiTranscriptEntry[] {
+  const userTranscription = turn.entries.find(
+    (entry) => entry.type === "user-transcription" && entry.isPartial === false
+  );
+
+  const finalAgentTextIndex = turn.entries.findIndex(
+    (entry) => entry.type === "agent-text" && !entry.isPartial
+  );
+
+  const previousEntry =
+    finalAgentTextIndex > 0 ? turn.entries[finalAgentTextIndex - 1] : undefined;
+  const agentTranscription =
+    previousEntry?.type === "agent-transcription" ? previousEntry : undefined;
+
+  return [userTranscription, agentTranscription].filter(
+    (entry): entry is ApiTranscriptEntry => Boolean(entry?.content?.trim())
+  );
+}
+
 export const SessionReplay: React.FC = () => {
+  const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId: string }>();
   const [manifest, setManifest] = useState<ApiSessionRecordingManifest | null>(null);
   const [sessionResume, setSessionResume] = useState<ApiSessionResumeResponse | null>(null);
@@ -162,6 +195,7 @@ export const SessionReplay: React.FC = () => {
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [expandedMomentIds, setExpandedMomentIds] = useState<Record<string, boolean>>({});
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -261,7 +295,7 @@ export const SessionReplay: React.FC = () => {
     [sessionResume?.session, transcript]
   );
   const sessionTitle = sessionResume?.session.topic ?? "Session Summary";
-  const sessionGoal = sessionResume?.session.goal;
+  const replayStatus = manifest?.finalRelativePath ? "Ready" : toDisplayStatus(manifest?.status);
 
   if (!sessionId) {
     return <div>Session not found</div>;
@@ -288,66 +322,53 @@ export const SessionReplay: React.FC = () => {
     videoRef.current.pause();
   };
 
+  const toggleMomentExpanded = (momentId: string) => {
+    setExpandedMomentIds((current) => ({
+      ...current,
+      [momentId]: !current[momentId],
+    }));
+  };
+
   return (
-    <div className="mindpad-dashboard">
-      <div className="mindpad-nav">
-        <Link to="/dashboard" className="mindpad-nav-logo">
-          <svg className="mindpad-icon-lg" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2ZM21 9V7L15 4L13 5V7C13 8.66 14.34 10 16 10H21ZM7 14C7 15.66 8.34 17 10 17H14C15.66 17 17 15.66 17 14V12H7V14ZM3 14V16C3 17.66 4.34 19 6 19H18C19.66 19 21 17.66 21 16V14C21 12.34 19.66 11 18 11H6C4.34 11 3 12.34 3 14Z" />
-          </svg>
-          <span>MindPad</span>
-        </Link>
+    <div className="mindpad-dashboard ts-home-dashboard">
+      <TopNavigation
+        onPrimaryAction={() => navigate("/dashboard")}
+        primaryActionLabel="Back to Dashboard"
+        pageTitle="Replay"
+        pageSubtitle="Review video, transcript, and study materials."
+        showSearch={false}
+      />
 
-        <Link to={`/session/${sessionId}`} className="mindpad-btn-ghost">
-          Open Session
-        </Link>
-      </div>
-
-      <div className="mindpad-container">
-        <div className="mindpad-page-header replay-page-header">
-          <div>
-            <h1 className="mindpad-page-title">{sessionTitle}</h1>
-            <p className="mindpad-page-subtitle">
-              Review the session video, moments, and transcript in one place.
-            </p>
-          </div>
-          <div className="replay-page-header-actions">
-            <Link to={`/session/${sessionId}`} className="mindpad-btn-ghost">
-              Open Session
-            </Link>
-          </div>
-        </div>
-
+      <div className="ts-replay-shell">
         {isLoading ? (
-          <div className="mindpad-empty-state">
-            <h3 className="mindpad-empty-state-title">Loading replay</h3>
-          </div>
+          <section className="ts-home-empty-state">
+            <h3 className="ts-home-empty-state-title">Loading replay</h3>
+            <p className="ts-home-empty-state-sub">
+              Pulling together the session video, transcript, and generated study materials.
+            </p>
+          </section>
         ) : error ? (
-          <div className="mindpad-empty-state">
-            <h3 className="mindpad-empty-state-title">Replay unavailable</h3>
-            <p className="mindpad-empty-state-subtitle">{error}</p>
-          </div>
+          <section className="ts-home-empty-state">
+            <h3 className="ts-home-empty-state-title">Replay unavailable</h3>
+            <p className="ts-home-empty-state-sub">{error}</p>
+          </section>
         ) : (
-          <div className="session-summary-layout">
-            <div className="session-summary-hero">
-              <section className="session-summary-video-card">
-                <div className="session-summary-video-header">
+          <div className="ts-replay-layout">
+            <div className="ts-replay-top-grid">
+              <section className="ts-replay-video-card">
+                <div className="ts-replay-card-header">
                   <div>
-                    <h2 className="session-summary-section-title">Session Video</h2>
-                    <p className="session-summary-section-subtitle">
-                      Full replay merged from {manifest?.segments.length ?? 0} recording segment(s)
-                    </p>
+                    <p className="ts-replay-section-kicker">Replay Video</p>
+                    <h1 className="ts-replay-title">{sessionTitle}</h1>
                   </div>
-                  <span className="session-summary-status-pill">
-                    {manifest?.finalRelativePath ? "Ready" : manifest?.status ?? "Idle"}
-                  </span>
+                  <span className="ts-replay-status">{replayStatus}</span>
                 </div>
                 {finalVideoUrl ? (
-                  <div className="session-summary-video-shell">
+                  <div className="ts-replay-video-shell">
                     <video
                       ref={videoRef}
                       src={finalVideoUrl}
-                      className="session-summary-video"
+                      className="ts-replay-video"
                       onLoadedMetadata={(event) => {
                         setVideoDuration(event.currentTarget.duration || 0);
                       }}
@@ -359,25 +380,25 @@ export const SessionReplay: React.FC = () => {
                       onEnded={() => setIsVideoPlaying(false)}
                       onClick={togglePlayback}
                     />
-                    <div className="session-summary-player-controls">
+                    <div className="ts-replay-player-controls">
                       <button
                         type="button"
-                        className="session-summary-play-toggle"
+                        className="ts-replay-play-toggle"
                         onClick={togglePlayback}
                       >
                         {isVideoPlaying ? "Pause" : "Play"}
                       </button>
-                      <span className="session-summary-player-time">
+                      <span className="ts-replay-player-time">
                         {formatVideoTime(videoCurrentTime)} / {formatVideoTime(videoDuration)}
                       </span>
-                      <div className="session-summary-timeline">
+                      <div className="ts-replay-timeline">
                         <input
                           type="range"
                           min={0}
                           max={videoDuration || 0}
                           step={0.1}
                           value={Math.min(videoCurrentTime, videoDuration || 0)}
-                          className="session-summary-timeline-slider"
+                          className="ts-replay-timeline-slider"
                           style={
                             {
                               "--slider-progress":
@@ -390,17 +411,17 @@ export const SessionReplay: React.FC = () => {
                           }}
                           aria-label="Replay timeline"
                         />
-                        <div className="session-summary-timeline-markers">
+                        <div className="ts-replay-timeline-markers">
                           {timelineKeyMoments.map((moment) => (
                             <button
                               key={moment.id}
                               type="button"
-                              className="session-summary-timeline-marker"
+                              className="ts-replay-timeline-marker"
                               style={{ left: `${moment.progressPercent}%` }}
                               onClick={() => seekToMoment(moment.timeSeconds)}
                               title={`${moment.title} - ${moment.resolvedTimestampLabel}`}
                             >
-                              <span className="session-summary-timeline-tooltip">
+                              <span className="ts-replay-timeline-tooltip">
                                 {moment.title} · {moment.resolvedTimestampLabel}
                               </span>
                             </button>
@@ -410,7 +431,7 @@ export const SessionReplay: React.FC = () => {
                     </div>
                   </div>
                 ) : (
-                  <div className="session-summary-empty">
+                  <div className="ts-replay-empty">
                     <h3>Replay video not available yet</h3>
                     <p>
                       Status: {manifest?.status ?? "idle"}
@@ -420,80 +441,23 @@ export const SessionReplay: React.FC = () => {
                 )}
               </section>
 
-              <aside className="session-summary-sidebar">
-                <section className="session-summary-side-card">
-                  <h3 className="session-summary-side-title">Session Overview</h3>
-                  <div className="session-summary-stat-list">
-                    <div className="session-summary-stat">
-                      <span className="session-summary-stat-label">Topic</span>
-                      <span className="session-summary-stat-value">{sessionTitle}</span>
-                    </div>
-                    <div className="session-summary-stat">
-                      <span className="session-summary-stat-label">Goal</span>
-                      <span className="session-summary-stat-value">
-                        {sessionGoal || "No goal added"}
-                      </span>
-                    </div>
-                    <div className="session-summary-stat">
-                      <span className="session-summary-stat-label">Transcript turns</span>
-                      <span className="session-summary-stat-value">{transcript.length}</span>
-                    </div>
-                    <div className="session-summary-stat">
-                      <span className="session-summary-stat-label">Recorded segments</span>
-                      <span className="session-summary-stat-value">
-                        {manifest?.segments.length ?? 0}
-                      </span>
-                    </div>
+              <section className="ts-replay-panel ts-replay-panel--moments">
+                <div className="ts-replay-card-header">
+                  <div>
+                    <p className="ts-replay-section-kicker">Key Moments</p>
+                    <h2>Important segments</h2>
                   </div>
-                </section>
-
-                <section className="session-summary-side-card">
-                  <h3 className="session-summary-side-title">Quick Actions</h3>
-                  <div className="session-summary-action-stack">
-                    <Link to={`/session/${sessionId}`} className="mindpad-btn-primary">
-                      Continue Learning
-                    </Link>
-                    <Link to="/dashboard" className="mindpad-btn-ghost">
-                      Back to Dashboard
-                    </Link>
-                  </div>
-                </section>
-              </aside>
-            </div>
-
-            <div className="session-summary-sections">
-              <section className="session-summary-panel">
-                <div className="session-summary-panel-header">
-                  <h2 className="session-summary-section-title">Flashcards</h2>
-                  <span className="session-summary-panel-count">{flashcards.length} cards</span>
-                </div>
-                <div className="session-summary-flashcards">
-                  {flashcards.map((card) => (
-                    <article key={card.id} className="session-summary-flashcard">
-                      <p className="session-summary-flashcard-label">Prompt</p>
-                      <p className="session-summary-flashcard-question">{card.prompt}</p>
-                      <p className="session-summary-flashcard-label">Answer</p>
-                      <p className="session-summary-flashcard-answer">{card.answer}</p>
-                    </article>
-                  ))}
-                </div>
-              </section>
-
-              <section className="session-summary-panel">
-                <div className="session-summary-panel-header">
-                  <h2 className="session-summary-section-title">Key Moments</h2>
-                  <span className="session-summary-panel-count">{keyMoments.length} items</span>
                 </div>
                 {keyMoments.length === 0 ? (
-                  <div className="session-summary-empty">
+                  <div className="ts-replay-empty">
                     <p>No key moments were inferred for this session yet.</p>
                   </div>
                 ) : (
-                  <div className="session-summary-moments">
+                  <div className="ts-replay-moments">
                     {keyMoments.map((moment) => (
                       <article
                         key={moment.id}
-                        className="session-summary-moment"
+                        className="ts-replay-moment"
                         role={timelineKeyMoments.length > 0 ? "button" : undefined}
                         tabIndex={timelineKeyMoments.length > 0 ? 0 : -1}
                         onClick={() => {
@@ -517,61 +481,119 @@ export const SessionReplay: React.FC = () => {
                           }
                         }}
                       >
-                        <div className="session-summary-moment-dot" />
-                        <div>
-                          <div className="session-summary-moment-meta">
+                        <div className="ts-replay-moment-dot" />
+                        <div className="ts-replay-moment-body">
+                          <div className="ts-replay-moment-meta">
                             {timelineKeyMoments.find(
                               (timelineMoment) => timelineMoment.id === moment.id
                             )?.resolvedTimestampLabel ?? `Turn ${moment.startTurnSequence}`}
                           </div>
-                          <h3 className="session-summary-moment-title">{moment.title}</h3>
-                          <p className="session-summary-moment-description">
+                          <h3 className="ts-replay-moment-title">{moment.title}</h3>
+                          <p
+                            className={
+                              expandedMomentIds[moment.id]
+                                ? "ts-replay-moment-description ts-replay-moment-description--expanded"
+                                : "ts-replay-moment-description"
+                            }
+                          >
                             {moment.summary}
                           </p>
+                          {moment.summary.trim().length > 140 ? (
+                            <button
+                              className="ts-replay-moment-expand"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleMomentExpanded(moment.id);
+                              }}
+                              aria-expanded={expandedMomentIds[moment.id] ? "true" : "false"}
+                            >
+                              {expandedMomentIds[moment.id] ? "Collapse ▴" : "Expand ▾"}
+                            </button>
+                          ) : null}
                         </div>
                       </article>
                     ))}
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <div className="ts-replay-bottom-grid">
+              <section className="ts-replay-panel ts-replay-panel--transcript">
+                <div className="ts-replay-card-header">
+                  <div>
+                    <p className="ts-replay-section-kicker">Transcript</p>
+                    <h2>Conversation timeline</h2>
+                  </div>
+                </div>
+                {transcript.length === 0 ? (
+                  <div className="ts-replay-empty">
+                    <p>No transcript saved for this session.</p>
+                  </div>
+                ) : (
+                  <div className="ts-replay-transcript">
+                    {transcript.map((turn) => {
+                      const replayEntries = getReplayTranscriptEntries(turn);
+
+                      return (
+                        <article key={turn.turnId} className="ts-replay-transcript-turn">
+                          <div className="ts-replay-transcript-turn-header">
+                            <span>Turn {turn.sequence}</span>
+                            <span>{toDisplayStatus(turn.status)}</span>
+                          </div>
+                          <div className="ts-replay-transcript-entries">
+                            {replayEntries.length > 0 ? (
+                              replayEntries.map((entry, index) => (
+                                <div
+                                  key={`${turn.turnId}-${index}`}
+                                  className="ts-replay-transcript-entry"
+                                >
+                                  <div className="ts-replay-transcript-entry-type">
+                                    {toDisplayStatus(entry.type)}
+                                  </div>
+                                  <div className="ts-replay-transcript-entry-content">
+                                    {entry.content}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="ts-replay-transcript-entry ts-replay-transcript-entry--empty">
+                                <div className="ts-replay-transcript-entry-type">Replay view</div>
+                                <div className="ts-replay-transcript-entry-content">
+                                  No transcript excerpt was captured for this turn.
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
               </section>
 
-              <section className="session-summary-panel">
-                <div className="session-summary-panel-header">
-                  <h2 className="session-summary-section-title">Transcript</h2>
-                  <span className="session-summary-panel-count">{transcript.length} turns</span>
-                </div>
-                {transcript.length === 0 ? (
-                  <div className="session-summary-empty">
-                    <p>No transcript saved for this session.</p>
+              <div className="ts-replay-right-stack">
+                <section className="ts-replay-panel">
+                  <div className="ts-replay-card-header">
+                    <div>
+                      <p className="ts-replay-section-kicker">Flashcards</p>
+                      <h2>Review prompts</h2>
+                    </div>
                   </div>
-                ) : (
-                  <div className="session-summary-transcript">
-                    {transcript.map((turn) => (
-                      <article key={turn.turnId} className="session-summary-transcript-turn">
-                        <div className="session-summary-transcript-turn-header">
-                          <span>Turn {turn.sequence}</span>
-                          <span>{turn.status}</span>
-                        </div>
-                        <div className="session-summary-transcript-entries">
-                          {turn.entries.map((entry, index) => (
-                            <div
-                              key={`${turn.turnId}-${index}`}
-                              className="session-summary-transcript-entry"
-                            >
-                              <div className="session-summary-transcript-entry-type">
-                                {entry.type}
-                              </div>
-                              <div className="session-summary-transcript-entry-content">
-                                {entry.content}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
+                  <div className="ts-replay-flashcards">
+                    {flashcards.map((card) => (
+                      <article key={card.id} className="ts-replay-flashcard">
+                        <p className="ts-replay-flashcard-label">Prompt</p>
+                        <p className="ts-replay-flashcard-question">{card.prompt}</p>
+                        <p className="ts-replay-flashcard-label">Answer</p>
+                        <p className="ts-replay-flashcard-answer">{card.answer}</p>
                       </article>
                     ))}
                   </div>
-                )}
-              </section>
+                </section>
+
+              </div>
             </div>
           </div>
         )}
