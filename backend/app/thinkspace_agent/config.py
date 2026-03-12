@@ -6,6 +6,7 @@ import os
 
 DEFAULT_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_FLASHCARD_MODEL = "gemini-2.5-flash"
+DEFAULT_KEY_MOMENT_MODEL = "gemini-2.5-flash"
 DEFAULT_CANVAS_VISUAL_PLANNER_MODEL = "gemini-2.5-flash"
 DEFAULT_CANVAS_VISUAL_IMAGE_MODEL = "gemini-2.5-flash-image"
 
@@ -28,6 +29,12 @@ def get_flashcard_generation_model() -> str:
     """Return the model used by the flashcard generation worker."""
 
     return os.getenv("THINKSPACE_FLASHCARD_MODEL", DEFAULT_FLASHCARD_MODEL)
+
+
+def get_key_moment_generation_model() -> str:
+    """Return the model used by the session key moment generator."""
+
+    return os.getenv("THINKSPACE_KEY_MOMENT_MODEL", DEFAULT_KEY_MOMENT_MODEL)
 
 
 def get_canvas_visual_planner_model() -> str:

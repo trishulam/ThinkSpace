@@ -51,7 +51,7 @@ export const Dashboard: React.FC = () => {
 
   const handleResumeSession = (sessionId: string) =>
     navigate(`/session/${sessionId}`);
-  const handleReplaySession = (sessionId: string) =>
+  const handleSummarySession = (sessionId: string) =>
     navigate(`/session/${sessionId}/replay`);
 
   return (
@@ -85,7 +85,7 @@ export const Dashboard: React.FC = () => {
                 key={session.id}
                 session={session}
                 onResume={handleResumeSession}
-                onReplay={handleReplaySession}
+                onSummary={handleSummarySession}
               />
             ))}
           </div>

@@ -76,6 +76,57 @@ export interface ApiSessionResumeResponse {
   adkSession?: ApiAdkSessionSummary | null;
 }
 
+export interface ApiRecordingSegment {
+  segmentId: string;
+  sessionId: string;
+  sequence: number;
+  status: "ready";
+  fileName: string;
+  relativePath: string;
+  mimeType: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  createdAt: string;
+  sizeBytes: number;
+}
+
+export interface ApiSessionRecordingManifest {
+  sessionId: string;
+  status: "idle" | "recording" | "ready" | "processing" | "failed";
+  segments: ApiRecordingSegment[];
+  finalFileName: string | null;
+  finalRelativePath: string | null;
+  finalMimeType: string | null;
+  finalSizeBytes: number | null;
+  mergedAt: string | null;
+  error: string | null;
+  updatedAt: string;
+}
+
+export interface ApiSessionKeyMoment {
+  id: string;
+  title: string;
+  summary: string;
+  startTurnSequence: number;
+  endTurnSequence: number;
+  startTimestamp: string;
+}
+
+export interface ApiSessionKeyMomentArtifact {
+  sessionId: string;
+  status: "completed";
+  keyMoments: ApiSessionKeyMoment[];
+  generatedAt: string;
+  model: string;
+  sourceTranscriptTurnCount: number;
+  sourceTranscriptHash: string;
+}
+
+export interface ApiKeyMomentGenerationResponse {
+  artifact: ApiSessionKeyMomentArtifact;
+  debug?: unknown;
+}
+
 export interface CreateSessionRequest extends NewSessionData {
   userId?: string;
 }
@@ -125,12 +176,14 @@ function getSessionApiBaseUrl(): string {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers ?? {});
+  if (!headers.has("Content-Type") && !(init?.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(`${getSessionApiBaseUrl()}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
     ...init,
+    headers,
   });
 
   if (!response.ok) {
@@ -189,6 +242,82 @@ export async function getSessionResume(
   return requestJson<ApiSessionResumeResponse>(
     `/v1/sessions/${encodeURIComponent(sessionId)}/resume`
   );
+}
+
+export async function getSessionRecordingManifest(
+  sessionId: string
+): Promise<ApiSessionRecordingManifest> {
+  return requestJson<ApiSessionRecordingManifest>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/recordings`
+  );
+}
+
+export async function getSessionKeyMoments(
+  sessionId: string
+): Promise<ApiSessionKeyMomentArtifact> {
+  return requestJson<ApiSessionKeyMomentArtifact>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/key-moments`
+  );
+}
+
+export async function generateSessionKeyMoments(
+  sessionId: string
+): Promise<ApiKeyMomentGenerationResponse> {
+  return requestJson<ApiKeyMomentGenerationResponse>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/key-moments:generate`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function uploadSessionRecordingSegment(
+  sessionId: string,
+  recording: Blob,
+  options?: {
+    fileName?: string;
+    startedAt?: string;
+    endedAt?: string;
+  }
+): Promise<ApiSessionRecordingManifest> {
+  const formData = new FormData();
+  const fileName = options?.fileName || "segment.webm";
+  formData.append("video", recording, fileName);
+  if (options?.startedAt) {
+    formData.append("startedAt", options.startedAt);
+  }
+  if (options?.endedAt) {
+    formData.append("endedAt", options.endedAt);
+  }
+
+  return requestJson<ApiSessionRecordingManifest>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/recordings/segments`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+}
+
+export async function finalizeSessionRecordings(
+  sessionId: string
+): Promise<ApiSessionRecordingManifest> {
+  return requestJson<ApiSessionRecordingManifest>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/recordings/finalize`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function completeSession(sessionId: string): Promise<ApiSession> {
+  return requestJson<ApiSession>(`/v1/sessions/${encodeURIComponent(sessionId)}/complete`, {
+    method: "POST",
+  });
+}
+
+export function getSessionRecordingFinalUrl(sessionId: string): string {
+  return `${getSessionApiBaseUrl()}/v1/sessions/${encodeURIComponent(sessionId)}/recordings/final`;
 }
 
 const VALID_LOG_ENTRY_TYPES: LogEntryType[] = [

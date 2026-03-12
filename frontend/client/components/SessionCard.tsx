@@ -4,7 +4,7 @@ import { Session } from "../types/session";
 interface SessionCardProps {
   session: Session;
   onResume: (sessionId: string) => void;
-  onReplay: (sessionId: string) => void;
+  onSummary: (sessionId: string) => void;
 }
 
 /* Topic emoji picker — deterministic from topic string */
@@ -96,7 +96,7 @@ const ReplayIcon: React.FC = () => (
 export const SessionCard: React.FC<SessionCardProps> = ({
   session,
   onResume,
-  onReplay,
+  onSummary,
 }) => {
   const emoji = topicEmoji(session.topic);
   const bgColor = topicBg(session.topic);
@@ -106,9 +106,9 @@ export const SessionCard: React.FC<SessionCardProps> = ({
     onResume(session.id);
   };
 
-  const handleReplay = (e: React.MouseEvent) => {
+  const handleSummary = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onReplay(session.id);
+    onSummary(session.id);
   };
 
   return (
@@ -144,12 +144,12 @@ export const SessionCard: React.FC<SessionCardProps> = ({
       <div className="ts-session-row-actions">
         <button
           className="ts-row-btn ts-row-btn--ghost"
-          onClick={handleReplay}
+          onClick={handleSummary}
           type="button"
-          title="Replay session"
+          title="View session summary"
         >
           <ReplayIcon />
-          Replay
+          Session Summary
         </button>
         <button
           className="ts-row-btn ts-row-btn--primary"

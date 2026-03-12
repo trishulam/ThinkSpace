@@ -4,16 +4,27 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import warnings
 from contextlib import suppress
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.events import Event, EventActions
 from google.adk.agents.live_request_queue import LiveRequestQueue
@@ -22,6 +33,13 @@ from google.adk.runners import Runner
 from google.genai import errors as genai_errors
 from google.genai import types
 from adk_session_service import create_adk_session_service
+from session_key_moments import (
+    KeyMomentGenerationResponse,
+    SessionKeyMomentArtifact,
+    create_key_moment_store,
+    generate_key_moment_response,
+)
+from session_recordings import SessionRecordingManifest, SessionRecordingStore
 from session_store import (
     AdkSessionSummary,
     CheckpointCreateRequest,
@@ -63,11 +81,54 @@ from thinkspace_agent.tools.flashcard_jobs import (  # noqa: E402
     flashcard_session_store,
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+def _configure_logging() -> None:
+    """Configure console and rotating file logging for the backend."""
+    log_level_name = os.getenv("THINKSPACE_LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_name, logging.DEBUG)
+    log_file_path = Path(
+        os.getenv(
+            "THINKSPACE_LOG_FILE",
+            str(Path(__file__).parent / "data" / "logs" / "thinkspace-backend.log"),
+        )
+    )
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+
+    file_handler = RotatingFileHandler(
+        log_file_path,
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(formatter)
+
+    logging.basicConfig(
+        level=log_level,
+        handlers=[stream_handler, file_handler],
+        force=True,
+    )
+
+    # Keep third-party internals from flooding logs during realtime audio sessions.
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+    logging.getLogger("google.auth._default").setLevel(logging.INFO)
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.INFO)
+    logging.getLogger(
+        "google_adk.google.adk.flows.llm_flows.base_llm_flow"
+    ).setLevel(logging.INFO)
+    logging.getLogger(
+        "google_adk.google.adk.flows.llm_flows.audio_cache_manager"
+    ).setLevel(logging.INFO)
+    logging.getLogger(
+        "google_adk.google.adk.models.gemini_llm_connection"
+    ).setLevel(logging.INFO)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 # Avoid verbose websocket transport logs leaking sensitive headers like API keys.
@@ -154,6 +215,23 @@ def _serialize_adk_event_for_debug(event: object) -> dict[str, object]:
     if not isinstance(invocation_id, str):
         invocation_id = None
 
+    input_transcription = getattr(event, "input_transcription", None)
+    output_transcription = getattr(event, "output_transcription", None)
+
+    def _serialize_transcription_payload(transcription: object) -> dict[str, object] | None:
+        if transcription is None:
+            return None
+
+        text = getattr(transcription, "text", None)
+        finished = getattr(transcription, "finished", None)
+        if not isinstance(text, str) or not text.strip():
+            return None
+
+        return {
+            "text": text,
+            "finished": finished if isinstance(finished, bool) else None,
+        }
+
     return {
         "id": getattr(event, "id", None),
         "author": getattr(event, "author", None),
@@ -166,6 +244,8 @@ def _serialize_adk_event_for_debug(event: object) -> dict[str, object]:
         "partKinds": part_kinds,
         "partsSummary": parts_summary,
         "stateDeltaKeys": state_delta_keys,
+        "inputTranscription": _serialize_transcription_payload(input_transcription),
+        "outputTranscription": _serialize_transcription_payload(output_transcription),
     }
 
 
@@ -769,6 +849,10 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 # Define your session services
 session_service = create_adk_session_service()
 session_store = create_session_store()
+recording_store = SessionRecordingStore(Path(__file__).parent / "data" / "session_recordings")
+key_moment_store = create_key_moment_store(
+    Path(__file__).parent / "data" / "session_key_moments"
+)
 
 # Define your runner
 runner = Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
@@ -823,6 +907,177 @@ async def resume_session(session_id: str):
         transcript=transcript,
         adk_session=adk_session,
     )
+
+
+@app.get("/v1/sessions/{session_id}/transcript", response_model=list[TranscriptTurnRecord])
+async def get_session_transcript(session_id: str):
+    """Return the persisted transcript turns for a ThinkSpace session."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return session_store.list_turns(session_id)
+
+
+@app.get("/v1/sessions/{session_id}/transcript-export")
+async def export_session_transcript(session_id: str):
+    """Return a downloadable JSON export of the persisted session transcript."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    transcript = session_store.list_turns(session_id)
+    payload = {
+        "sessionId": session.session_id,
+        "userId": session.user_id,
+        "topic": session.topic,
+        "goal": session.goal,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "transcript": [turn.model_dump(mode="json", by_alias=True) for turn in transcript],
+    }
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="session-{session.session_id}-transcript.json"'
+            )
+        },
+    )
+
+
+@app.get(
+    "/v1/sessions/{session_id}/key-moments",
+    response_model=SessionKeyMomentArtifact,
+)
+async def get_session_key_moments(session_id: str):
+    """Return the generated key moment artifact for a session."""
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    artifact = key_moment_store.get_artifact(session_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Key moments not found")
+
+    return artifact
+
+
+@app.post(
+    "/v1/sessions/{session_id}/key-moments:generate",
+    response_model=KeyMomentGenerationResponse,
+)
+async def generate_session_key_moments(
+    session_id: str,
+    include_debug: bool = Query(default=False, alias="includeDebug"),
+):
+    """Generate and persist key moments from the session transcript."""
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    transcript = session_store.list_turns(session_id)
+    if not transcript:
+        raise HTTPException(status_code=422, detail="Transcript not found for this session")
+
+    try:
+        response = await generate_key_moment_response(
+            session=session,
+            transcript=transcript,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "Key moment generation failed for session_id=%s",
+            session_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Key moment generation failed: {exc}",
+        ) from exc
+
+    key_moment_store.save_artifact(response.artifact)
+    if not include_debug:
+        response.debug = None
+    return response
+
+
+@app.get(
+    "/v1/sessions/{session_id}/recordings",
+    response_model=SessionRecordingManifest,
+)
+async def get_session_recordings(session_id: str):
+    """Return local recording segment metadata for a session."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return recording_store.get_manifest(session_id)
+
+
+@app.post(
+    "/v1/sessions/{session_id}/recordings/segments",
+    response_model=SessionRecordingManifest,
+    status_code=201,
+)
+async def upload_session_recording_segment(
+    session_id: str,
+    video: UploadFile = File(...),
+    started_at: str | None = Form(default=None, alias="startedAt"),
+    ended_at: str | None = Form(default=None, alias="endedAt"),
+):
+    """Persist one browser-recorded session segment to local storage."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    file_bytes = await video.read()
+    if not file_bytes:
+        raise HTTPException(status_code=422, detail="Recording upload was empty")
+
+    return recording_store.save_segment(
+        session_id=session_id,
+        file_bytes=file_bytes,
+        original_filename=video.filename,
+        mime_type=video.content_type,
+        started_at=started_at,
+        ended_at=ended_at,
+    )
+
+
+@app.post(
+    "/v1/sessions/{session_id}/recordings/finalize",
+    response_model=SessionRecordingManifest,
+)
+async def finalize_session_recordings(session_id: str):
+    """Merge all session segments into one replay video."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        return recording_store.finalize_session(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/v1/sessions/{session_id}/recordings/final")
+async def get_session_recording_final(session_id: str):
+    """Serve the merged session replay video if available."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    manifest = recording_store.get_manifest(session_id)
+    final_path = recording_store.get_final_video_path(session_id)
+    if final_path is None or not manifest.final_mime_type:
+        raise HTTPException(status_code=404, detail="Final replay video not found")
+
+    return FileResponse(final_path, media_type=manifest.final_mime_type)
 
 
 @app.get("/v1/sessions/{session_id}/adk-debug")
@@ -918,8 +1173,8 @@ async def websocket_endpoint(
 
     requested_user_id = user_id
     user_id = session_record.user_id
-    logger.debug(
-        "WebSocket connection request: requested_user_id=%s resolved_user_id=%s session_id=%s "
+    logger.info(
+        "WebSocket session starting: requested_user_id=%s resolved_user_id=%s session_id=%s "
         "proactivity=%s affective_dialog=%s",
         requested_user_id,
         user_id,
@@ -928,7 +1183,7 @@ async def websocket_endpoint(
         affective_dialog,
     )
     await websocket.accept()
-    logger.debug("WebSocket connection accepted")
+    logger.info("WebSocket accepted for session_id=%s", session_id)
 
     # ========================================
     # Phase 2: Session Initialization (once per streaming session)
@@ -1075,14 +1330,15 @@ async def websocket_endpoint(
             transcript_buffer.clear()
         try:
             session_store.create_turn(session_id, turn)
-            await _update_adk_conversation_memory(
-                user_id=user_id,
-                session_id=session_id,
-                entries=turn.entries,
-            )
-            logger.debug(
-                "Persisted transcript turn %s with %d entries",
+            # Avoid appending custom memory-sync events while runner.run_live() is active.
+            # DatabaseSessionService treats those concurrent writes as stale-session updates,
+            # which can terminate the live ADK stream. We rebuild ADK conversation memory
+            # from the persisted transcript during resume/reconnect instead.
+            logger.info(
+                "Persisted transcript turn %s for session_id=%s status=%s entries=%d",
                 turn.turn_id,
+                session_id,
+                status,
                 len(turn.entries),
             )
         except Exception as e:
@@ -1126,8 +1382,6 @@ async def websocket_endpoint(
             # Handle binary frames (audio data)
             audio_data = message.get("bytes")
             if audio_data is not None:
-                logger.debug(f"Received binary audio chunk: {len(audio_data)} bytes")
-
                 audio_blob = types.Blob(
                     mime_type="audio/pcm;rate=16000", data=audio_data
                 )
@@ -1138,14 +1392,11 @@ async def websocket_endpoint(
                 text_data = message.get("text")
                 if text_data is None:
                     continue
-                logger.debug(f"Received text message: {text_data[:100]}...")
-
                 json_message = json.loads(text_data)
 
                 # Extract text from JSON and send to LiveRequestQueue
                 if json_message.get("type") == "text":
                     user_text = json_message.get("text", "")
-                    logger.debug(f"Sending text content: {user_text}")
                     await _add_transcript_entry("user-text", user_text)
                     content = types.Content(
                         parts=[types.Part(text=user_text)]
@@ -1306,7 +1557,6 @@ async def websocket_endpoint(
                 event_json = event.model_dump_json(exclude_none=True, by_alias=True)
                 event_payload = json.loads(event_json)
                 frontend_action = extract_frontend_action(event_payload)
-                logger.debug(f"[SERVER] Event: {event_json}")
                 await websocket.send_text(event_json)
 
                 # Parse event for transcript persistence
@@ -1403,7 +1653,7 @@ async def websocket_endpoint(
     )
 
     try:
-        logger.debug("Starting asyncio.gather for upstream and downstream tasks")
+        logger.info("Starting streaming tasks for session_id=%s", session_id)
         done, _ = await asyncio.wait(
             {
                 upstream,
@@ -1414,7 +1664,7 @@ async def websocket_endpoint(
             },
             return_when=asyncio.FIRST_COMPLETED,
         )
-        logger.debug("One websocket task completed, beginning shutdown")
+        logger.info("Streaming task completed for session_id=%s; beginning shutdown", session_id)
         shutdown_started.set()
 
         for task in done:
@@ -1422,7 +1672,7 @@ async def websocket_endpoint(
             if exc:
                 raise exc
     except WebSocketDisconnect:
-        logger.debug("Client disconnected normally")
+        logger.info("Client disconnected normally for session_id=%s", session_id)
     except Exception as e:
         logger.error(f"Unexpected error in streaming tasks: {e}", exc_info=True)
     finally:
@@ -1438,7 +1688,7 @@ async def websocket_endpoint(
         # ========================================
 
         # Always close the queue, even if exceptions occurred
-        logger.debug("Closing live_request_queue")
+        logger.info("Closing live request queue for session_id=%s", session_id)
         live_request_queue.close()
 
         await flashcard_job_outbox.unsubscribe(
@@ -1492,3 +1742,5 @@ async def websocket_endpoint(
                 pass
             except Exception as exc:
                 raise
+
+        logger.info("WebSocket session shutdown complete for session_id=%s", session_id)

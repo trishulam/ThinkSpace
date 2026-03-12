@@ -1,5 +1,5 @@
 import React from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // import { useSession } from '../context/SessionContext'
 import {
@@ -18,6 +18,8 @@ import {
 } from "tldraw";
 import {
   createCheckpoint,
+  completeSession,
+  finalizeSessionRecordings,
   getSessionResume,
   transcriptToEventLog,
 } from "../api/sessions";
@@ -49,6 +51,7 @@ import {
 } from "../flashcards";
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useAudioWorklets } from "../hooks/useAudioWorklets";
+import { useSessionRecording } from "../hooks/useSessionRecording";
 import { buildCanvasPlacementPlannerContext } from "../canvasPlacementPlannerContext";
 import type { AgentLogEntry } from "../types/agent-live";
 import type {
@@ -63,24 +66,99 @@ DefaultSizeStyle.setDefaultValue("s");
 // Custom tools for picking context items
 const tools = [TargetShapeTool, TargetAreaTool];
 
-// Custom Toolbar component with back button
-const CustomToolbar = () => {
-  const handleBackToDashboard = () => {
-    window.location.href = "/#/dashboard";
-  };
+type CustomToolbarProps = {
+  recordingStatus: string;
+  recordingError: string | null;
+  recordingSupported: boolean;
+  isRecording: boolean;
+  isBusy: boolean;
+  onStartRecording: () => void;
+  onBackToDashboard: () => void;
+  onEndSession: () => void;
+};
+
+const CustomToolbar = ({
+  recordingStatus,
+  recordingError,
+  recordingSupported,
+  isRecording,
+  isBusy,
+  onStartRecording,
+  onBackToDashboard,
+  onEndSession,
+}: CustomToolbarProps) => {
+  const recordingLabel = isRecording ? "Recording" : recordingStatus;
 
   return (
     <div className="tldraw-custom-toolbar">
       <button
-        onClick={handleBackToDashboard}
+        onClick={onBackToDashboard}
         className="tldraw-back-button"
         title="Back to Dashboard"
         type="button"
+        disabled={isBusy}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
         </svg>
       </button>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginLeft: 12,
+          padding: "8px 12px",
+          borderRadius: 999,
+          background: "rgba(15, 23, 42, 0.88)",
+          color: "#fff",
+          fontSize: 12,
+        }}
+      >
+        <span
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: isRecording ? "#ef4444" : "#94a3b8",
+            display: "inline-block",
+          }}
+        />
+        <span>{recordingLabel}</span>
+      </div>
+      {recordingSupported && !isRecording ? (
+        <button
+          onClick={onStartRecording}
+          type="button"
+          disabled={isBusy}
+          style={{ marginLeft: 8 }}
+        >
+          Start Recording
+        </button>
+      ) : null}
+      <button
+        onClick={onEndSession}
+        type="button"
+        disabled={isBusy}
+        style={{ marginLeft: 8 }}
+      >
+        End Session
+      </button>
+      {recordingError ? (
+        <div
+          style={{
+            marginLeft: 12,
+            maxWidth: 320,
+            color: "#fecaca",
+            background: "rgba(127, 29, 29, 0.88)",
+            padding: "8px 12px",
+            borderRadius: 12,
+            fontSize: 12,
+          }}
+        >
+          {recordingError}
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -318,10 +396,13 @@ function getDelegateBounds(editor: Editor, payload: CanvasDelegatePayload) {
 export const SessionCanvas: React.FC = () => {
   const FLASHCARD_BEGIN_VISIBLE_MS = 350;
   const { sessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
   const [app, setApp] = useState<TldrawAgentApp | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
+  const [sessionActionError, setSessionActionError] = useState<string | null>(null);
+  const [isSessionActionPending, setIsSessionActionPending] = useState(false);
   const [gestureEnabled, setGestureEnabled] = useState(false);
   const [gestureState, setGestureState] = useState<GestureRuntimeState | null>(
     null,
@@ -339,6 +420,7 @@ export const SessionCanvas: React.FC = () => {
   const [canvasJobToast, setCanvasJobToast] =
     useState<CanvasJobToastState | null>(null);
   const flashcardStateRef = useRef<FlashcardState>(EMPTY_FLASHCARD_STATE);
+  const autoRecordingAttemptedRef = useRef(false);
   const flashcardActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -386,8 +468,14 @@ export const SessionCanvas: React.FC = () => {
   );
 
   // Audio worklets
-  const { isAudioActive, startAudio, stopAudio, playAudioChunk, stopPlayback } =
-    useAudioWorklets();
+  const {
+    isAudioActive,
+    playbackCaptureStream,
+    startAudio,
+    stopAudio,
+    playAudioChunk,
+    stopPlayback,
+  } = useAudioWorklets();
 
   // Agent WebSocket
   const userId = resolvedUserId;
@@ -399,6 +487,16 @@ export const SessionCanvas: React.FC = () => {
     onPlayAudio: playAudioChunk,
     onStopPlayback: stopPlayback,
     initialEventLog: persistedEventLog,
+  });
+  const {
+    status: recordingStatus,
+    error: recordingError,
+    isSupported: isRecordingSupported,
+    isRecording,
+    startRecording,
+    stopRecording,
+  } = useSessionRecording(sessionId, {
+    extraAudioStream: playbackCaptureStream,
   });
 
   // Audio start/stop handlers that wire into the WS
@@ -433,6 +531,75 @@ export const SessionCanvas: React.FC = () => {
   const handleClearGestureLogs = useCallback(() => {
     setGestureLogs([]);
   }, []);
+
+  const stopRecordingIfNeeded = useCallback(async () => {
+    if (
+      recordingStatus !== "recording" &&
+      recordingStatus !== "stopping" &&
+      recordingStatus !== "uploading"
+    ) {
+      return;
+    }
+
+    await stopRecording();
+  }, [recordingStatus, stopRecording]);
+
+  const handleBackToDashboard = useCallback(() => {
+    if (isSessionActionPending) {
+      return;
+    }
+
+    setIsSessionActionPending(true);
+    setSessionActionError(null);
+
+    void (async () => {
+      try {
+        await saveCheckpoint("disconnect", "frontend_manual");
+        await stopRecordingIfNeeded();
+        ws.disconnect();
+        navigate("/dashboard");
+      } catch (error) {
+        setSessionActionError(
+          error instanceof Error ? error.message : "Failed to store the session recording",
+        );
+      } finally {
+        setIsSessionActionPending(false);
+      }
+    })();
+  }, [isSessionActionPending, navigate, saveCheckpoint, stopRecordingIfNeeded, ws]);
+
+  const handleEndSession = useCallback(() => {
+    if (!sessionId || isSessionActionPending) {
+      return;
+    }
+
+    setIsSessionActionPending(true);
+    setSessionActionError(null);
+
+    void (async () => {
+      try {
+        await saveCheckpoint("complete", "frontend_manual");
+        await stopRecordingIfNeeded();
+        ws.disconnect();
+        await finalizeSessionRecordings(sessionId);
+        await completeSession(sessionId);
+        navigate(`/session/${sessionId}/replay`);
+      } catch (error) {
+        setSessionActionError(
+          error instanceof Error ? error.message : "Failed to end the session cleanly",
+        );
+      } finally {
+        setIsSessionActionPending(false);
+      }
+    })();
+  }, [
+    isSessionActionPending,
+    navigate,
+    saveCheckpoint,
+    sessionId,
+    stopRecordingIfNeeded,
+    ws,
+  ]);
 
   const applyFrontendFlashcardState = useCallback(
     (action: Parameters<typeof applyFlashcardAction>[1]) => {
@@ -807,7 +974,9 @@ export const SessionCanvas: React.FC = () => {
 
   useEffect(() => {
     hasLoadedRemoteSnapshotRef.current = false;
+    autoRecordingAttemptedRef.current = false;
     setResumeError(null);
+    setSessionActionError(null);
     setResolvedUserId("demo-user");
     setPersistedEventLog([]);
 
@@ -884,6 +1053,20 @@ export const SessionCanvas: React.FC = () => {
       void saveCheckpoint("disconnect", "frontend_manual");
     };
   }, [editor, saveCheckpoint, sessionId]);
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      isRestoringSession ||
+      !isRecordingSupported ||
+      autoRecordingAttemptedRef.current
+    ) {
+      return;
+    }
+
+    autoRecordingAttemptedRef.current = true;
+    void startRecording();
+  }, [isRecordingSupported, isRestoringSession, sessionId, startRecording]);
 
   useEffect(() => {
     const latestEvent = ws.eventLog[ws.eventLog.length - 1];
@@ -1089,7 +1272,19 @@ export const SessionCanvas: React.FC = () => {
         </div>
       </TldrawUiToastsProvider>
 
-      <CustomToolbar />
+      <CustomToolbar
+        recordingStatus={recordingStatus}
+        recordingError={sessionActionError || recordingError}
+        recordingSupported={isRecordingSupported}
+        isRecording={isRecording}
+        isBusy={isSessionActionPending}
+        onStartRecording={() => {
+          setSessionActionError(null);
+          void startRecording();
+        }}
+        onBackToDashboard={handleBackToDashboard}
+        onEndSession={handleEndSession}
+      />
 
       {/* Dynamic Island for AI Voice Agent */}
       <DynamicIsland

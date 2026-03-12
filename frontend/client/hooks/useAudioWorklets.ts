@@ -23,9 +23,11 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 export function useAudioWorklets() {
 	const [isAudioActive, setIsAudioActive] = useState(false)
+	const [playbackCaptureStream, setPlaybackCaptureStream] = useState<MediaStream | null>(null)
 
 	const playerNodeRef = useRef<AudioWorkletNode | null>(null)
 	const playerContextRef = useRef<AudioContext | null>(null)
+	const playerCaptureDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null)
 	const recorderNodeRef = useRef<AudioWorkletNode | null>(null)
 	const recorderContextRef = useRef<AudioContext | null>(null)
 	const micStreamRef = useRef<MediaStream | null>(null)
@@ -36,8 +38,12 @@ export function useAudioWorklets() {
 		await playerContext.audioWorklet.addModule('/worklets/pcm-player-processor.js')
 		const playerNode = new AudioWorkletNode(playerContext, 'pcm-player-processor')
 		playerNode.connect(playerContext.destination)
+		const playerCaptureDestination = playerContext.createMediaStreamDestination()
+		playerNode.connect(playerCaptureDestination)
 		playerContextRef.current = playerContext
 		playerNodeRef.current = playerNode
+		playerCaptureDestinationRef.current = playerCaptureDestination
+		setPlaybackCaptureStream(playerCaptureDestination.stream)
 
 		// --- Recorder setup (16kHz input) ---
 		const recorderContext = new AudioContext({ sampleRate: 16000 })
@@ -75,6 +81,8 @@ export function useAudioWorklets() {
 			playerContextRef.current = null
 			playerNodeRef.current = null
 		}
+		playerCaptureDestinationRef.current = null
+		setPlaybackCaptureStream(null)
 		setIsAudioActive(false)
 	}, [])
 
@@ -91,5 +99,12 @@ export function useAudioWorklets() {
 		}
 	}, [])
 
-	return { isAudioActive, startAudio, stopAudio, playAudioChunk, stopPlayback }
+	return {
+		isAudioActive,
+		playbackCaptureStream,
+		startAudio,
+		stopAudio,
+		playAudioChunk,
+		stopPlayback,
+	}
 }

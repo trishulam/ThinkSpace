@@ -2339,3 +2339,488 @@ button.prompt-tag span {
   max-width: 320px;
   line-height: 1.5;
 }
+
+/* ============================================
+   Session Summary Page
+   ============================================ */
+
+.replay-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.replay-page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.session-summary-layout {
+  display: grid;
+  gap: 24px;
+  padding-bottom: 40px;
+}
+
+.session-summary-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.9fr) minmax(280px, 0.9fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.session-summary-video-card,
+.session-summary-panel,
+.session-summary-side-card {
+  background: var(--mindpad-bg-card, #ffffff);
+  border: 1px solid var(--mindpad-border-subtle, #e5e7eb);
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+.session-summary-video-card {
+  padding: 20px;
+}
+
+.session-summary-video-header,
+.session-summary-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.session-summary-section-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--mindpad-text-primary, #111827);
+}
+
+.session-summary-section-subtitle {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--mindpad-text-secondary, #6b7280);
+}
+
+.session-summary-status-pill,
+.session-summary-panel-count {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--mindpad-accent-subtle, rgba(16, 185, 129, 0.08));
+  color: var(--mindpad-accent-hover, #059669);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.session-summary-video-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top left, rgba(16, 185, 129, 0.16), transparent 36%),
+    linear-gradient(180deg, #111827 0%, #0f172a 100%);
+  padding: 14px;
+}
+
+.session-summary-video {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  max-height: 560px;
+  border-radius: 14px;
+  background: #000;
+}
+
+.session-summary-player-controls {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.session-summary-play-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.session-summary-player-time {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.78);
+  white-space: nowrap;
+}
+
+.session-summary-timeline {
+  position: relative;
+  min-width: 0;
+  padding: 8px 0;
+}
+
+.session-summary-timeline-slider {
+  width: 100%;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+}
+
+.session-summary-timeline-slider::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--mindpad-accent, #10b981) 0%,
+    var(--mindpad-accent, #10b981) calc(var(--slider-progress, 0%) * 1%),
+    rgba(255, 255, 255, 0.18) calc(var(--slider-progress, 0%) * 1%),
+    rgba(255, 255, 255, 0.18) 100%
+  );
+}
+
+.session-summary-timeline-slider::-moz-range-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.session-summary-timeline-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -4px;
+  border: none;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.24);
+  cursor: pointer;
+}
+
+.session-summary-timeline-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.24);
+  cursor: pointer;
+}
+
+.session-summary-timeline-markers {
+  position: absolute;
+  inset: 0 0 0 0;
+  pointer-events: none;
+}
+
+.session-summary-timeline-marker {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: #f8fafc;
+  box-shadow:
+    0 0 0 3px rgba(16, 185, 129, 0.25),
+    0 6px 14px rgba(15, 23, 42, 0.25);
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.session-summary-timeline-marker:hover .session-summary-timeline-tooltip,
+.session-summary-timeline-marker:focus-visible .session-summary-timeline-tooltip {
+  opacity: 1;
+  transform: translate(-50%, -8px);
+}
+
+.session-summary-timeline-marker:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 2px;
+}
+
+.session-summary-timeline-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  padding: 8px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+  background: rgba(15, 23, 42, 0.95);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -2px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.session-summary-sidebar {
+  display: grid;
+  gap: 16px;
+}
+
+.session-summary-side-card {
+  padding: 20px;
+}
+
+.session-summary-side-title {
+  margin: 0 0 16px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--mindpad-text-primary, #111827);
+}
+
+.session-summary-stat-list {
+  display: grid;
+  gap: 14px;
+}
+
+.session-summary-stat {
+  display: grid;
+  gap: 4px;
+}
+
+.session-summary-stat-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mindpad-text-muted, #9ca3af);
+}
+
+.session-summary-stat-value {
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--mindpad-text-primary, #111827);
+}
+
+.session-summary-action-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.session-summary-action-stack .mindpad-btn-primary,
+.session-summary-action-stack .mindpad-btn-ghost {
+  width: 100%;
+  justify-content: center;
+}
+
+.session-summary-sections {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.session-summary-panel {
+  padding: 20px;
+  min-height: 420px;
+}
+
+.session-summary-flashcards,
+.session-summary-moments,
+.session-summary-transcript {
+  display: grid;
+  gap: 14px;
+}
+
+.session-summary-flashcard,
+.session-summary-transcript-turn {
+  border: 1px solid var(--mindpad-border-subtle, #e5e7eb);
+  border-radius: 16px;
+  padding: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 248, 250, 0.96));
+}
+
+.session-summary-flashcard-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--mindpad-text-muted, #9ca3af);
+}
+
+.session-summary-flashcard-question,
+.session-summary-flashcard-answer {
+  margin: 0 0 12px;
+  line-height: 1.5;
+  color: var(--mindpad-text-primary, #111827);
+}
+
+.session-summary-flashcard-answer {
+  margin-bottom: 0;
+  color: var(--mindpad-text-secondary, #6b7280);
+}
+
+.session-summary-moment {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--mindpad-border-subtle, #e5e7eb);
+  cursor: pointer;
+}
+
+.session-summary-moment:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.session-summary-moment:hover .session-summary-moment-title,
+.session-summary-moment:focus-visible .session-summary-moment-title {
+  color: var(--mindpad-accent-hover, #059669);
+}
+
+.session-summary-moment:focus-visible {
+  outline: 2px solid var(--mindpad-accent-light, rgba(16, 185, 129, 0.1));
+  outline-offset: 8px;
+  border-radius: 12px;
+}
+
+.session-summary-moment-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--mindpad-accent, #10b981);
+  box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.12);
+}
+
+.session-summary-moment-meta {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mindpad-accent-hover, #059669);
+}
+
+.session-summary-moment-title {
+  margin: 4px 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mindpad-text-primary, #111827);
+}
+
+.session-summary-moment-description {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--mindpad-text-secondary, #6b7280);
+}
+
+.session-summary-transcript {
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.session-summary-transcript-turn-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mindpad-text-muted, #9ca3af);
+}
+
+.session-summary-transcript-entries {
+  display: grid;
+  gap: 12px;
+}
+
+.session-summary-transcript-entry {
+  display: grid;
+  gap: 4px;
+}
+
+.session-summary-transcript-entry-type {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mindpad-accent-hover, #059669);
+  text-transform: capitalize;
+}
+
+.session-summary-transcript-entry-content {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  color: var(--mindpad-text-primary, #111827);
+}
+
+.session-summary-empty {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 220px;
+  border: 1px dashed var(--mindpad-border-medium, #d1d5db);
+  border-radius: 16px;
+  padding: 24px;
+  color: var(--mindpad-text-secondary, #6b7280);
+  background: linear-gradient(180deg, rgba(247, 248, 250, 0.9), rgba(255, 255, 255, 0.95));
+}
+
+.session-summary-empty h3,
+.session-summary-empty p {
+  margin: 0;
+}
+
+.session-summary-empty h3 {
+  margin-bottom: 8px;
+  color: var(--mindpad-text-primary, #111827);
+}
+
+@media (max-width: 1180px) {
+  .session-summary-hero,
+  .session-summary-sections {
+    grid-template-columns: 1fr;
+  }
+
+  .session-summary-panel {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .replay-page-header,
+  .session-summary-video-header,
+  .session-summary-panel-header {
+    flex-direction: column;
+  }
+
+  .session-summary-video-card,
+  .session-summary-panel,
+  .session-summary-side-card {
+    padding: 16px;
+  }
+
+  .session-summary-video {
+    min-height: 220px;
+  }
+
+  .session-summary-player-controls {
+    grid-template-columns: 1fr;
+  }
+}
