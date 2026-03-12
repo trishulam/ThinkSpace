@@ -36,6 +36,7 @@ export interface AgentSubtitleState {
 export type FrontendActionType =
 	| 'canvas.job_started'
 	| 'canvas.context_requested'
+	| 'canvas.viewport_snapshot_requested'
 	| 'canvas.delegate_requested'
 	| 'canvas.insert_visual'
 	| 'canvas.insert_widget'

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,6 +122,12 @@ class SessionRecordingStore:
         if not manifest.segments:
             raise ValueError("No recording segments found for this session")
 
+        ffmpeg_path = shutil.which("ffmpeg")
+        if ffmpeg_path is None:
+            raise RuntimeError(
+                "ffmpeg is required to finalize session recordings but was not found on PATH"
+            )
+
         final_dir = self._session_dir(session_id) / "final"
         final_dir.mkdir(parents=True, exist_ok=True)
         manifest.status = "processing"
@@ -131,8 +138,8 @@ class SessionRecordingStore:
         concat_file = self._session_dir(session_id) / "concat.txt"
         concat_lines = []
         for segment in sorted(manifest.segments, key=lambda item: item.sequence):
-            segment_path = self._root_dir / segment.relative_path
-            concat_lines.append(f"file '{segment_path.as_posix()}'")
+            segment_path = (self._root_dir / segment.relative_path).resolve()
+            concat_lines.append(f"file '{self._escape_concat_path(segment_path)}'")
         concat_file.write_text("\n".join(concat_lines) + "\n")
 
         try:
@@ -140,7 +147,7 @@ class SessionRecordingStore:
             final_path = final_dir / final_file_name
             copy_result = subprocess.run(
                 [
-                    "ffmpeg",
+                    ffmpeg_path,
                     "-y",
                     "-f",
                     "concat",
@@ -162,7 +169,7 @@ class SessionRecordingStore:
                 final_path = final_dir / final_file_name
                 transcode_result = subprocess.run(
                     [
-                        "ffmpeg",
+                        ffmpeg_path,
                         "-y",
                         "-f",
                         "concat",
@@ -237,6 +244,9 @@ class SessionRecordingStore:
 
     def _relative_path(self, path: Path) -> str:
         return str(path.relative_to(self._root_dir))
+
+    def _escape_concat_path(self, path: Path) -> str:
+        return path.as_posix().replace("'", r"'\''")
 
     def _guess_extension(
         self, *, original_filename: str | None, mime_type: str | None

@@ -7,6 +7,7 @@ import {
   DefaultSizeStyle,
   // ErrorBoundary,
   Editor,
+  TLShapeId,
   TLComponents,
   Tldraw,
   TldrawOverlays,
@@ -53,6 +54,11 @@ import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useAudioWorklets } from "../hooks/useAudioWorklets";
 import { useSessionRecording } from "../hooks/useSessionRecording";
 import { buildCanvasPlacementPlannerContext } from "../canvasPlacementPlannerContext";
+import { CanvasChangeTracker } from "../canvasChangeTracker";
+import {
+  captureCanvasScreenshotForBounds,
+  captureCanvasScreenshotForShapeIds,
+} from "../canvasScreenshot";
 import type { AgentLogEntry } from "../types/agent-live";
 import type {
   ConnectionState,
@@ -331,12 +337,88 @@ function buildCanvasDelegateWorkerMessages(
   return messages.map(normalizeCanvasWorkerText).filter(Boolean);
 }
 
+function buildGeneratedVisualMeta(
+  payload: CanvasInsertVisualPayload,
+  createdAt: string,
+) {
+  return {
+    artifactId: payload.artifact_id,
+    title: payload.title,
+    thinkspace_actor: "agent",
+    thinkspace_source_tool: "canvas.generate_visual",
+    thinkspace_artifact_id: payload.artifact_id,
+    thinkspace_created_at: createdAt,
+  };
+}
+
+function mergeDelegateCreatedShapeMeta(
+  existingMeta: Record<string, unknown>,
+  jobId: string,
+  createdAt: string,
+) {
+  return {
+    ...existingMeta,
+    thinkspace_actor:
+      typeof existingMeta.thinkspace_actor === "string"
+        ? existingMeta.thinkspace_actor
+        : "agent",
+    thinkspace_source_tool:
+      typeof existingMeta.thinkspace_source_tool === "string"
+        ? existingMeta.thinkspace_source_tool
+        : "canvas.delegate_task",
+    thinkspace_delegate_job_id:
+      typeof existingMeta.thinkspace_delegate_job_id === "string"
+        ? existingMeta.thinkspace_delegate_job_id
+        : jobId,
+    thinkspace_created_at:
+      typeof existingMeta.thinkspace_created_at === "string"
+        ? existingMeta.thinkspace_created_at
+        : createdAt,
+  };
+}
+
+function stampDelegateCreatedShapeMetadata(
+  editor: Editor,
+  shapeIds: TLShapeId[],
+  jobId: string,
+) {
+  if (shapeIds.length === 0) {
+    return;
+  }
+
+  const createdAt = new Date().toISOString();
+
+  for (const shapeId of shapeIds) {
+    const shape = editor.getShape(shapeId);
+    if (!shape) {
+      continue;
+    }
+
+    editor.updateShape({
+      ...shape,
+      meta: mergeDelegateCreatedShapeMeta(
+        shape.meta as Record<string, unknown>,
+        jobId,
+        createdAt,
+      ),
+    });
+  }
+}
+
 function insertVisualIntoCanvas(
   editor: Editor,
   payload: CanvasInsertVisualPayload,
-): { applied: boolean; summary: string } {
+): {
+  applied: boolean;
+  summary: string;
+  shapeId?: TLShapeId;
+  assetId?: string;
+  bounds?: { x: number; y: number; w: number; h: number };
+} {
   const assetId = AssetRecordType.createId();
   const shapeId = createShapeId();
+  const createdAt = new Date().toISOString();
+  const visualMeta = buildGeneratedVisualMeta(payload, createdAt);
 
   editor.createAssets([
     {
@@ -351,10 +433,7 @@ function insertVisualIntoCanvas(
         mimeType: payload.mime_type ?? "image/png",
         isAnimated: false,
       },
-      meta: {
-        artifactId: payload.artifact_id,
-        title: payload.title,
-      },
+      meta: visualMeta,
     } as never,
   ]);
 
@@ -369,10 +448,7 @@ function insertVisualIntoCanvas(
         w: payload.w,
         h: payload.h,
       },
-      meta: {
-        artifactId: payload.artifact_id,
-        title: payload.title,
-      },
+      meta: visualMeta,
     } as never,
   ]);
 
@@ -383,6 +459,14 @@ function insertVisualIntoCanvas(
     summary: payload.title
       ? `Title: ${payload.title}`
       : "Visual inserted into canvas",
+    shapeId,
+    assetId,
+    bounds: {
+      x: payload.x,
+      y: payload.y,
+      w: payload.w,
+      h: payload.h,
+    },
   };
 }
 
@@ -413,6 +497,7 @@ export const SessionCanvas: React.FC = () => {
   );
   const [resolvedUserId, setResolvedUserId] = useState("demo-user");
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const canvasChangeTrackerRef = useRef<CanvasChangeTracker | null>(null);
   const hasLoadedRemoteSnapshotRef = useRef(false);
   const isSavingCheckpointRef = useRef(false);
   const [flashcardState, setFlashcardState] =
@@ -498,6 +583,65 @@ export const SessionCanvas: React.FC = () => {
   } = useSessionRecording(sessionId, {
     extraAudioStream: playbackCaptureStream,
   });
+
+  const sendFocusedScreenshot = useCallback(
+    async (
+      screenshotPromise: Promise<
+        | {
+            base64: string;
+            mimeType: string;
+          }
+        | null
+      >,
+      failureMessage: string,
+    ) => {
+      try {
+        const screenshot = await screenshotPromise;
+        if (!screenshot) {
+          return;
+        }
+        ws.sendImage(screenshot.base64, screenshot.mimeType);
+      } catch (error) {
+        console.error(failureMessage, error);
+      }
+    },
+    [ws],
+  );
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const tracker = new CanvasChangeTracker({
+      editor,
+      getAgent: () => app?.agents.getAgent() ?? null,
+    });
+    tracker.start();
+    canvasChangeTrackerRef.current = tracker;
+
+    if (import.meta.env.DEV) {
+      const debugWindow = window as typeof window & {
+        __thinkspaceCanvasChangeTracker?: CanvasChangeTracker;
+      };
+      debugWindow.__thinkspaceCanvasChangeTracker = tracker;
+    }
+
+    return () => {
+      tracker.stop();
+      if (canvasChangeTrackerRef.current === tracker) {
+        canvasChangeTrackerRef.current = null;
+      }
+      if (import.meta.env.DEV) {
+        const debugWindow = window as typeof window & {
+          __thinkspaceCanvasChangeTracker?: CanvasChangeTracker;
+        };
+        if (debugWindow.__thinkspaceCanvasChangeTracker === tracker) {
+          delete debugWindow.__thinkspaceCanvasChangeTracker;
+        }
+      }
+    };
+  }, [app, editor]);
 
   // Audio start/stop handlers that wire into the WS
   const handleStartAudio = useCallback(() => {
@@ -672,7 +816,8 @@ export const SessionCanvas: React.FC = () => {
           });
           return;
         }
-        case "canvas.context_requested": {
+        case "canvas.context_requested":
+        case "canvas.viewport_snapshot_requested": {
           const toastPayload = normalizeCanvasJobToastPayload(action.payload);
           if (!toastPayload) {
             ws.sendFrontendAck({
@@ -680,7 +825,7 @@ export const SessionCanvas: React.FC = () => {
               action_type: action.type,
               source_tool: action.source_tool,
               job_id: action.job_id,
-              summary: "Invalid canvas context request payload",
+              summary: "Invalid canvas viewport context payload",
             });
             return;
           }
@@ -733,7 +878,7 @@ export const SessionCanvas: React.FC = () => {
                 summary: "Fresh canvas context captured and returned",
               });
             } catch (error) {
-              console.error("Failed to build fresh canvas placement context", error);
+              console.error("Failed to build fresh canvas context", error);
               ws.sendFrontendAck({
                 status: "failed",
                 action_type: action.type,
@@ -835,6 +980,8 @@ export const SessionCanvas: React.FC = () => {
             const agentMessages = buildCanvasDelegateWorkerMessages(
               delegatePayload,
             );
+            const tracker = canvasChangeTrackerRef.current;
+            const eventStartIndex = tracker?.getEventCount() ?? 0;
 
             try {
               await canvasAgent.prompt({
@@ -845,6 +992,45 @@ export const SessionCanvas: React.FC = () => {
                 contextItems: [],
                 data: [],
               });
+              const delegateEvents = tracker?.getEventsSince(eventStartIndex) ?? [];
+              const createdShapeIds = Array.from(
+                new Set(
+                  delegateEvents
+                    .filter(
+                      (event) =>
+                        event.actor === "agent" && event.event_type === "create",
+                    )
+                    .map((event) => event.shape_id),
+                ),
+              );
+              stampDelegateCreatedShapeMetadata(
+                activeEditor,
+                createdShapeIds,
+                jobId,
+              );
+              if (tracker) {
+                const affectedShapeIds = Array.from(
+                  new Set(
+                    delegateEvents
+                      .filter(
+                        (event) =>
+                          event.actor === "agent" &&
+                          (event.event_type === "create" ||
+                            event.event_type === "update"),
+                      )
+                      .map((event) => event.shape_id),
+                  ),
+                );
+                if (affectedShapeIds.length > 0) {
+                  await sendFocusedScreenshot(
+                    captureCanvasScreenshotForShapeIds(
+                      activeEditor,
+                      affectedShapeIds,
+                    ),
+                    "Failed to capture delegate task screenshot",
+                  );
+                }
+              }
               clearCanvasToast();
               ws.sendCanvasDelegateResult({
                 type: "canvas_delegate_result",
@@ -904,7 +1090,26 @@ export const SessionCanvas: React.FC = () => {
 
           const result = insertVisualIntoCanvas(editor, insertPayload);
           if (result.applied) {
-            clearCanvasToast();
+            void (async () => {
+              if (result.bounds && result.shapeId) {
+                await sendFocusedScreenshot(
+                  captureCanvasScreenshotForBounds(
+                    editor,
+                    result.bounds,
+                    [result.shapeId],
+                  ),
+                  "Failed to capture generate visual screenshot",
+                );
+              }
+              clearCanvasToast();
+              ws.sendFrontendAck({
+                status: "applied",
+                action_type: action.type,
+                source_tool: action.source_tool,
+                job_id: action.job_id,
+                summary: result.summary,
+              });
+            })();
           } else {
             showCanvasToast(
               {
@@ -916,15 +1121,14 @@ export const SessionCanvas: React.FC = () => {
               },
               CANVAS_ERROR_TOAST_VISIBLE_MS,
             );
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: result.summary,
+            });
           }
-
-          ws.sendFrontendAck({
-            status: result.applied ? "applied" : "failed",
-            action_type: action.type,
-            source_tool: action.source_tool,
-            job_id: action.job_id,
-            summary: result.summary,
-          });
           return;
         }
         case "flashcards.begin":
@@ -961,6 +1165,7 @@ export const SessionCanvas: React.FC = () => {
       applyFrontendFlashcardState,
       clearCanvasToast,
       editor,
+      sendFocusedScreenshot,
       showCanvasToast,
       ws,
     ],

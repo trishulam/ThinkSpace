@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from .canvas_delegate import get_canvas_delegate_tools
+from .canvas_snapshot import get_canvas_snapshot_tools
 from .canvas_visuals import get_canvas_visual_tools
 from .flashcards import get_flashcard_tools
 
@@ -19,6 +20,7 @@ def get_tools() -> Sequence[Any]:
 
     return [
         *get_canvas_delegate_tools(),
+        *get_canvas_snapshot_tools(),
         *get_canvas_visual_tools(),
         *get_flashcard_tools(),
     ]

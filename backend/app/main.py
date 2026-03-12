@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import warnings
-from contextlib import suppress
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -69,6 +68,10 @@ from thinkspace_agent.tools.canvas_delegate_jobs import (  # noqa: E402
     canvas_delegate_job_outbox,
     canvas_delegate_job_store,
     publish_canvas_delegate_job_result,
+)
+from thinkspace_agent.tools.canvas_snapshot import (  # noqa: E402
+    CanvasSnapshotSessionBridge,
+    canvas_snapshot_session_bridge_store,
 )
 from thinkspace_agent.tools.canvas_context_requests import (  # noqa: E402
     canvas_context_request_store,
@@ -1355,6 +1358,46 @@ async def websocket_endpoint(
             )
         )
 
+    async def _send_realtime_image_data_url(data_url: str) -> bool:
+        if not isinstance(data_url, str) or not data_url.startswith("data:"):
+            return False
+
+        header, separator, encoded_payload = data_url.partition(",")
+        if not separator or not encoded_payload:
+            return False
+
+        mime_segment = header[5:]
+        mime_type, _, encoding_suffix = mime_segment.partition(";")
+        if encoding_suffix != "base64":
+            logger.warning("Unsupported image data URL encoding: %s", encoding_suffix)
+            return False
+
+        try:
+            image_data = base64.b64decode(encoded_payload)
+        except Exception:
+            logger.exception("Failed to decode viewport snapshot data URL")
+            return False
+
+        normalized_mime_type = mime_type.strip() or "image/jpeg"
+        logger.debug(
+            "Sending viewport snapshot image via send_realtime: %s bytes, type=%s",
+            len(image_data),
+            normalized_mime_type,
+        )
+        live_request_queue.send_realtime(
+            types.Blob(mime_type=normalized_mime_type, data=image_data)
+        )
+        return True
+
+    await canvas_snapshot_session_bridge_store.set_bridge(
+        user_id=user_id,
+        session_id=session_id,
+        bridge=CanvasSnapshotSessionBridge(
+            send_frontend_action=_send_frontend_action_message,
+            send_screenshot_data_url=_send_realtime_image_data_url,
+        ),
+    )
+
     # ========================================
     # Phase 3: Active Session (concurrent bidirectional communication)
     # ========================================
@@ -1368,12 +1411,15 @@ async def websocket_endpoint(
             message_type = message.get("type")
 
             if message_type == "websocket.disconnect":
-                logger.debug(
-                    "Client disconnected: code=%s reason=%s",
-                    message.get("code"),
-                    message.get("reason", ""),
+                code = message.get("code", 1000)
+                reason = message.get("reason")
+                logger.info(
+                    "Client disconnected: session_id=%s code=%s reason=%s",
+                    session_id,
+                    code,
+                    reason or "",
                 )
-                return
+                raise WebSocketDisconnect(code=code, reason=reason)
 
             if message_type != "websocket.receive":
                 logger.debug(f"Ignoring WebSocket message type: {message_type}")
@@ -1596,7 +1642,7 @@ async def websocket_endpoint(
             logger.debug("run_live() generator completed")
         except asyncio.CancelledError:
             raise
-        except genai_errors.APIError as exc:
+        except genai_errors.APIError:
             raise
 
     async def background_tool_result_task(
@@ -1626,10 +1672,12 @@ async def websocket_endpoint(
             if frontend_action is not None:
                 await _send_frontend_action_message(frontend_action)
 
-    # Run both tasks concurrently
-    # Exceptions from either task will propagate and cancel the other task
+    # Run the core websocket pair concurrently.
+    # Background tool-result relays stay attached to the session, but they do not
+    # control session lifetime the way upstream/downstream do.
     upstream = asyncio.create_task(upstream_task(), name="websocket-upstream")
     downstream = asyncio.create_task(downstream_task(), name="websocket-downstream")
+    core_tasks = (upstream, downstream)
     flashcard_background_results = asyncio.create_task(
         background_tool_result_task(
             result_queue=flashcard_background_result_queue,
@@ -1651,26 +1699,20 @@ async def websocket_endpoint(
         ),
         name="websocket-canvas-delegate-background-tool-results",
     )
+    background_tasks = (
+        flashcard_background_results,
+        canvas_background_results,
+        canvas_delegate_background_results,
+    )
 
     try:
         logger.info("Starting streaming tasks for session_id=%s", session_id)
-        done, _ = await asyncio.wait(
-            {
-                upstream,
-                downstream,
-                flashcard_background_results,
-                canvas_background_results,
-                canvas_delegate_background_results,
-            },
-            return_when=asyncio.FIRST_COMPLETED,
+        await asyncio.gather(*core_tasks)
+        logger.info(
+            "Core streaming tasks completed for session_id=%s; beginning shutdown",
+            session_id,
         )
-        logger.info("Streaming task completed for session_id=%s; beginning shutdown", session_id)
         shutdown_started.set()
-
-        for task in done:
-            exc = task.exception()
-            if exc:
-                raise exc
     except WebSocketDisconnect:
         logger.info("Client disconnected normally for session_id=%s", session_id)
     except Exception as e:
@@ -1706,6 +1748,10 @@ async def websocket_endpoint(
             session_id,
             canvas_delegate_background_result_queue,
         )
+        await canvas_snapshot_session_bridge_store.clear_bridge(
+            user_id=user_id,
+            session_id=session_id,
+        )
         await canvas_placement_context_store.clear_context(
             user_id=user_id,
             session_id=session_id,
@@ -1719,28 +1765,27 @@ async def websocket_endpoint(
             session_id=session_id,
         )
 
-        for task in (
-            upstream,
-            downstream,
-            flashcard_background_results,
-            canvas_background_results,
-            canvas_delegate_background_results,
-        ):
+        for task in (*core_tasks, *background_tasks):
             if not task.done():
                 task.cancel()
 
-        for task in (
-            upstream,
-            downstream,
-            flashcard_background_results,
-            canvas_background_results,
-            canvas_delegate_background_results,
-        ):
+        for task in core_tasks:
             try:
                 await task
             except asyncio.CancelledError:
                 pass
-            except Exception as exc:
+            except Exception:
                 raise
+
+        for task in background_tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception(
+                    "Background websocket task failed during shutdown: %s",
+                    task.get_name(),
+                )
 
         logger.info("WebSocket session shutdown complete for session_id=%s", session_id)

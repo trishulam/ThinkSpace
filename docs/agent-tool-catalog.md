@@ -33,6 +33,7 @@ The orchestrator-facing `canvas.*` family for v1 is:
 - `canvas.generate_widget`
 - `canvas.enhance`
 - `canvas.delegate_task`
+- `canvas.viewport_snapshot`
 
 ### `canvas.generate_visual`
 
@@ -132,6 +133,28 @@ Behavior notes:
 - the frontend reports only completion or failure, and the backend reuses the
   original delegated goal for the tutor's semantic completion update
 
+### `canvas.viewport_snapshot`
+
+Request a fresh current viewport snapshot and structured canvas context.
+
+Examples:
+
+- re-ground before deciding the next tutoring move
+- inspect the current viewport after uncertainty or ambiguity
+- refresh canvas understanding after major user edits
+
+Behavior notes:
+
+- this is a narrow freshness helper, not a broad canvas perception family
+- every call should request a fresh frontend capture rather than reading stale
+  cached context
+- the screenshot should go through `send_realtime()`
+- the structured viewport context should return in the tool result payload
+- do not use `send_content()` in the normal success path
+- keep the raw screenshot blob out of the tool result payload
+- use this only when the orchestrator explicitly needs current viewport state
+  before deciding what to do next
+
 ## Canvas Perception And Executor Context
 
 Canvas-aware executors should use the existing tldraw-style hybrid context
@@ -174,7 +197,9 @@ For generated visuals and widgets, the current v1 direction is:
 ## Current Boundaries
 
 - `canvas.generate_visual` and `canvas.generate_widget` stay separate
-- there is no separate top-level canvas perception tool family right now
+- there is no broad top-level canvas perception tool family right now
+- `canvas.viewport_snapshot` is allowed only as a narrow freshness helper, not
+  as a general perception family
 - direct generated-output insertion and canvas-agent delegation remain separate
   execution paths
 - visual and widget generation may internally use specialized workers, but they

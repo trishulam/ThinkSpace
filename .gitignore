@@ -37,6 +37,8 @@ out/
 .mf/
 
 debug_traces/
+ 
+backend/app/data/
 
 # IDE
 .vscode/

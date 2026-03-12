@@ -49,8 +49,14 @@ class CanvasContextRequestStore:
         future.set_result(payload)
         return True
 
+    def cancel_request(self, *, user_id: str, session_id: str, job_id: str) -> None:
+        key = (user_id, session_id, job_id)
+        future = self._futures.pop(key, None)
+        if future is not None and not future.done():
+            future.cancel()
+
     def clear_session(self, *, user_id: str, session_id: str) -> None:
-        for key in list(self._futures.keys()):
+        for key in tuple(self._futures):
             if key[0] == user_id and key[1] == session_id:
                 future = self._futures.pop(key)
                 if not future.done():
