@@ -61,6 +61,11 @@ class SessionRecord(ApiModel):
     latest_material_checkpoint_id: str | None = None
     checkpoint_count: int = 0
     milestone_count: int = 0
+    adk_session_id: str | None = None
+    adk_last_update_time: float | None = None
+    adk_event_count: int = 0
+    adk_state_key_count: int = 0
+    adk_latest_invocation_id: str | None = None
 
 
 class CheckpointCreateRequest(ApiModel):
@@ -124,10 +129,20 @@ class TranscriptTurnRecord(ApiModel):
     completed_at: str  # ISO format
 
 
+class AdkSessionSummary(ApiModel):
+    session_id: str
+    user_id: str
+    event_count: int = 0
+    state_key_count: int = 0
+    last_update_time: float | None = None
+    latest_invocation_id: str | None = None
+
+
 class SessionResumeResponse(ApiModel):
     session: SessionRecord
     latest_checkpoint: CheckpointRecord | None = None
     transcript: list[TranscriptTurnRecord] = []
+    adk_session: AdkSessionSummary | None = None
 
 
 class SessionListResponse(ApiModel):
@@ -147,6 +162,9 @@ class SessionStore(Protocol):
         self, session_id: str, request: TranscriptTurnRecord
     ) -> TranscriptTurnRecord: ...
     def list_turns(self, session_id: str) -> list[TranscriptTurnRecord]: ...
+    def update_adk_session_summary(
+        self, session_id: str, summary: AdkSessionSummary | None
+    ) -> SessionRecord: ...
 
 
 class InMemorySessionStore:
@@ -249,6 +267,15 @@ class InMemorySessionStore:
     def list_turns(self, session_id: str) -> list[TranscriptTurnRecord]:
         return list(self._turns.get(session_id, []))
 
+    def update_adk_session_summary(
+        self, session_id: str, summary: AdkSessionSummary | None
+    ) -> SessionRecord:
+        session = self.get_session(session_id)
+        if session is None:
+            raise KeyError(session_id)
+        self._apply_adk_session_summary(session, summary)
+        return session
+
     def _update_session_from_checkpoint(
         self, session: SessionRecord, checkpoint: CheckpointRecord
     ) -> None:
@@ -262,6 +289,23 @@ class InMemorySessionStore:
             session.milestone_count += 1
         if checkpoint.summary:
             session.summary = checkpoint.summary
+
+    def _apply_adk_session_summary(
+        self, session: SessionRecord, summary: AdkSessionSummary | None
+    ) -> None:
+        if summary is None:
+            session.adk_session_id = None
+            session.adk_last_update_time = None
+            session.adk_event_count = 0
+            session.adk_state_key_count = 0
+            session.adk_latest_invocation_id = None
+            return
+
+        session.adk_session_id = summary.session_id
+        session.adk_last_update_time = summary.last_update_time
+        session.adk_event_count = summary.event_count
+        session.adk_state_key_count = summary.state_key_count
+        session.adk_latest_invocation_id = summary.latest_invocation_id
 
 
 class FirestoreSessionStore:
@@ -436,6 +480,19 @@ class FirestoreSessionStore:
         ]
         return turns
 
+    def update_adk_session_summary(
+        self, session_id: str, summary: AdkSessionSummary | None
+    ) -> SessionRecord:
+        session = self.get_session(session_id)
+        if session is None:
+            raise KeyError(session_id)
+        self._apply_adk_session_summary(session, summary)
+        self._sessions.document(session_id).set(
+            session.model_dump(mode="python", by_alias=False),
+            merge=True,
+        )
+        return session
+
     def _get_next_checkpoint_version(self, session_id: str) -> int:
         checkpoints = list(
             self._sessions.document(session_id)
@@ -499,6 +556,23 @@ class FirestoreSessionStore:
             session.milestone_count += 1
         if checkpoint.summary:
             session.summary = checkpoint.summary
+
+    def _apply_adk_session_summary(
+        self, session: SessionRecord, summary: AdkSessionSummary | None
+    ) -> None:
+        if summary is None:
+            session.adk_session_id = None
+            session.adk_last_update_time = None
+            session.adk_event_count = 0
+            session.adk_state_key_count = 0
+            session.adk_latest_invocation_id = None
+            return
+
+        session.adk_session_id = summary.session_id
+        session.adk_last_update_time = summary.last_update_time
+        session.adk_event_count = summary.event_count
+        session.adk_state_key_count = summary.state_key_count
+        session.adk_latest_invocation_id = summary.latest_invocation_id
 
 
 def create_session_store() -> SessionStore:

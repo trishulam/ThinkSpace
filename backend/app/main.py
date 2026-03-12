@@ -15,12 +15,14 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from google.adk.events import Event, EventActions
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
 from google.genai import types
 from adk_session_service import create_adk_session_service
 from session_store import (
+    AdkSessionSummary,
     CheckpointCreateRequest,
     CheckpointRecord,
     SessionCreateRequest,
@@ -75,6 +77,115 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 # Application name constant
 APP_NAME = "bidi-demo"
+CONVERSATION_MEMORY_STATE_KEY = "conversation_memory"
+LAST_USER_MESSAGE_STATE_KEY = "last_user_message"
+LAST_AGENT_MESSAGE_STATE_KEY = "last_agent_message"
+MAX_CONVERSATION_MEMORY_CHARS = 24_000
+
+
+def _get_latest_invocation_id(events: list[object]) -> str | None:
+    for event in reversed(events):
+        invocation_id = getattr(event, "invocation_id", None)
+        if isinstance(invocation_id, str) and invocation_id.strip():
+            return invocation_id
+    return None
+
+
+def _summarize_adk_session(adk_session: object) -> AdkSessionSummary | None:
+    session_id = getattr(adk_session, "id", None)
+    user_id = getattr(adk_session, "user_id", None)
+    if not isinstance(session_id, str) or not isinstance(user_id, str):
+        return None
+
+    events = getattr(adk_session, "events", []) or []
+    state = getattr(adk_session, "state", {}) or {}
+    last_update_time = getattr(adk_session, "last_update_time", None)
+
+    return AdkSessionSummary(
+        session_id=session_id,
+        user_id=user_id,
+        event_count=len(events),
+        state_key_count=len(state),
+        last_update_time=last_update_time if isinstance(last_update_time, (int, float)) else None,
+        latest_invocation_id=_get_latest_invocation_id(events),
+    )
+
+
+def _serialize_adk_event_for_debug(event: object) -> dict[str, object]:
+    content = getattr(event, "content", None)
+    parts_summary: list[str] = []
+    if content is not None:
+        parts = getattr(content, "parts", None)
+        if isinstance(parts, list):
+            for part in parts[:4]:
+                text = getattr(part, "text", None)
+                if isinstance(text, str) and text.strip():
+                    trimmed = text.strip()
+                    parts_summary.append(
+                        trimmed if len(trimmed) <= 240 else trimmed[:237] + "..."
+                    )
+
+    actions = getattr(event, "actions", None)
+    state_delta = getattr(actions, "state_delta", None) if actions is not None else None
+    state_delta_keys = (
+        sorted(state_delta.keys())[:20]
+        if isinstance(state_delta, dict)
+        else []
+    )
+
+    invocation_id = getattr(event, "invocation_id", None)
+    if not isinstance(invocation_id, str):
+        invocation_id = None
+
+    return {
+        "id": getattr(event, "id", None),
+        "author": getattr(event, "author", None),
+        "timestamp": getattr(event, "timestamp", None),
+        "invocationId": invocation_id,
+        "partial": getattr(event, "partial", None),
+        "turnComplete": getattr(event, "turn_complete", None),
+        "interrupted": getattr(event, "interrupted", None),
+        "hasContent": content is not None,
+        "partsSummary": parts_summary,
+        "stateDeltaKeys": state_delta_keys,
+    }
+
+
+async def _load_adk_session_summary(
+    session_record: SessionRecord, *, ensure_exists: bool
+) -> AdkSessionSummary | None:
+    adk_session = await session_service.get_session(
+        app_name=APP_NAME,
+        user_id=session_record.user_id,
+        session_id=session_record.session_id,
+    )
+    if adk_session is None and ensure_exists:
+        try:
+            await session_service.create_session(
+                app_name=APP_NAME,
+                user_id=session_record.user_id,
+                session_id=session_record.session_id,
+            )
+        except ValueError:
+            logger.debug(
+                "ADK session already existed during create race: %s",
+                session_record.session_id,
+            )
+        adk_session = await session_service.get_session(
+            app_name=APP_NAME,
+            user_id=session_record.user_id,
+            session_id=session_record.session_id,
+        )
+
+    summary = _summarize_adk_session(adk_session) if adk_session is not None else None
+    try:
+        session_store.update_adk_session_summary(session_record.session_id, summary)
+    except KeyError:
+        logger.warning(
+            "Failed to sync ADK summary for missing session %s",
+            session_record.session_id,
+        )
+    return summary
 
 
 def _is_record(value: object) -> bool:
@@ -89,6 +200,142 @@ def _parse_json_candidate(value: str) -> object | None:
         return json.loads(stripped)
     except json.JSONDecodeError:
         return None
+
+
+def _trim_conversation_memory(memory: str) -> str:
+    normalized = memory.strip()
+    if len(normalized) <= MAX_CONVERSATION_MEMORY_CHARS:
+        return normalized
+    tail = normalized[-(MAX_CONVERSATION_MEMORY_CHARS - 64) :].lstrip()
+    return "[Older conversation truncated]\n\n" + tail
+
+
+def _extract_turn_memory(entries: list[TranscriptEntryRecord]) -> tuple[str | None, str | None]:
+    user_transcripts = [
+        entry.content.strip()
+        for entry in entries
+        if entry.type == "user-transcription" and not entry.is_partial and entry.content.strip()
+    ]
+    user_texts = [
+        entry.content.strip()
+        for entry in entries
+        if entry.type == "user-text" and not entry.is_partial and entry.content.strip()
+    ]
+    agent_transcripts = [
+        entry.content.strip()
+        for entry in entries
+        if entry.type == "agent-transcription" and not entry.is_partial and entry.content.strip()
+    ]
+    agent_texts = [
+        entry.content.strip()
+        for entry in entries
+        if entry.type == "agent-text" and not entry.is_partial and entry.content.strip()
+    ]
+
+    user_message = user_transcripts[-1] if user_transcripts else None
+    if user_message is None and user_texts:
+        user_message = "\n".join(user_texts)
+
+    agent_message = agent_transcripts[-1] if agent_transcripts else None
+    if agent_message is None and agent_texts:
+        agent_message = "\n".join(agent_texts)
+
+    return user_message, agent_message
+
+
+def _build_memory_turn_block(entries: list[TranscriptEntryRecord]) -> str | None:
+    user_message, agent_message = _extract_turn_memory(entries)
+    turn_lines: list[str] = []
+    if user_message:
+        turn_lines.append(f"User: {user_message}")
+    if agent_message:
+        turn_lines.append(f"Agent: {agent_message}")
+    turn_block = "\n".join(turn_lines).strip()
+    return turn_block or None
+
+
+async def _update_adk_conversation_memory(
+    *,
+    user_id: str,
+    session_id: str,
+    entries: list[TranscriptEntryRecord],
+) -> None:
+    user_message, agent_message = _extract_turn_memory(entries)
+    turn_block = _build_memory_turn_block(entries)
+    if not turn_block:
+        return
+
+    adk_session = await session_service.get_session(
+        app_name=APP_NAME,
+        user_id=user_id,
+        session_id=session_id,
+    )
+    if adk_session is None:
+        logger.warning(
+            "Cannot update ADK conversation memory for missing session %s",
+            session_id,
+        )
+        return
+
+    existing_memory = adk_session.state.get(CONVERSATION_MEMORY_STATE_KEY)
+    if not isinstance(existing_memory, str):
+        existing_memory = ""
+
+    updated_memory = turn_block if not existing_memory else f"{existing_memory}\n\n{turn_block}"
+    updated_memory = _trim_conversation_memory(updated_memory)
+
+    memory_event = Event(
+        author="system",
+        invocationId=f"memory-sync-{uuid4().hex}",
+        actions=EventActions(
+            stateDelta={
+                CONVERSATION_MEMORY_STATE_KEY: updated_memory,
+                LAST_USER_MESSAGE_STATE_KEY: user_message or "",
+                LAST_AGENT_MESSAGE_STATE_KEY: agent_message or "",
+            }
+        ),
+    )
+    await session_service.append_event(adk_session, memory_event)
+
+
+async def _backfill_adk_conversation_memory_from_transcript(
+    *, user_id: str, session_id: str
+) -> None:
+    adk_session = await session_service.get_session(
+        app_name=APP_NAME,
+        user_id=user_id,
+        session_id=session_id,
+    )
+    if adk_session is None:
+        return
+
+    existing_memory = adk_session.state.get(CONVERSATION_MEMORY_STATE_KEY)
+    if isinstance(existing_memory, str) and existing_memory.strip():
+        return
+
+    turns = session_store.list_turns(session_id)
+    turn_blocks = [
+        turn_block
+        for turn in turns
+        if (turn_block := _build_memory_turn_block(turn.entries)) is not None
+    ]
+    if not turn_blocks:
+        return
+
+    memory_event = Event(
+        author="system",
+        invocationId=f"memory-backfill-{uuid4().hex}",
+        actions=EventActions(
+            stateDelta={
+                CONVERSATION_MEMORY_STATE_KEY: _trim_conversation_memory(
+                    "\n\n".join(turn_blocks)
+                ),
+                LAST_USER_MESSAGE_STATE_KEY: _extract_turn_memory(turns[-1].entries)[0] or "",
+                LAST_AGENT_MESSAGE_STATE_KEY: _extract_turn_memory(turns[-1].entries)[1] or "",
+            }
+        ),
+    )
+    await session_service.append_event(adk_session, memory_event)
 
 
 def _normalize_frontend_action(
@@ -404,25 +651,73 @@ async def create_session(request: SessionCreateRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    await session_service.create_session(
-        app_name=APP_NAME, user_id=session.user_id, session_id=session.session_id
-    )
-    return session
+    await _load_adk_session_summary(session, ensure_exists=True)
+    refreshed_session = session_store.get_session(session.session_id)
+    return refreshed_session or session
 
 
 @app.get("/v1/sessions/{session_id}/resume", response_model=SessionResumeResponse)
 async def resume_session(session_id: str):
-    """Return session metadata, latest checkpoint, and persisted transcript."""
+    """Return session metadata, latest checkpoint, transcript, and ADK memory summary."""
     session = session_store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    await _backfill_adk_conversation_memory_from_transcript(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    adk_session = await _load_adk_session_summary(session, ensure_exists=False)
+    refreshed_session = session_store.get_session(session_id) or session
     transcript = session_store.list_turns(session_id)
     return SessionResumeResponse(
-        session=session,
+        session=refreshed_session,
         latest_checkpoint=session_store.get_latest_checkpoint(session_id),
         transcript=transcript,
+        adk_session=adk_session,
     )
+
+
+@app.get("/v1/sessions/{session_id}/adk-debug")
+async def get_adk_session_debug(session_id: str):
+    """Inspect the current official ADK session state for a ThinkSpace session."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    adk_session = await session_service.get_session(
+        app_name=APP_NAME,
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    if adk_session is None:
+        return {
+            "sessionId": session_id,
+            "thinkspaceUserId": session.user_id,
+            "adkSessionExists": False,
+            "message": "No ADK session found for this ThinkSpace session",
+        }
+
+    state = getattr(adk_session, "state", {}) or {}
+    events = getattr(adk_session, "events", []) or []
+    conversation_memory = state.get(CONVERSATION_MEMORY_STATE_KEY)
+    if not isinstance(conversation_memory, str):
+        conversation_memory = None
+
+    return {
+        "sessionId": session_id,
+        "thinkspaceUserId": session.user_id,
+        "adkSessionExists": True,
+        "adkSummary": _summarize_adk_session(adk_session).model_dump(by_alias=True),
+        "stateKeys": sorted(state.keys()),
+        "conversationMemory": conversation_memory,
+        "lastUserMessage": state.get(LAST_USER_MESSAGE_STATE_KEY),
+        "lastAgentMessage": state.get(LAST_AGENT_MESSAGE_STATE_KEY),
+        "recentEvents": [
+            _serialize_adk_event_for_debug(event)
+            for event in events[-10:]
+        ],
+    }
 
 
 @app.post(
@@ -469,9 +764,21 @@ async def websocket_endpoint(
         proactivity: Enable proactive audio (native audio models only)
         affective_dialog: Enable affective dialog (native audio models only)
     """
+    session_record = session_store.get_session(session_id)
+    if session_record is None:
+        await websocket.close(code=4404, reason="Session not found")
+        return
+
+    requested_user_id = user_id
+    user_id = session_record.user_id
     logger.debug(
-        f"WebSocket connection request: user_id={user_id}, session_id={session_id}, "
-        f"proactivity={proactivity}, affective_dialog={affective_dialog}"
+        "WebSocket connection request: requested_user_id=%s resolved_user_id=%s session_id=%s "
+        "proactivity=%s affective_dialog=%s",
+        requested_user_id,
+        user_id,
+        session_id,
+        proactivity,
+        affective_dialog,
     )
     await websocket.accept()
     logger.debug("WebSocket connection accepted")
@@ -535,14 +842,12 @@ async def websocket_endpoint(
             )
     logger.debug(f"RunConfig created: {run_config}")
 
-    # Get or create session (handles both new sessions and reconnections)
-    session = await session_service.get_session(
-        app_name=APP_NAME, user_id=user_id, session_id=session_id
+    # Ensure the product session stays linked to a durable ADK session.
+    await _load_adk_session_summary(session_record, ensure_exists=True)
+    await _backfill_adk_conversation_memory_from_transcript(
+        user_id=user_id,
+        session_id=session_id,
     )
-    if not session:
-        await session_service.create_session(
-            app_name=APP_NAME, user_id=user_id, session_id=session_id
-        )
 
     live_request_queue = LiveRequestQueue()
     flashcard_background_result_queue = await flashcard_job_outbox.subscribe(
@@ -603,7 +908,16 @@ async def websocket_endpoint(
             transcript_buffer.clear()
         try:
             session_store.create_turn(session_id, turn)
-            logger.debug("Persisted transcript turn %s with %d entries", turn.turn_id, len(turn.entries))
+            await _update_adk_conversation_memory(
+                user_id=user_id,
+                session_id=session_id,
+                entries=turn.entries,
+            )
+            logger.debug(
+                "Persisted transcript turn %s with %d entries",
+                turn.turn_id,
+                len(turn.entries),
+            )
         except Exception as e:
             logger.warning("Failed to persist transcript turn: %s", e)
 
@@ -939,6 +1253,12 @@ async def websocket_endpoint(
     except Exception as e:
         logger.error(f"Unexpected error in streaming tasks: {e}", exc_info=True)
     finally:
+        try:
+            await _load_adk_session_summary(session_record, ensure_exists=False)
+        except Exception:
+            logger.exception(
+                "Failed to refresh ADK session summary during websocket shutdown"
+            )
         # ========================================
         # Phase 4: Session Termination
         # ========================================

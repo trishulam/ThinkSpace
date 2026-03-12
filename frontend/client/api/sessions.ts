@@ -35,10 +35,10 @@ export interface ApiCheckpoint {
   includeInReplay: boolean;
   relatedTurnSequence: number | null;
   linkedMaterialCheckpointId: string | null;
-  document: Record<string, unknown> | null;
-  session: Record<string, unknown> | null;
-  agentAppState: Record<string, unknown> | null;
-  payload: Record<string, unknown> | null;
+  document: unknown | null;
+  session: unknown | null;
+  agentAppState: unknown | null;
+  payload: unknown | null;
 }
 
 export interface ApiSessionListResponse {
@@ -60,10 +60,20 @@ export interface ApiTranscriptTurn {
   completedAt: string;
 }
 
+export interface ApiAdkSessionSummary {
+  sessionId: string;
+  userId: string;
+  eventCount: number;
+  stateKeyCount: number;
+  lastUpdateTime: number | null;
+  latestInvocationId: string | null;
+}
+
 export interface ApiSessionResumeResponse {
   session: ApiSession;
   latestCheckpoint: ApiCheckpoint | null;
   transcript?: ApiTranscriptTurn[];
+  adkSession?: ApiAdkSessionSummary | null;
 }
 
 export interface CreateSessionRequest extends NewSessionData {
@@ -78,10 +88,10 @@ export interface CreateCheckpointRequest {
   summary?: string;
   isImportant?: boolean;
   includeInReplay?: boolean;
-  document?: Record<string, unknown>;
-  session?: Record<string, unknown>;
-  agentAppState?: Record<string, unknown>;
-  payload?: Record<string, unknown>;
+  document?: unknown;
+  session?: unknown;
+  agentAppState?: unknown;
+  payload?: unknown;
   linkedMaterialCheckpointId?: string;
   relatedTurnSequence?: number;
   clientUpdatedAt?: string;

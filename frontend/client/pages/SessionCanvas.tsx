@@ -304,6 +304,7 @@ export const SessionCanvas: React.FC = () => {
   const [persistedEventLog, setPersistedEventLog] = useState<AgentLogEntry[]>(
     [],
   );
+  const [resolvedUserId, setResolvedUserId] = useState("demo-user");
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const hasLoadedRemoteSnapshotRef = useRef(false);
   const isSavingCheckpointRef = useRef(false);
@@ -363,7 +364,7 @@ export const SessionCanvas: React.FC = () => {
     useAudioWorklets();
 
   // Agent WebSocket
-  const userId = "demo-user";
+  const userId = resolvedUserId;
   const wsSessionId = sessionId || "default-session";
 
   const ws = useAgentWebSocket({
@@ -785,6 +786,8 @@ export const SessionCanvas: React.FC = () => {
   useEffect(() => {
     hasLoadedRemoteSnapshotRef.current = false;
     setResumeError(null);
+    setResolvedUserId("demo-user");
+    setPersistedEventLog([]);
 
     if (!sessionId) {
       setIsRestoringSession(false);
@@ -805,6 +808,8 @@ export const SessionCanvas: React.FC = () => {
           return;
         }
 
+        setResolvedUserId(resumePayload.session.userId);
+
         const latestCheckpoint = resumePayload.latestCheckpoint;
         if (
           latestCheckpoint?.document &&
@@ -815,7 +820,7 @@ export const SessionCanvas: React.FC = () => {
           loadSnapshot(editor.store, {
             document: latestCheckpoint.document,
             session: latestCheckpoint.session,
-          });
+          } as Parameters<typeof loadSnapshot>[1]);
           hasLoadedRemoteSnapshotRef.current = true;
         }
 
