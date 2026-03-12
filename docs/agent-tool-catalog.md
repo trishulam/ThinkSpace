@@ -123,6 +123,8 @@ Behavior notes:
 - this is not the default path for simple generated output placement
 - the orchestrator should give a detailed worker prompt that clearly instructs
   what to create or change on the canvas
+- the delegated worker prompt should be written in full uppercase only, without
+  bold, italics, or other markdown emphasis
 - worker prompts should be explicit about structure, labels, relationships,
   sections, and layout when those details matter
 - the backend issues a delegated goal and the frontend canvas agent executes it

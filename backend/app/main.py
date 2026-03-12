@@ -19,6 +19,7 @@ from google.adk.events import Event, EventActions
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
+from google.genai import errors as genai_errors
 from google.genai import types
 from adk_session_service import create_adk_session_service
 from session_store import (
@@ -114,16 +115,32 @@ def _summarize_adk_session(adk_session: object) -> AdkSessionSummary | None:
 def _serialize_adk_event_for_debug(event: object) -> dict[str, object]:
     content = getattr(event, "content", None)
     parts_summary: list[str] = []
+    part_kinds: list[str] = []
     if content is not None:
         parts = getattr(content, "parts", None)
         if isinstance(parts, list):
             for part in parts[:4]:
+                part_kind_names: list[str] = []
                 text = getattr(part, "text", None)
                 if isinstance(text, str) and text.strip():
                     trimmed = text.strip()
                     parts_summary.append(
                         trimmed if len(trimmed) <= 240 else trimmed[:237] + "..."
                     )
+                    part_kind_names.append("text")
+                if getattr(part, "function_call", None) is not None:
+                    part_kind_names.append("function_call")
+                if getattr(part, "function_response", None) is not None:
+                    part_kind_names.append("function_response")
+                if getattr(part, "inline_data", None) is not None:
+                    part_kind_names.append("inline_data")
+                if getattr(part, "executable_code", None) is not None:
+                    part_kind_names.append("executable_code")
+                if getattr(part, "code_execution_result", None) is not None:
+                    part_kind_names.append("code_execution_result")
+                for kind_name in part_kind_names:
+                    if kind_name not in part_kinds:
+                        part_kinds.append(kind_name)
 
     actions = getattr(event, "actions", None)
     state_delta = getattr(actions, "state_delta", None) if actions is not None else None
@@ -146,9 +163,139 @@ def _serialize_adk_event_for_debug(event: object) -> dict[str, object]:
         "turnComplete": getattr(event, "turn_complete", None),
         "interrupted": getattr(event, "interrupted", None),
         "hasContent": content is not None,
+        "partKinds": part_kinds,
         "partsSummary": parts_summary,
         "stateDeltaKeys": state_delta_keys,
     }
+
+
+def _summarize_latest_invocation_for_debug(
+    events: list[object], latest_invocation_id: str | None
+) -> dict[str, object] | None:
+    if not isinstance(latest_invocation_id, str) or not latest_invocation_id.strip():
+        return None
+
+    matching_events = [
+        event
+        for event in events
+        if getattr(event, "invocation_id", None) == latest_invocation_id
+    ]
+    if not matching_events:
+        return None
+
+    authors: list[str] = []
+    part_kinds: list[str] = []
+    turn_complete_count = 0
+    user_content_after_turn_complete = False
+    saw_turn_complete = False
+    events_after_first_turn_complete = 0
+
+    for event in matching_events:
+        author = getattr(event, "author", None)
+        if isinstance(author, str) and author not in authors:
+            authors.append(author)
+
+        serialized = _serialize_adk_event_for_debug(event)
+        for kind_name in serialized.get("partKinds", []):
+            if isinstance(kind_name, str) and kind_name not in part_kinds:
+                part_kinds.append(kind_name)
+
+        if getattr(event, "turn_complete", None):
+            turn_complete_count += 1
+            saw_turn_complete = True
+            continue
+
+        if saw_turn_complete:
+            events_after_first_turn_complete += 1
+            if author == "user" and serialized.get("hasContent") is True:
+                user_content_after_turn_complete = True
+
+    return {
+        "latest_invocation_id": latest_invocation_id,
+        "event_count": len(matching_events),
+        "authors": authors,
+        "part_kinds": part_kinds,
+        "turn_complete_count": turn_complete_count,
+        "events_after_first_turn_complete": events_after_first_turn_complete,
+        "user_content_after_turn_complete": user_content_after_turn_complete,
+    }
+
+
+def _summarize_recent_non_memory_invocations_for_debug(
+    events: list[object], *, limit: int = 3
+) -> list[dict[str, object]]:
+    invocation_order: list[str] = []
+    grouped_events: dict[str, list[object]] = {}
+
+    for event in events:
+        invocation_id = getattr(event, "invocation_id", None)
+        if not isinstance(invocation_id, str) or not invocation_id.strip():
+            continue
+        if invocation_id.startswith("memory-sync-") or invocation_id.startswith(
+            "memory-backfill-"
+        ):
+            continue
+        if invocation_id not in grouped_events:
+            invocation_order.append(invocation_id)
+            grouped_events[invocation_id] = []
+        grouped_events[invocation_id].append(event)
+
+    summaries: list[dict[str, object]] = []
+    for invocation_id in invocation_order[-limit:]:
+        summary = _summarize_latest_invocation_for_debug(
+            grouped_events[invocation_id], invocation_id
+        )
+        if summary is not None:
+            summaries.append(summary)
+    return summaries
+
+
+def _has_unsafe_resumable_invocation(
+    recent_invocations: list[dict[str, object]],
+) -> tuple[bool, dict[str, object] | None]:
+    for summary in reversed(recent_invocations):
+        part_kinds = summary.get("part_kinds")
+        has_tool_parts = isinstance(part_kinds, list) and (
+            "function_call" in part_kinds or "function_response" in part_kinds
+        )
+        turn_complete_count = summary.get("turn_complete_count")
+        events_after_first_turn_complete = summary.get("events_after_first_turn_complete")
+        user_content_after_turn_complete = summary.get("user_content_after_turn_complete")
+        if (
+            has_tool_parts
+            and isinstance(turn_complete_count, int)
+            and turn_complete_count > 1
+        ):
+            return True, summary
+        if (
+            has_tool_parts
+            and isinstance(events_after_first_turn_complete, int)
+            and events_after_first_turn_complete > 0
+        ):
+            return True, summary
+        if has_tool_parts and user_content_after_turn_complete is True:
+            return True, summary
+    return False, None
+
+
+async def _reset_adk_session_for_reconnect(
+    *, session_record: SessionRecord
+) -> AdkSessionSummary | None:
+    await session_service.delete_session(
+        app_name=APP_NAME,
+        user_id=session_record.user_id,
+        session_id=session_record.session_id,
+    )
+    await session_service.create_session(
+        app_name=APP_NAME,
+        user_id=session_record.user_id,
+        session_id=session_record.session_id,
+    )
+    await _backfill_adk_conversation_memory_from_transcript(
+        user_id=session_record.user_id,
+        session_id=session_record.session_id,
+    )
+    return await _load_adk_session_summary(session_record, ensure_exists=False)
 
 
 async def _load_adk_session_summary(
@@ -848,8 +995,28 @@ async def websocket_endpoint(
         user_id=user_id,
         session_id=session_id,
     )
+    await _load_adk_session_summary(session_record, ensure_exists=False)
+    adk_session_before_live = await session_service.get_session(
+        app_name=APP_NAME,
+        user_id=user_id,
+        session_id=session_id,
+    )
+    adk_events_before_live = (
+        list(getattr(adk_session_before_live, "events", []) or [])
+        if adk_session_before_live is not None
+        else []
+    )
+    recent_non_memory_invocations = _summarize_recent_non_memory_invocations_for_debug(
+        adk_events_before_live
+    )
+    disable_session_resumption, unsafe_invocation = _has_unsafe_resumable_invocation(
+        recent_non_memory_invocations
+    )
+    if disable_session_resumption:
+        await _reset_adk_session_for_reconnect(session_record=session_record)
 
     live_request_queue = LiveRequestQueue()
+    shutdown_started = asyncio.Event()
     flashcard_background_result_queue = await flashcard_job_outbox.subscribe(
         user_id, session_id
     )
@@ -1129,53 +1296,58 @@ async def websocket_endpoint(
             user_id,
             session_id,
         )
-        async for event in runner.run_live(
-            user_id=user_id,
-            session_id=session_id,
-            live_request_queue=live_request_queue,
-            run_config=run_config,
-        ):
-            event_json = event.model_dump_json(exclude_none=True, by_alias=True)
-            event_payload = json.loads(event_json)
-            frontend_action = extract_frontend_action(event_payload)
-            logger.debug(f"[SERVER] Event: {event_json}")
-            await websocket.send_text(event_json)
+        try:
+            async for event in runner.run_live(
+                user_id=user_id,
+                session_id=session_id,
+                live_request_queue=live_request_queue,
+                run_config=run_config,
+            ):
+                event_json = event.model_dump_json(exclude_none=True, by_alias=True)
+                event_payload = json.loads(event_json)
+                frontend_action = extract_frontend_action(event_payload)
+                logger.debug(f"[SERVER] Event: {event_json}")
+                await websocket.send_text(event_json)
 
-            # Parse event for transcript persistence
-            ev = event.model_dump(exclude_none=True, by_alias=True)
+                # Parse event for transcript persistence
+                ev = event.model_dump(exclude_none=True, by_alias=True)
 
-            if ev.get("turnComplete"):
-                await _persist_turn("completed")
-                continue
-            if ev.get("interrupted"):
-                await _persist_turn("interrupted")
-                continue
+                if ev.get("turnComplete"):
+                    await _persist_turn("completed")
+                    continue
+                if ev.get("interrupted"):
+                    await _persist_turn("interrupted")
+                    continue
 
-            if ev.get("inputTranscription", {}).get("text"):
-                it = ev["inputTranscription"]
-                await _add_transcript_entry(
-                    "user-transcription",
-                    it["text"],
-                    is_partial=not it.get("finished", False),
-                )
-            if ev.get("outputTranscription", {}).get("text"):
-                ot = ev["outputTranscription"]
-                await _add_transcript_entry(
-                    "agent-transcription",
-                    ot["text"],
-                    is_partial=not ot.get("finished", False),
-                )
-            if ev.get("content", {}).get("parts"):
-                for part in ev["content"]["parts"]:
-                    if part.get("text") and not part.get("thought"):
-                        await _add_transcript_entry(
-                            "agent-text",
-                            part["text"],
-                            is_partial=bool(ev.get("partial")),
-                        )
-            if frontend_action is not None:
-                await _send_frontend_action_message(frontend_action)
-        logger.debug("run_live() generator completed")
+                if ev.get("inputTranscription", {}).get("text"):
+                    it = ev["inputTranscription"]
+                    await _add_transcript_entry(
+                        "user-transcription",
+                        it["text"],
+                        is_partial=not it.get("finished", False),
+                    )
+                if ev.get("outputTranscription", {}).get("text"):
+                    ot = ev["outputTranscription"]
+                    await _add_transcript_entry(
+                        "agent-transcription",
+                        ot["text"],
+                        is_partial=not ot.get("finished", False),
+                    )
+                if ev.get("content", {}).get("parts"):
+                    for part in ev["content"]["parts"]:
+                        if part.get("text") and not part.get("thought"):
+                            await _add_transcript_entry(
+                                "agent-text",
+                                part["text"],
+                                is_partial=bool(ev.get("partial")),
+                            )
+                if frontend_action is not None:
+                    await _send_frontend_action_message(frontend_action)
+            logger.debug("run_live() generator completed")
+        except asyncio.CancelledError:
+            raise
+        except genai_errors.APIError as exc:
+            raise
 
     async def background_tool_result_task(
         *,
@@ -1243,6 +1415,7 @@ async def websocket_endpoint(
             return_when=asyncio.FIRST_COMPLETED,
         )
         logger.debug("One websocket task completed, beginning shutdown")
+        shutdown_started.set()
 
         for task in done:
             exc = task.exception()
@@ -1253,6 +1426,7 @@ async def websocket_endpoint(
     except Exception as e:
         logger.error(f"Unexpected error in streaming tasks: {e}", exc_info=True)
     finally:
+        shutdown_started.set()
         try:
             await _load_adk_session_summary(session_record, ensure_exists=False)
         except Exception:
@@ -1312,5 +1486,9 @@ async def websocket_endpoint(
             canvas_background_results,
             canvas_delegate_background_results,
         ):
-            with suppress(asyncio.CancelledError):
+            try:
                 await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                raise

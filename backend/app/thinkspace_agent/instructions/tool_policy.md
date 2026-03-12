@@ -74,6 +74,9 @@ For board-native canvas work:
   prefer `canvas.delegate_task`
 - when calling `canvas.delegate_task`, give the worker a detailed, explicit
   canvas-editing prompt rather than a short label or vague goal
+- format the worker prompt in full uppercase only
+- do not use bold, italics, or other markdown emphasis inside the delegated
+  worker prompt
 - make it unmistakable that the instructions are asking the worker to create,
   write, arrange, connect, relayout, or otherwise change content on the canvas
 - include the intended structure, sections, labels, relationships, and layout

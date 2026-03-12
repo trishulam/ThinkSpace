@@ -227,6 +227,32 @@ function normalizeCanvasDelegatePayload(
   };
 }
 
+function normalizeCanvasWorkerText(text: string): string {
+  return text
+    .replace(/[*_`#]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function buildCanvasDelegateWorkerMessages(
+  payload: CanvasDelegatePayload,
+): string[] {
+  const messages = [
+    "MAKE THE REQUESTED CHANGES DIRECTLY ON THE CANVAS NOW. DO NOT JUST DESCRIBE THE TASK. CREATE, WRITE, ARRANGE, CONNECT, RELAYOUT, AND EDIT SHAPES OR TEXT AS NEEDED.",
+    `TASK: ${payload.goal}`,
+  ];
+
+  if (payload.constraints) {
+    messages.push(`CONSTRAINTS: ${payload.constraints}`);
+  }
+  if (payload.teaching_intent) {
+    messages.push(`TEACHING INTENT: ${payload.teaching_intent}`);
+  }
+
+  return messages.map(normalizeCanvasWorkerText).filter(Boolean);
+}
+
 function insertVisualIntoCanvas(
   editor: Editor,
   payload: CanvasInsertVisualPayload,
@@ -639,18 +665,14 @@ export const SessionCanvas: React.FC = () => {
               return;
             }
 
-            const agentMessages = [delegatePayload.goal];
-            if (delegatePayload.constraints) {
-              agentMessages.push(`Constraints: ${delegatePayload.constraints}`);
-            }
-            if (delegatePayload.teaching_intent) {
-              agentMessages.push(`Teaching intent: ${delegatePayload.teaching_intent}`);
-            }
+            const agentMessages = buildCanvasDelegateWorkerMessages(
+              delegatePayload,
+            );
 
             try {
               await canvasAgent.prompt({
                 agentMessages,
-                userMessages: [],
+                userMessages: agentMessages,
                 source: "other-agent",
                 bounds: getDelegateBounds(activeEditor, delegatePayload),
                 contextItems: [],

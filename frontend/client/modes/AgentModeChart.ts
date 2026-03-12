@@ -56,9 +56,10 @@ const _AGENT_MODE_CHART: Record<AgentModeDefinition['type'], AgentModeNode> = {
 		},
 
 		onPromptStart(agent, request) {
-			// Clear created shapes tracking and flush todos when a new user prompt starts
-			// This handles cases where a prompt starts while already in working mode (e.g., continuation, interrupt)
-			if (request.source === 'user') {
+			// Clear created-shape tracking and flush todos when a new external prompt starts.
+			// Requests from another agent should behave like fresh external work too;
+			// only internal self-scheduled continuations should preserve prior state.
+			if (request.source !== 'self') {
 				agent.todos.flush()
 				agent.lints.clearCreatedShapes()
 			}
