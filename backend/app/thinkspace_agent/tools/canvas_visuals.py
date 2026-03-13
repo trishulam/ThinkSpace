@@ -26,7 +26,9 @@ CANVAS_CONTEXT_REQUESTED_ACTION = "canvas.context_requested"
 CANVAS_INSERT_VISUAL_ACTION = "canvas.insert_visual"
 CANVAS_CONTEXT_REQUEST_TIMEOUT_S = 10.0
 SUPPORTED_ASPECT_RATIO_HINTS = ("1:1", "4:3", "3:4", "16:9", "9:16")
+SUPPORTED_GENERATION_MODES = ("quality", "fast")
 AspectRatioHint = Literal["1:1", "4:3", "3:4", "16:9", "9:16"]
+GenerationMode = Literal["quality", "fast"]
 
 
 def _build_frontend_action(
@@ -85,6 +87,7 @@ async def _run_canvas_visual_job(
     job_id: str,
     prompt: str,
     aspect_ratio_hint: str,
+    generation_mode: str,
     placement_hint: str,
     title_hint: str,
     visual_style_hint: str,
@@ -98,6 +101,7 @@ async def _run_canvas_visual_job(
         "inputs": {
             "prompt": prompt,
             "aspect_ratio_hint": aspect_ratio_hint,
+            "generation_mode": generation_mode,
             "placement_hint": placement_hint,
             "title_hint": title_hint,
             "visual_style_hint": visual_style_hint,
@@ -153,6 +157,7 @@ async def _run_canvas_visual_job(
             title_hint=title_hint,
             visual_style_hint=visual_style_hint,
             aspect_ratio_hint=aspect_ratio_hint,
+            generation_mode=generation_mode,
             placement_hint=placement_hint,
             placement_context=placement_context,
         )
@@ -251,6 +256,7 @@ async def _run_canvas_visual_job(
 def canvas_generate_visual(
     prompt: str,
     aspect_ratio_hint: AspectRatioHint,
+    generation_mode: GenerationMode = "quality",
     placement_hint: str = "auto",
     title_hint: str = "",
     visual_style_hint: str = "",
@@ -259,7 +265,8 @@ def canvas_generate_visual(
     """Generate a static teaching visual and insert it into the canvas.
 
     `prompt` should be a full, self-sufficient visual brief. `aspect_ratio_hint`
-    must be one of: `1:1`, `4:3`, `3:4`, `16:9`, or `9:16`.
+    must be one of: `1:1`, `4:3`, `3:4`, `16:9`, or `9:16`. `generation_mode`
+    must be either `quality` or `fast`.
     """
 
     normalized_prompt = prompt.strip()
@@ -285,6 +292,18 @@ def canvas_generate_visual(
             summary=(
                 "Visual generation aspect_ratio_hint must be one of: "
                 f"{supported}"
+            ),
+        )
+
+    normalized_generation_mode = generation_mode.strip().lower()
+    if normalized_generation_mode not in SUPPORTED_GENERATION_MODES:
+        supported_modes = ", ".join(SUPPORTED_GENERATION_MODES)
+        return _build_tool_result(
+            status="failed",
+            tool=CANVAS_GENERATE_VISUAL_TOOL,
+            summary=(
+                "Visual generation generation_mode must be one of: "
+                f"{supported_modes}"
             ),
         )
 
@@ -314,6 +333,7 @@ def canvas_generate_visual(
             job_id=job_id,
             prompt=normalized_prompt,
             aspect_ratio_hint=normalized_aspect_ratio_hint,
+            generation_mode=normalized_generation_mode,
             placement_hint=normalized_placement_hint,
             title_hint=normalized_title_hint,
             visual_style_hint=normalized_style_hint,
@@ -324,6 +344,7 @@ def canvas_generate_visual(
     payload = {
         "prompt": normalized_prompt,
         "aspect_ratio_hint": normalized_aspect_ratio_hint,
+        "generation_mode": normalized_generation_mode,
         "placement_hint": normalized_placement_hint,
     }
     if normalized_title_hint:

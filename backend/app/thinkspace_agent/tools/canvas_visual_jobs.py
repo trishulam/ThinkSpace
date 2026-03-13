@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from thinkspace_agent.tools.canvas_visual_trace import now_iso, summarize_context
 
 from thinkspace_agent.config import (
-    get_canvas_visual_image_model,
+    get_canvas_visual_image_model_for_mode,
     get_canvas_visual_planner_include_screenshot,
     get_canvas_visual_planner_model,
 )
@@ -480,9 +480,11 @@ def _generate_canvas_visual_image(
     title_hint: str,
     visual_style_hint: str,
     aspect_ratio_hint: str,
+    generation_mode: str,
 ) -> dict[str, object]:
     started_at = now_iso()
     started_perf = time.perf_counter()
+    selected_image_model = get_canvas_visual_image_model_for_mode(generation_mode)
     generation_prompt = _build_visual_generation_prompt(
         prompt,
         title_hint=title_hint,
@@ -490,7 +492,7 @@ def _generate_canvas_visual_image(
     )
     client = _build_client()
     response = client.models.generate_content(
-        model=get_canvas_visual_image_model(),
+        model=selected_image_model,
         contents=generation_prompt,
         config=genai_types.GenerateContentConfig(
             response_modalities=["IMAGE", "TEXT"],
@@ -517,7 +519,8 @@ def _generate_canvas_visual_image(
         "caption": caption,
         "mime_type": mime_type,
         "image_trace": {
-            "image_model": get_canvas_visual_image_model(),
+            "generation_mode": generation_mode,
+            "image_model": selected_image_model,
             "started_at": started_at,
             "completed_at": completed_at,
             "duration_ms": max(0, int((time.perf_counter() - started_perf) * 1000)),
@@ -533,6 +536,7 @@ async def generate_canvas_visual_artifact(
     title_hint: str,
     visual_style_hint: str,
     aspect_ratio_hint: str,
+    generation_mode: str,
     placement_hint: str,
     placement_context: dict[str, object],
 ) -> dict[str, object]:
@@ -549,6 +553,7 @@ async def generate_canvas_visual_artifact(
         title_hint=title_hint,
         visual_style_hint=visual_style_hint,
         aspect_ratio_hint=normalized_aspect_ratio,
+        generation_mode=generation_mode,
     )
     placement_task = asyncio.to_thread(
         _plan_canvas_visual_placement,

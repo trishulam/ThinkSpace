@@ -10,7 +10,8 @@ DEFAULT_KEY_MOMENT_MODEL = "gemini-3-flash-preview"
 DEFAULT_SESSION_COMPACTION_MODEL = "gemini-3-flash-preview"
 DEFAULT_CANVAS_INTERPRETER_MODEL = "gemini-3-flash-preview"
 DEFAULT_CANVAS_VISUAL_PLANNER_MODEL = "gemini-2.5-flash"
-DEFAULT_CANVAS_VISUAL_IMAGE_MODEL = "gemini-3.1-flash-image-preview"
+DEFAULT_CANVAS_VISUAL_IMAGE_QUALITY_MODEL = "gemini-3.1-flash-image-preview"
+DEFAULT_CANVAS_VISUAL_IMAGE_FAST_MODEL = "gemini-2.5-flash-image"
 DEFAULT_CANVAS_VISUAL_PLANNER_INCLUDE_SCREENSHOT = False
 
 
@@ -84,7 +85,25 @@ def get_canvas_visual_image_model() -> str:
 
     return os.getenv(
         "THINKSPACE_CANVAS_VISUAL_IMAGE_MODEL",
-        DEFAULT_CANVAS_VISUAL_IMAGE_MODEL,
+        DEFAULT_CANVAS_VISUAL_IMAGE_QUALITY_MODEL,
+    )
+
+
+def get_canvas_visual_image_model_for_mode(generation_mode: str) -> str:
+    """Return the image model used for the requested visual generation mode."""
+
+    normalized_mode = generation_mode.strip().lower()
+    if normalized_mode == "fast":
+        return os.getenv(
+            "THINKSPACE_CANVAS_VISUAL_IMAGE_FAST_MODEL",
+            DEFAULT_CANVAS_VISUAL_IMAGE_FAST_MODEL,
+        )
+    return os.getenv(
+        "THINKSPACE_CANVAS_VISUAL_IMAGE_QUALITY_MODEL",
+        os.getenv(
+            "THINKSPACE_CANVAS_VISUAL_IMAGE_MODEL",
+            DEFAULT_CANVAS_VISUAL_IMAGE_QUALITY_MODEL,
+        ),
     )
 
 

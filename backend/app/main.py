@@ -890,11 +890,36 @@ def _apply_flashcard_ack_state(
 def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
     action_type = ack["action_type"]
     status = ack["status"]
-
-    if action_type != "canvas.insert_visual":
-        return None
+    source_tool = ack.get("source_tool")
 
     if status != "applied":
+        return None
+
+    if (
+        action_type == "canvas.context_requested"
+        and source_tool == CANVAS_GENERATE_VISUAL_TOOL
+    ):
+        return (
+            "The `canvas.generate_visual` job is now visibly in progress in the UI. "
+            "Stay on the same topic while the visual is being prepared. Briefly "
+            "recap, review, ask a light reflective question, or make small "
+            "on-topic conversation, but do not describe the visual as already "
+            "visible or complete."
+        )
+
+    if (
+        action_type == "canvas.delegate_requested"
+        and source_tool == CANVAS_DELEGATE_TASK_TOOL
+    ):
+        return (
+            "The `canvas.delegate_task` job is now visibly in progress in the UI. "
+            "Keep the conversation warm and on-topic while the canvas worker is "
+            "working. You may recap, ask a light reflective question, or make "
+            "small topical conversation, but do not describe the delegated canvas "
+            "result as finished yet."
+        )
+
+    if action_type != "canvas.insert_visual":
         return None
 
     summary = ack.get("summary")
