@@ -157,6 +157,9 @@ class SessionStore(Protocol):
         self, session_id: str, request: CheckpointCreateRequest
     ) -> CheckpointRecord: ...
     def get_latest_checkpoint(self, session_id: str) -> CheckpointRecord | None: ...
+    def get_latest_semantic_checkpoint(
+        self, session_id: str
+    ) -> CheckpointRecord | None: ...
     def complete_session(self, session_id: str) -> SessionRecord: ...
     def create_turn(
         self, session_id: str, request: TranscriptTurnRecord
@@ -246,6 +249,20 @@ class InMemorySessionStore:
             if checkpoint.document or checkpoint.session or checkpoint.checkpoint_type != "semantic":
                 return checkpoint
         return checkpoints[-1] if checkpoints else None
+
+    def get_latest_semantic_checkpoint(self, session_id: str) -> CheckpointRecord | None:
+        checkpoints = self._checkpoints.get(session_id, [])
+        for checkpoint in reversed(checkpoints):
+            if checkpoint.checkpoint_type != "semantic":
+                continue
+            if (
+                checkpoint.payload
+                and isinstance(checkpoint.payload, dict)
+                and checkpoint.payload.get("kind") not in {None, "session_compaction"}
+            ):
+                continue
+            return checkpoint
+        return None
 
     def complete_session(self, session_id: str) -> SessionRecord:
         session = self.get_session(session_id)
@@ -449,6 +466,28 @@ class FirestoreSessionStore:
         return self._hydrate_checkpoint(
             CheckpointRecord.model_validate(checkpoints[0].to_dict() or {})
         )
+
+    def get_latest_semantic_checkpoint(self, session_id: str) -> CheckpointRecord | None:
+        checkpoints = list(
+            self._sessions.document(session_id)
+            .collection("checkpoints")
+            .order_by("version", direction=firestore.Query.DESCENDING)
+            .stream()
+        )
+        for snapshot in checkpoints:
+            checkpoint = self._hydrate_checkpoint(
+                CheckpointRecord.model_validate(snapshot.to_dict() or {})
+            )
+            if checkpoint.checkpoint_type != "semantic":
+                continue
+            if (
+                checkpoint.payload
+                and isinstance(checkpoint.payload, dict)
+                and checkpoint.payload.get("kind") not in {None, "session_compaction"}
+            ):
+                continue
+            return checkpoint
+        return None
 
     def complete_session(self, session_id: str) -> SessionRecord:
         session = self.get_session(session_id)

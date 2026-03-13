@@ -303,7 +303,7 @@ Goal:
 Implementation direction:
 
 - maintain active windows over the Phase 1 event stream
-- soft trigger after `2-3s` inactivity
+- soft trigger after `2s` inactivity
 - hard trigger after about `15s`
 - allow only one interpreter job at a time
 - if new changes happen while an interpreter job is running:
@@ -323,6 +323,10 @@ Why this phase matters:
 
 - this becomes the trigger boundary for the interpreter
 
+Status:
+
+- implemented
+
 ### Phase 6: Compacted Lesson And Session Context
 
 Goal:
@@ -333,7 +337,15 @@ Implementation direction:
 
 - keep full transcript turns in persistent storage
 - maintain a rolling semantic lesson/session summary
+- use `SessionRecord.summary` as the human-readable mirror of the rolling
+  compacted summary
+- keep compaction cursor/state in semantic checkpoint payload, not in
+  `SessionRecord.summary` alone
 - keep only a recent relevant raw transcript window alongside that summary
+- use this threshold policy:
+  - keep up to `10` finalized turns raw before the first compaction
+  - after compaction, keep the newest `5` raw turns
+  - recompact once the raw suffix grows back to `10` turns
 - periodically compact older turns into the semantic summary
 
 Use existing seams:
@@ -354,6 +366,11 @@ Interpreter context should include:
 Important rule:
 
 - do not replay the full raw transcript every time
+- do not use ADK conversation memory as the source of truth for compaction
+
+Status:
+
+- implemented
 
 ### Phase 7: Interpreter Input Builder
 
@@ -364,17 +381,30 @@ Goal:
 Implementation direction:
 
 - combine:
-  - previous interpreter summary
+  - previous interpreter summary stub
   - current activity window
-  - current canvas snapshot/context
-  - selected/focused region if relevant
-  - tutor provenance metadata
+  - latest cached canvas snapshot/context
+  - tutor provenance-aware canvas data carried by the window/context
   - compacted lesson/session context
   - recent relevant transcript
-  - optional previous canvas screenshot/summary for comparison
+  - lesson topic/goal metadata
+  - learning objective stub for now
+- receive closed canvas activity windows from the frontend over a dedicated
+  websocket message
+- assemble the packet on the backend
+- store the latest packet per session for Phase 8 and debugging
+- expose the latest packet through the existing debug seam
+
+Important rule:
+
+- build the packet only; do not run reasoning or send `send_content()` yet
 
 This is the point where the older digest concept becomes a full interpreter
 input rather than just a change summary.
+
+Status:
+
+- implemented
 
 ### Phase 8: Canvas Interpreter Reasoning Step
 
@@ -386,22 +416,34 @@ Implementation direction:
 
 - run an asynchronous interpreter reasoning step over the Phase 7 packet
 - expect structured output, not free-form prose
+- require the latest cached screenshot as mandatory visual grounding
+- start reasoning immediately for every eligible latest packet
+- apply latest-packet-wins when newer windows supersede older in-flight runs
+- write one persistent trace per reasoning run under
+  `backend/app/debug_traces/interpreter_reasoning/`
 
-Recommended structured output:
+Locked structured output:
 
-- current canvas state summary
-- meaningful user changes
-- meaningful tutor changes
-- learner progress signals
-- learner misunderstanding or omission signals
-- suggested next pedagogical direction
-- proactive candidate
-- confidence
-- steering/context to pass to the orchestrator
+- `status`
+- `run_id`
+- `packet_window_id`
+- `reasoning_model`
+- `canvas_change_summary`
+- `learner_state`
+- `pedagogical_interpretation`
+- `proactivity`
+- `steering`
+- `confidence`
+- `safety_flags`
 
 Important rule:
 
 - this is pedagogical interpretation, not just summarization
+- do not call `send_content()` yet in this phase
+
+Status:
+
+- implemented
 
 ### Phase 9: Interpreter-To-Orchestrator Delivery
 
@@ -461,9 +503,24 @@ Implementation direction:
   - snapshot references
   - reasoning prompt/model
   - structured interpreter output
-  - whether it triggered `send_content()`
-  - whether it paired `send_realtime()`
-- add lightweight sidebar/system summaries for interpreter lifecycle
+  - whether it triggered `send_content()` (`not_applicable` in this phase)
+  - whether it paired `send_realtime()` (`not_applicable` in this phase)
+- add a subtle below-the-notch cue for interpreter lifecycle
+- cue meaning:
+  - the tutor is understanding progress from the learner's latest canvas work
+  - the tutor is quietly steering the lesson
+- cue behavior:
+  - visible to all users by default
+  - start copy: `Understanding your progress`
+  - start message: `Using your latest canvas work to guide the lesson`
+  - success clears quietly
+  - failure shows a subtle short-lived error state
+- keep trace files as the durable review source of truth for now
+- keep latest in-memory interpreter state exposed through the existing debug seam
+
+Status:
+
+- implemented
 
 ## Recommended Build Order
 

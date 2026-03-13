@@ -16,8 +16,11 @@ from google.genai import Client
 from google.genai import types as genai_types
 from pydantic import BaseModel, ConfigDict, Field
 
-from session_store import SessionRecord, TranscriptEntryRecord, TranscriptTurnRecord
+from session_store import SessionRecord, TranscriptTurnRecord
 from thinkspace_agent.config import get_key_moment_generation_model
+from thinkspace_agent.context.session_compaction import (
+    build_finalized_transcript_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -193,20 +196,6 @@ def _build_client() -> Client:
     return Client(api_key=api_key) if api_key else Client()
 
 
-def _find_last_entry(
-    entries: list[TranscriptEntryRecord],
-    *,
-    entry_type: str,
-) -> TranscriptEntryRecord | None:
-    for entry in reversed(entries):
-        if entry.type != entry_type or entry.is_partial:
-            continue
-        if not entry.content.strip():
-            continue
-        return entry
-    return None
-
-
 def preprocess_session_transcript(
     *,
     session: SessionRecord,
@@ -214,35 +203,20 @@ def preprocess_session_transcript(
 ) -> PreprocessedTranscriptPayload:
     """Reduce the persisted transcript into turn-level LLM input."""
 
-    turns: list[PreprocessedTranscriptTurn] = []
-    for turn in transcript:
-        user_entry = _find_last_entry(turn.entries, entry_type="user-transcription")
-        agent_entry = _find_last_entry(turn.entries, entry_type="agent-text")
-        if user_entry is None and agent_entry is None:
-            continue
-
-        start_timestamp = (
-            user_entry.timestamp
-            if user_entry is not None
-            else agent_entry.timestamp
-            if agent_entry is not None
-            else turn.completed_at
+    finalized_payload = build_finalized_transcript_payload(
+        session=session,
+        transcript=transcript,
+    )
+    turns = [
+        PreprocessedTranscriptTurn(
+            turn_id=turn.turn_id,
+            turn_sequence=turn.turn_sequence,
+            start_timestamp=turn.start_timestamp,
+            user_text=turn.user_text,
+            agent_text=turn.agent_text,
         )
-        turns.append(
-            PreprocessedTranscriptTurn(
-                turn_id=turn.turn_id,
-                turn_sequence=turn.sequence,
-                start_timestamp=start_timestamp,
-                user_text=(
-                    _normalize_text(user_entry.content) if user_entry is not None else None
-                ),
-                agent_text=(
-                    _normalize_text(agent_entry.content)
-                    if agent_entry is not None
-                    else None
-                ),
-            )
-        )
+        for turn in finalized_payload.turns
+    ]
 
     if not turns:
         raise ValueError("Transcript does not contain any final user/agent entries")

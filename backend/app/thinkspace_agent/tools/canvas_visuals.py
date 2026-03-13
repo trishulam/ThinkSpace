@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
+from typing import Literal
 from uuid import uuid4
 
 from google.adk.tools import LongRunningFunctionTool, ToolContext
@@ -23,6 +25,8 @@ CANVAS_JOB_STARTED_ACTION = "canvas.job_started"
 CANVAS_CONTEXT_REQUESTED_ACTION = "canvas.context_requested"
 CANVAS_INSERT_VISUAL_ACTION = "canvas.insert_visual"
 CANVAS_CONTEXT_REQUEST_TIMEOUT_S = 10.0
+SUPPORTED_ASPECT_RATIO_HINTS = ("1:1", "4:3", "3:4", "16:9", "9:16")
+AspectRatioHint = Literal["1:1", "4:3", "3:4", "16:9", "9:16"]
 
 
 def _build_frontend_action(
@@ -85,6 +89,7 @@ async def _run_canvas_visual_job(
     title_hint: str,
     visual_style_hint: str,
 ) -> None:
+    job_started_perf = time.perf_counter()
     trace: dict[str, object] = {
         "job_id": job_id,
         "tool": CANVAS_GENERATE_VISUAL_TOOL,
@@ -98,12 +103,15 @@ async def _run_canvas_visual_job(
             "visual_style_hint": visual_style_hint,
         },
         "context_summary": None,
+        "context_wait": None,
+        "artifact_generation": None,
         "placement_planner": None,
         "image_generator": None,
         "final_result": None,
         "errors": None,
     }
     try:
+        context_wait_started_perf = time.perf_counter()
         context_request_started_at = now_iso()
         trace["context_request_started_at"] = context_request_started_at
         placement_context = await canvas_context_request_store.wait_for_response(
@@ -114,6 +122,13 @@ async def _run_canvas_visual_job(
         )
         context_response_received_at = now_iso()
         trace["context_response_received_at"] = context_response_received_at
+        trace["context_wait"] = {
+            "started_at": context_request_started_at,
+            "completed_at": context_response_received_at,
+            "duration_ms": max(
+                0, int((time.perf_counter() - context_wait_started_perf) * 1000)
+            ),
+        }
         context_summary = summarize_context(placement_context) or {}
         context_summary["request_started_at"] = context_request_started_at
         context_summary["response_received_at"] = context_response_received_at
@@ -132,6 +147,7 @@ async def _run_canvas_visual_job(
                 pass
         trace["context_summary"] = context_summary
 
+        artifact_generation_started_at = now_iso()
         artifact_payload = await generate_canvas_visual_artifact(
             prompt,
             title_hint=title_hint,
@@ -140,6 +156,16 @@ async def _run_canvas_visual_job(
             placement_hint=placement_hint,
             placement_context=placement_context,
         )
+        artifact_generation_timing = artifact_payload.get("artifact_timing")
+        if isinstance(artifact_generation_timing, dict):
+            trace["artifact_generation"] = artifact_generation_timing
+        else:
+            artifact_generation_completed_at = now_iso()
+            trace["artifact_generation"] = {
+                "started_at": artifact_generation_started_at,
+                "completed_at": artifact_generation_completed_at,
+                "duration_ms": None,
+            }
         trace["placement_planner"] = artifact_payload.get("planner_trace")
         trace["image_generator"] = artifact_payload.get("image_trace")
         result = _build_tool_result(
@@ -204,6 +230,9 @@ async def _run_canvas_visual_job(
         )
     finally:
         trace["completed_at"] = now_iso()
+        trace["total_duration_ms"] = max(
+            0, int((time.perf_counter() - job_started_perf) * 1000)
+        )
         trace_path = write_generate_visual_trace(job_id, trace)
         logger.info("Wrote canvas.generate_visual trace: %s", trace_path)
 
@@ -221,13 +250,17 @@ async def _run_canvas_visual_job(
 
 def canvas_generate_visual(
     prompt: str,
-    aspect_ratio_hint: str,
+    aspect_ratio_hint: AspectRatioHint,
     placement_hint: str = "auto",
     title_hint: str = "",
     visual_style_hint: str = "",
     tool_context: ToolContext | None = None,
 ) -> dict[str, object]:
-    """Generate a static teaching visual and insert it into the canvas."""
+    """Generate a static teaching visual and insert it into the canvas.
+
+    `prompt` should be a full, self-sufficient visual brief. `aspect_ratio_hint`
+    must be one of: `1:1`, `4:3`, `3:4`, `16:9`, or `9:16`.
+    """
 
     normalized_prompt = prompt.strip()
     if not normalized_prompt:
@@ -243,6 +276,16 @@ def canvas_generate_visual(
             status="failed",
             tool=CANVAS_GENERATE_VISUAL_TOOL,
             summary="Visual generation requires an aspect_ratio_hint",
+        )
+    if normalized_aspect_ratio_hint not in SUPPORTED_ASPECT_RATIO_HINTS:
+        supported = ", ".join(SUPPORTED_ASPECT_RATIO_HINTS)
+        return _build_tool_result(
+            status="failed",
+            tool=CANVAS_GENERATE_VISUAL_TOOL,
+            summary=(
+                "Visual generation aspect_ratio_hint must be one of: "
+                f"{supported}"
+            ),
         )
 
     normalized_placement_hint = placement_hint.strip() or "auto"

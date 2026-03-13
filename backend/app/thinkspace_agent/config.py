@@ -5,10 +5,25 @@ from __future__ import annotations
 import os
 
 DEFAULT_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
-DEFAULT_FLASHCARD_MODEL = "gemini-2.5-flash"
-DEFAULT_KEY_MOMENT_MODEL = "gemini-2.5-flash"
+DEFAULT_FLASHCARD_MODEL = "gemini-3-flash-preview"
+DEFAULT_KEY_MOMENT_MODEL = "gemini-3-flash-preview"
+DEFAULT_SESSION_COMPACTION_MODEL = "gemini-3-flash-preview"
+DEFAULT_CANVAS_INTERPRETER_MODEL = "gemini-3-flash-preview"
 DEFAULT_CANVAS_VISUAL_PLANNER_MODEL = "gemini-2.5-flash"
-DEFAULT_CANVAS_VISUAL_IMAGE_MODEL = "gemini-2.5-flash-image"
+DEFAULT_CANVAS_VISUAL_IMAGE_MODEL = "gemini-3.1-flash-image-preview"
+DEFAULT_CANVAS_VISUAL_PLANNER_INCLUDE_SCREENSHOT = False
+
+
+def _get_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def get_agent_model() -> str:
@@ -37,6 +52,24 @@ def get_key_moment_generation_model() -> str:
     return os.getenv("THINKSPACE_KEY_MOMENT_MODEL", DEFAULT_KEY_MOMENT_MODEL)
 
 
+def get_session_compaction_model() -> str:
+    """Return the model used to maintain the rolling session summary."""
+
+    return os.getenv(
+        "THINKSPACE_SESSION_COMPACTION_MODEL",
+        DEFAULT_SESSION_COMPACTION_MODEL,
+    )
+
+
+def get_canvas_interpreter_model() -> str:
+    """Return the model used by the canvas interpreter reasoning step."""
+
+    return os.getenv(
+        "THINKSPACE_CANVAS_INTERPRETER_MODEL",
+        DEFAULT_CANVAS_INTERPRETER_MODEL,
+    )
+
+
 def get_canvas_visual_planner_model() -> str:
     """Return the model used to plan static canvas visuals."""
 
@@ -52,4 +85,13 @@ def get_canvas_visual_image_model() -> str:
     return os.getenv(
         "THINKSPACE_CANVAS_VISUAL_IMAGE_MODEL",
         DEFAULT_CANVAS_VISUAL_IMAGE_MODEL,
+    )
+
+
+def get_canvas_visual_planner_include_screenshot() -> bool:
+    """Return whether planner requests should include a viewport screenshot."""
+
+    return _get_bool_env(
+        "THINKSPACE_CANVAS_VISUAL_PLANNER_INCLUDE_SCREENSHOT",
+        DEFAULT_CANVAS_VISUAL_PLANNER_INCLUDE_SCREENSHOT,
     )

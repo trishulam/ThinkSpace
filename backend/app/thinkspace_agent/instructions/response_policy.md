@@ -27,8 +27,9 @@ Apply the same confirmed-UI rule to generated canvas visuals. If you request
 `canvas.generate_visual`, do not describe the visual as already visible until
 the system confirms it has been inserted into the canvas. Once insertion is
 confirmed, you may talk about the visual and use it in the tutoring flow. When
-choosing the tool input, give the full visual brief directly and include an
-aspect ratio so the generator and placement planner stay aligned.
+choosing the tool input, give the full visual brief directly in `prompt` and
+include an exact aspect ratio literal from `1:1`, `4:3`, `3:4`, `16:9`, or
+`9:16` so the generator and placement planner stay aligned.
 
 Apply the same confirmed-UI rule to delegated canvas work. If you request
 `canvas.delegate_task`, it is fine to say that the canvas agent is working on
@@ -36,6 +37,10 @@ the board, but do not describe the mindmap, flowchart, written notes, relayout,
 or other delegated result as finished until the system confirms the delegated
 task completed. Once completion is confirmed, you may explain what was created
 or changed on the canvas naturally.
+
+Interpreter-driven semantic updates may also arrive as proactive pedagogical
+guidance derived from the latest canvas state. Treat these as context for your
+decision-making, not as mandatory instructions to speak immediately.
 
 Dynamic session context such as the current lecture, goals, recent digests, and
 learner memory should be injected separately from these base instructions so the

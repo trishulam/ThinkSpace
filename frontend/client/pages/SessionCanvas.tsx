@@ -53,6 +53,10 @@ import {
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useAudioWorklets } from "../hooks/useAudioWorklets";
 import { useSessionRecording } from "../hooks/useSessionRecording";
+import {
+  CanvasActivityWindowManager,
+  type CanvasActivityWindow,
+} from "../canvasActivityWindow";
 import { buildCanvasPlacementPlannerContext } from "../canvasPlacementPlannerContext";
 import { CanvasChangeTracker } from "../canvasChangeTracker";
 import {
@@ -63,6 +67,7 @@ import type { AgentLogEntry } from "../types/agent-live";
 import type {
   ConnectionState,
   FrontendAction,
+  InterpreterLifecyclePayload,
   TalkingState,
 } from "../types/agent-live";
 
@@ -285,6 +290,50 @@ function normalizeCanvasJobToastPayload(
   };
 }
 
+function normalizeInterpreterLifecyclePayload(
+  payload: unknown,
+): InterpreterLifecyclePayload | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const state = payload.state;
+  const runId = payload.run_id;
+  const packetWindowId = payload.packet_window_id;
+
+  if (
+    (state !== "started" && state !== "completed" && state !== "failed") ||
+    typeof runId !== "string" ||
+    !runId.trim() ||
+    typeof packetWindowId !== "string" ||
+    !packetWindowId.trim()
+  ) {
+    return null;
+  }
+
+  return {
+    state,
+    run_id: runId.trim(),
+    packet_window_id: packetWindowId.trim(),
+    title:
+      typeof payload.title === "string" && payload.title.trim()
+        ? payload.title.trim()
+        : undefined,
+    message:
+      typeof payload.message === "string" && payload.message.trim()
+        ? payload.message.trim()
+        : undefined,
+    trace_file:
+      typeof payload.trace_file === "string" && payload.trace_file.trim()
+        ? payload.trace_file.trim()
+        : undefined,
+    error:
+      typeof payload.error === "string" && payload.error.trim()
+        ? payload.error.trim()
+        : undefined,
+  };
+}
+
 function normalizeCanvasDelegatePayload(
   payload: unknown,
 ): CanvasDelegatePayload | null {
@@ -498,11 +547,15 @@ export const SessionCanvas: React.FC = () => {
   const [resolvedUserId, setResolvedUserId] = useState("demo-user");
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const canvasChangeTrackerRef = useRef<CanvasChangeTracker | null>(null);
+  const canvasActivityWindowManagerRef =
+    useRef<CanvasActivityWindowManager | null>(null);
   const hasLoadedRemoteSnapshotRef = useRef(false);
   const isSavingCheckpointRef = useRef(false);
   const [flashcardState, setFlashcardState] =
     useState<FlashcardState>(EMPTY_FLASHCARD_STATE);
   const [canvasJobToast, setCanvasJobToast] =
+    useState<CanvasJobToastState | null>(null);
+  const [interpreterToast, setInterpreterToast] =
     useState<CanvasJobToastState | null>(null);
   const flashcardStateRef = useRef<FlashcardState>(EMPTY_FLASHCARD_STATE);
   const autoRecordingAttemptedRef = useRef(false);
@@ -510,6 +563,8 @@ export const SessionCanvas: React.FC = () => {
     null,
   );
   const canvasToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const interpreterToastTimerRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
   const processedFlashcardActionKeyRef = useRef<string | null>(null);
 
   // Temporary testing state for Dynamic Island
@@ -520,6 +575,10 @@ export const SessionCanvas: React.FC = () => {
 
   const handleUnmount = useCallback(() => {
     setApp(null);
+  }, []);
+
+  const setCanvasActivityWindowHold = useCallback((active: boolean) => {
+    canvasActivityWindowManagerRef.current?.setExternalHold(active);
   }, []);
 
   const saveCheckpoint = useCallback(
@@ -620,24 +679,51 @@ export const SessionCanvas: React.FC = () => {
     tracker.start();
     canvasChangeTrackerRef.current = tracker;
 
+    const activityWindowManager = new CanvasActivityWindowManager(tracker, {
+      onWindowReady: async (window: CanvasActivityWindow) => {
+        if (import.meta.env.DEV) {
+          console.debug("Canvas activity window ready", window);
+        }
+        ws.sendCanvasActivityWindow({
+          type: "canvas_activity_window",
+          window,
+        });
+      },
+    });
+    activityWindowManager.start();
+    canvasActivityWindowManagerRef.current = activityWindowManager;
+
     if (import.meta.env.DEV) {
       const debugWindow = window as typeof window & {
         __thinkspaceCanvasChangeTracker?: CanvasChangeTracker;
+        __thinkspaceCanvasActivityWindowManager?: CanvasActivityWindowManager;
       };
       debugWindow.__thinkspaceCanvasChangeTracker = tracker;
+      debugWindow.__thinkspaceCanvasActivityWindowManager = activityWindowManager;
     }
 
     return () => {
+      activityWindowManager.stop();
       tracker.stop();
       if (canvasChangeTrackerRef.current === tracker) {
         canvasChangeTrackerRef.current = null;
       }
+      if (canvasActivityWindowManagerRef.current === activityWindowManager) {
+        canvasActivityWindowManagerRef.current = null;
+      }
       if (import.meta.env.DEV) {
         const debugWindow = window as typeof window & {
           __thinkspaceCanvasChangeTracker?: CanvasChangeTracker;
+          __thinkspaceCanvasActivityWindowManager?: CanvasActivityWindowManager;
         };
         if (debugWindow.__thinkspaceCanvasChangeTracker === tracker) {
           delete debugWindow.__thinkspaceCanvasChangeTracker;
+        }
+        if (
+          debugWindow.__thinkspaceCanvasActivityWindowManager ===
+          activityWindowManager
+        ) {
+          delete debugWindow.__thinkspaceCanvasActivityWindowManager;
         }
       }
     };
@@ -700,6 +786,7 @@ export const SessionCanvas: React.FC = () => {
       try {
         await saveCheckpoint("disconnect", "frontend_manual");
         await stopRecordingIfNeeded();
+        canvasActivityWindowManagerRef.current?.flush("manual");
         ws.disconnect();
         navigate("/dashboard");
       } catch (error) {
@@ -724,6 +811,7 @@ export const SessionCanvas: React.FC = () => {
       try {
         await saveCheckpoint("complete", "frontend_manual");
         await stopRecordingIfNeeded();
+        canvasActivityWindowManagerRef.current?.flush("manual");
         ws.disconnect();
         await finalizeSessionRecordings(sessionId);
         await completeSession(sessionId);
@@ -784,6 +872,40 @@ export const SessionCanvas: React.FC = () => {
     [clearCanvasToastTimer],
   );
 
+  const clearInterpreterToastTimer = useCallback(() => {
+    if (interpreterToastTimerRef.current) {
+      clearTimeout(interpreterToastTimerRef.current);
+      interpreterToastTimerRef.current = null;
+    }
+  }, []);
+
+  const clearInterpreterToast = useCallback(
+    (jobId?: string) => {
+      clearInterpreterToastTimer();
+      setInterpreterToast((current) =>
+        !jobId || current?.jobId === jobId ? null : current,
+      );
+    },
+    [clearInterpreterToastTimer],
+  );
+
+  const showInterpreterToast = useCallback(
+    (nextToast: CanvasJobToastState, autoDismissMs?: number) => {
+      clearInterpreterToastTimer();
+      setInterpreterToast(nextToast);
+
+      if (autoDismissMs && autoDismissMs > 0) {
+        interpreterToastTimerRef.current = setTimeout(() => {
+          setInterpreterToast((current) =>
+            current?.jobId === nextToast.jobId ? null : current,
+          );
+          interpreterToastTimerRef.current = null;
+        }, autoDismissMs);
+      }
+    },
+    [clearInterpreterToastTimer],
+  );
+
   const handleFrontendAction = useCallback(
     (action: FrontendAction) => {
       switch (action.type) {
@@ -818,8 +940,11 @@ export const SessionCanvas: React.FC = () => {
         }
         case "canvas.context_requested":
         case "canvas.viewport_snapshot_requested": {
+          const isInterpreterSnapshotRequest =
+            action.type === "canvas.viewport_snapshot_requested" &&
+            action.source_tool === "canvas.interpreter_reasoning";
           const toastPayload = normalizeCanvasJobToastPayload(action.payload);
-          if (!toastPayload) {
+          if (!isInterpreterSnapshotRequest && !toastPayload) {
             ws.sendFrontendAck({
               status: "failed",
               action_type: action.type,
@@ -830,13 +955,15 @@ export const SessionCanvas: React.FC = () => {
             return;
           }
 
-          showCanvasToast({
-            jobId: action.job_id,
-            title: toastPayload.title,
-            message: toastPayload.message,
-            severity: "info",
-            isLoading: true,
-          });
+          if (!isInterpreterSnapshotRequest && toastPayload) {
+            showCanvasToast({
+              jobId: action.job_id,
+              title: toastPayload.title,
+              message: toastPayload.message,
+              severity: "info",
+              isLoading: true,
+            });
+          }
 
           if (!editor) {
             ws.sendFrontendAck({
@@ -875,7 +1002,9 @@ export const SessionCanvas: React.FC = () => {
                 action_type: action.type,
                 source_tool: action.source_tool,
                 job_id: jobId,
-                summary: "Fresh canvas context captured and returned",
+                summary: isInterpreterSnapshotRequest
+                  ? "Fresh interpreter canvas context captured and returned"
+                  : "Fresh canvas context captured and returned",
               });
             } catch (error) {
               console.error("Failed to build fresh canvas context", error);
@@ -977,6 +1106,7 @@ export const SessionCanvas: React.FC = () => {
               return;
             }
 
+            setCanvasActivityWindowHold(true);
             const agentMessages = buildCanvasDelegateWorkerMessages(
               delegatePayload,
             );
@@ -1060,6 +1190,8 @@ export const SessionCanvas: React.FC = () => {
                 status: "failed",
                 error: message,
               });
+            } finally {
+              setCanvasActivityWindowHold(false);
             }
           })();
           return;
@@ -1150,6 +1282,74 @@ export const SessionCanvas: React.FC = () => {
           });
           return;
         }
+        case "interpreter.lifecycle": {
+          const lifecyclePayload = normalizeInterpreterLifecyclePayload(action.payload);
+          if (!lifecyclePayload) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Invalid interpreter lifecycle payload",
+            });
+            return;
+          }
+
+          const jobId = action.job_id ?? lifecyclePayload.run_id;
+          if (lifecyclePayload.state === "started") {
+            showInterpreterToast({
+              jobId,
+              title: lifecyclePayload.title ?? "Understanding your progress",
+              message:
+                lifecyclePayload.message ??
+                "Using your latest canvas work to guide the lesson",
+              severity: "info",
+              isLoading: true,
+            });
+            ws.sendFrontendAck({
+              status: "applied",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: jobId,
+              summary: "Interpreter progress cue shown",
+            });
+            return;
+          }
+
+          if (lifecyclePayload.state === "completed") {
+            clearInterpreterToast(jobId);
+            ws.sendFrontendAck({
+              status: "applied",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: jobId,
+              summary: "Interpreter progress cue cleared",
+            });
+            return;
+          }
+
+          showInterpreterToast(
+            {
+              jobId,
+              title:
+                lifecyclePayload.title ?? "Couldn't read the latest canvas change",
+              message:
+                lifecyclePayload.message ??
+                "The tutor could not interpret the latest update just now",
+              severity: "error",
+              isLoading: false,
+            },
+            CANVAS_ERROR_TOAST_VISIBLE_MS,
+          );
+          ws.sendFrontendAck({
+            status: "applied",
+            action_type: action.type,
+            source_tool: action.source_tool,
+            job_id: jobId,
+            summary: "Interpreter failure cue shown",
+          });
+          return;
+        }
         default:
           ws.sendFrontendAck({
             status: "failed",
@@ -1164,9 +1364,11 @@ export const SessionCanvas: React.FC = () => {
       app,
       applyFrontendFlashcardState,
       clearCanvasToast,
+      clearInterpreterToast,
       editor,
       sendFocusedScreenshot,
       showCanvasToast,
+      showInterpreterToast,
       ws,
     ],
   );
@@ -1293,6 +1495,10 @@ export const SessionCanvas: React.FC = () => {
       if (canvasToastTimerRef.current) {
         clearTimeout(canvasToastTimerRef.current);
         canvasToastTimerRef.current = null;
+      }
+      if (interpreterToastTimerRef.current) {
+        clearTimeout(interpreterToastTimerRef.current);
+        interpreterToastTimerRef.current = null;
       }
       processedFlashcardActionKeyRef.current = null;
     };
@@ -1495,7 +1701,7 @@ export const SessionCanvas: React.FC = () => {
       <DynamicIsland
         connectionState={ws.connectionState}
         talkingState={ws.talkingState}
-        status={canvasJobToast}
+        status={canvasJobToast ?? interpreterToast}
       />
     </>
   );

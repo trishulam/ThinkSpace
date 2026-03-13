@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
 	AgentLogEntry,
+	CanvasActivityWindowMessage,
 	AgentSubtitleState,
 	CanvasContextResponseMessage,
 	CanvasDelegateResultMessage,
@@ -641,6 +642,20 @@ export function useAgentWebSocket({
 		[addLogEntry]
 	)
 
+	const sendCanvasActivityWindow = useCallback(
+		(message: CanvasActivityWindowMessage) => {
+			if (wsRef.current?.readyState !== WebSocket.OPEN) return
+			const payload = JSON.stringify(message)
+			wsRef.current.send(payload)
+			addLogEntry(
+				'system',
+				`Sent canvas activity window ${message.window.id} (${message.window.close_reason})`,
+				payload
+			)
+		},
+		[addLogEntry]
+	)
+
 	const sendAudioChunk = useCallback((data: ArrayBuffer) => {
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
 			wsRef.current.send(data)
@@ -670,6 +685,7 @@ export function useAgentWebSocket({
 		sendCanvasContext,
 		sendCanvasContextResponse,
 		sendCanvasDelegateResult,
+		sendCanvasActivityWindow,
 		sendAudioChunk,
 		sendFrontendAck,
 		clearLog,

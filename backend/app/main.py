@@ -61,6 +61,9 @@ from thinkspace_agent.agent import agent  # noqa: E402
 from thinkspace_agent.tools.canvas_visual_jobs import (  # noqa: E402
     canvas_visual_job_outbox,
 )
+from thinkspace_agent.tools.canvas_visuals import (  # noqa: E402
+    CANVAS_GENERATE_VISUAL_TOOL,
+)
 from thinkspace_agent.tools.canvas_delegate import (  # noqa: E402
     CANVAS_DELEGATE_TASK_TOOL,
 )
@@ -70,6 +73,7 @@ from thinkspace_agent.tools.canvas_delegate_jobs import (  # noqa: E402
     publish_canvas_delegate_job_result,
 )
 from thinkspace_agent.tools.canvas_snapshot import (  # noqa: E402
+    CANVAS_VIEWPORT_SNAPSHOT_REQUESTED_ACTION,
     CanvasSnapshotSessionBridge,
     canvas_snapshot_session_bridge_store,
 )
@@ -82,6 +86,28 @@ from thinkspace_agent.tools.canvas_context_store import (  # noqa: E402
 from thinkspace_agent.tools.flashcard_jobs import (  # noqa: E402
     flashcard_job_outbox,
     flashcard_session_store,
+)
+from thinkspace_agent.tools.flashcards import (  # noqa: E402
+    FLASHCARDS_CREATE_TOOL,
+)
+from thinkspace_agent.context.session_compaction import (  # noqa: E402
+    build_compacted_session_context,
+)
+from thinkspace_agent.context.interpreter_packet import (  # noqa: E402
+    InterpreterCanvasWindow,
+    build_interpreter_input_packet,
+    interpreter_packet_store,
+)
+from thinkspace_agent.context.interpreter_reasoning import (  # noqa: E402
+    interpreter_reasoning_store,
+)
+from thinkspace_agent.context.interpreter_snapshot_jobs import (  # noqa: E402
+    PendingInterpreterSnapshotJob,
+    interpreter_snapshot_job_store,
+)
+from thinkspace_agent.context.interpreter_reasoning_trace import (  # noqa: E402
+    now_iso as interpreter_trace_now_iso,
+    update_interpreter_reasoning_trace,
 )
 
 def _configure_logging() -> None:
@@ -146,6 +172,12 @@ CONVERSATION_MEMORY_STATE_KEY = "conversation_memory"
 LAST_USER_MESSAGE_STATE_KEY = "last_user_message"
 LAST_AGENT_MESSAGE_STATE_KEY = "last_agent_message"
 MAX_CONVERSATION_MEMORY_CHARS = 24_000
+INTERPRETER_LIFECYCLE_ACTION = "interpreter.lifecycle"
+INTERPRETER_REASONING_SOURCE_TOOL = "canvas.interpreter_reasoning"
+INTERPRETER_DELIVERY_AGENT_QUIET_S = 1.0
+INTERPRETER_DELIVERY_USER_SPEECH_STALE_S = 1.0
+INTERPRETER_DELIVERY_AGENT_SPEECH_STALE_S = 1.0
+INTERPRETER_DELIVERY_COOLDOWN_S = 15.0
 
 
 def _get_latest_invocation_id(events: list[object]) -> str | None:
@@ -692,6 +724,49 @@ def _build_tool_result_message(result: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _build_interpreter_lifecycle_action(
+    lifecycle_event: dict[str, object],
+) -> dict[str, object] | None:
+    state = lifecycle_event.get("state")
+    run_id = lifecycle_event.get("run_id")
+    packet_window_id = lifecycle_event.get("packet_window_id")
+    trace_file = lifecycle_event.get("trace_file")
+    error = lifecycle_event.get("error")
+
+    if (
+        not isinstance(state, str)
+        or not isinstance(run_id, str)
+        or not run_id.strip()
+        or not isinstance(packet_window_id, str)
+        or not packet_window_id.strip()
+    ):
+        return None
+
+    payload: dict[str, object] = {
+        "state": state,
+        "run_id": run_id,
+        "packet_window_id": packet_window_id,
+    }
+    if isinstance(trace_file, str) and trace_file.strip():
+        payload["trace_file"] = trace_file
+    if isinstance(error, str) and error.strip():
+        payload["error"] = error.strip()
+
+    if state == "started":
+        payload["title"] = "Understanding your progress"
+        payload["message"] = "Using your latest canvas work to guide the lesson"
+    elif state == "failed":
+        payload["title"] = "Couldn't read the latest canvas change"
+        payload["message"] = "The tutor could not interpret the latest update just now"
+
+    return {
+        "type": INTERPRETER_LIFECYCLE_ACTION,
+        "source_tool": INTERPRETER_REASONING_SOURCE_TOOL,
+        "job_id": run_id,
+        "payload": payload,
+    }
+
+
 def _normalize_frontend_ack(candidate: object) -> dict[str, str] | None:
     if not _is_record(candidate):
         return None
@@ -719,6 +794,18 @@ def _normalize_frontend_ack(candidate: object) -> dict[str, str] | None:
         normalized["job_id"] = job_id.strip()
 
     return normalized
+
+
+def _normalize_canvas_activity_window(
+    candidate: object,
+) -> InterpreterCanvasWindow | None:
+    if not _is_record(candidate):
+        return None
+    try:
+        return InterpreterCanvasWindow.model_validate(candidate)
+    except Exception:
+        logger.exception("Failed to parse canvas activity window payload")
+        return None
 
 
 def _apply_flashcard_ack_state(
@@ -814,6 +901,47 @@ def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
     if summary:
         return f"The visual is now inserted on the canvas. {summary}"
     return "The visual is now inserted on the canvas."
+
+
+def _build_background_tool_semantic_update(result: dict[str, object]) -> str | None:
+    status = result.get("status")
+    tool = result.get("tool")
+    summary = result.get("summary")
+
+    if status != "failed" or not isinstance(tool, str):
+        return None
+
+    normalized_summary = (
+        summary.strip() if isinstance(summary, str) and summary.strip() else None
+    )
+
+    if tool == CANVAS_GENERATE_VISUAL_TOOL:
+        reason = normalized_summary or "The visual could not be generated."
+        return (
+            "The `canvas.generate_visual` job failed. "
+            f"Reason: {reason} "
+            "Decide whether to retry with a clearer brief, ask a clarifying "
+            "question, or use another teaching strategy."
+        )
+
+    if tool == CANVAS_DELEGATE_TASK_TOOL:
+        reason = normalized_summary or "The delegated canvas task did not complete."
+        return (
+            "The `canvas.delegate_task` job failed. "
+            f"Reason: {reason} "
+            "Choose the next best tutoring step instead of assuming the canvas was updated."
+        )
+
+    if tool == FLASHCARDS_CREATE_TOOL:
+        reason = normalized_summary or "The flashcards could not be created."
+        return (
+            "The `flashcards.create` job failed. "
+            f"Reason: {reason} "
+            "Decide whether to retry, ask a clarifying question, or continue "
+            "teaching without a flashcard deck."
+        )
+
+    return None
 
 
 def _build_canvas_delegate_result(
@@ -1090,6 +1218,15 @@ async def get_adk_session_debug(session_id: str):
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    interpreter_packet = await interpreter_packet_store.get_packet(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    interpreter_reasoning = await interpreter_reasoning_store.get_snapshot(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+
     adk_session = await session_service.get_session(
         app_name=APP_NAME,
         user_id=session.user_id,
@@ -1100,6 +1237,8 @@ async def get_adk_session_debug(session_id: str):
             "sessionId": session_id,
             "thinkspaceUserId": session.user_id,
             "adkSessionExists": False,
+            "interpreterPacket": interpreter_packet,
+            "interpreterReasoning": interpreter_reasoning,
             "message": "No ADK session found for this ThinkSpace session",
         }
 
@@ -1118,6 +1257,8 @@ async def get_adk_session_debug(session_id: str):
         "conversationMemory": conversation_memory,
         "lastUserMessage": state.get(LAST_USER_MESSAGE_STATE_KEY),
         "lastAgentMessage": state.get(LAST_AGENT_MESSAGE_STATE_KEY),
+        "interpreterPacket": interpreter_packet,
+        "interpreterReasoning": interpreter_reasoning,
         "recentEvents": [
             _serialize_adk_event_for_debug(event)
             for event in events[-10:]
@@ -1290,6 +1431,16 @@ async def websocket_endpoint(
     transcript_lock = asyncio.Lock()
     existing_turns = session_store.list_turns(session_id)
     turn_sequence = len(existing_turns)
+    activity_clock = asyncio.get_running_loop()
+    user_speaking_active = False
+    agent_speaking_active = False
+    last_user_activity_at: float | None = None
+    last_agent_activity_at: float | None = None
+    last_delivered_interpreter_at: float | None = None
+    last_delivered_interpreter_key: str | None = None
+    latest_closed_canvas_window_id: str | None = None
+    pending_interpreter_delivery_result: dict[str, object] | None = None
+    pending_interpreter_delivery_task: asyncio.Task[None] | None = None
 
     async def _add_transcript_entry(
         entry_type: str, content: str, is_partial: bool = False
@@ -1344,8 +1495,331 @@ async def websocket_endpoint(
                 status,
                 len(turn.entries),
             )
+            try:
+                compacted_context = await build_compacted_session_context(
+                    session_store=session_store,
+                    session_id=session_id,
+                )
+                logger.debug(
+                    "Updated compacted session context: session_id=%s compacted_through=%s raw_turns=%s total_turns=%s",
+                    session_id,
+                    compacted_context.compacted_through_sequence,
+                    compacted_context.raw_turn_count,
+                    compacted_context.total_finalized_turn_count,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to refresh compacted session context for session_id=%s",
+                    session_id,
+                )
         except Exception as e:
             logger.warning("Failed to persist transcript turn: %s", e)
+
+    def _mark_user_activity(*, speaking: bool | None = None) -> None:
+        nonlocal user_speaking_active, last_user_activity_at
+        last_user_activity_at = activity_clock.time()
+        if speaking is not None:
+            user_speaking_active = speaking
+
+    def _mark_agent_activity(*, speaking: bool | None = None) -> None:
+        nonlocal agent_speaking_active, last_agent_activity_at
+        last_agent_activity_at = activity_clock.time()
+        if speaking is not None:
+            agent_speaking_active = speaking
+
+    def _clear_user_speaking_state() -> None:
+        nonlocal user_speaking_active
+        user_speaking_active = False
+
+    def _is_recently_active(
+        *,
+        active: bool,
+        last_activity_at: float | None,
+        stale_window_s: float,
+        now: float,
+    ) -> bool:
+        if not active or last_activity_at is None:
+            return False
+        return (now - last_activity_at) < stale_window_s
+
+    def _is_user_speaking_now(now: float) -> bool:
+        return _is_recently_active(
+            active=user_speaking_active,
+            last_activity_at=last_user_activity_at,
+            stale_window_s=INTERPRETER_DELIVERY_USER_SPEECH_STALE_S,
+            now=now,
+        )
+
+    def _is_agent_speaking_now(now: float) -> bool:
+        return _is_recently_active(
+            active=agent_speaking_active,
+            last_activity_at=last_agent_activity_at,
+            stale_window_s=INTERPRETER_DELIVERY_AGENT_SPEECH_STALE_S,
+            now=now,
+        )
+
+    def _build_interpreter_delivery_key(result: dict[str, object]) -> str | None:
+        proactivity = result.get("proactivity")
+        steering = result.get("steering")
+        packet_window_id = result.get("packet_window_id")
+        if not _is_record(proactivity) or not _is_record(steering):
+            return None
+        return json.dumps(
+            {
+                "packet_window_id": packet_window_id,
+                "recommended_next_tutor_move": steering.get(
+                    "recommended_next_tutor_move"
+                ),
+                "recommended_goal": steering.get("recommended_goal"),
+                "recommended_question": steering.get("recommended_question"),
+            },
+            sort_keys=True,
+            ensure_ascii=True,
+        )
+
+    def _build_interpreter_semantic_update(result: dict[str, object]) -> str:
+        proactivity = result.get("proactivity") if _is_record(result.get("proactivity")) else {}
+        steering = result.get("steering") if _is_record(result.get("steering")) else {}
+
+        lines = [
+            "Interpreter proactive update from the latest canvas understanding.",
+            f"Candidate reason: {proactivity.get('reason') or 'A useful proactive tutoring moment was identified.'}",
+            f"Recommended move: {steering.get('recommended_next_tutor_move') or 'Choose the next best tutoring move.'}",
+            f"Recommended goal: {steering.get('recommended_goal') or 'Advance the learner based on the latest canvas state.'}",
+        ]
+        recommended_canvas_focus = steering.get("recommended_canvas_focus")
+        if isinstance(recommended_canvas_focus, str) and recommended_canvas_focus.strip():
+            lines.append(f"Recommended canvas focus: {recommended_canvas_focus.strip()}")
+        recommended_question = steering.get("recommended_question")
+        if isinstance(recommended_question, str) and recommended_question.strip():
+            lines.append(f"Recommended question: {recommended_question.strip()}")
+        lines.append(
+            "Treat this as pedagogical guidance only. Decide whether to speak now, wait, or ignore it."
+        )
+        return "\n".join(lines)
+
+    def _update_interpreter_delivery_trace(
+        result: dict[str, object],
+        *,
+        send_content_status: str,
+        skip_reason: str | None = None,
+        delivery_trigger: str | None = None,
+        delivery_key: str | None = None,
+        retry_delay_s: float | None = None,
+        delivered: bool = False,
+        extra_updates: dict[str, object] | None = None,
+    ) -> None:
+        trace_file = result.get("trace_file")
+        if not isinstance(trace_file, str) or not trace_file.strip():
+            return
+
+        now_iso = interpreter_trace_now_iso()
+        updates: dict[str, object] = {
+            "send_content_status": send_content_status,
+            "send_content_updated_at": now_iso,
+            "send_content_skip_reason": skip_reason,
+            "send_content_delivery_trigger": delivery_trigger,
+            "send_content_delivery_key": delivery_key,
+            "send_content_retry_delay_s": retry_delay_s,
+            "send_content_delivered_at": now_iso if delivered else None,
+        }
+        if isinstance(extra_updates, dict):
+            updates.update(extra_updates)
+        try:
+            update_interpreter_reasoning_trace(trace_file, updates)
+        except Exception:
+            logger.exception(
+                "Failed to update interpreter delivery trace: trace_file=%s run_id=%s status=%s",
+                trace_file,
+                result.get("run_id"),
+                send_content_status,
+            )
+
+    def _clear_pending_interpreter_delivery() -> None:
+        nonlocal pending_interpreter_delivery_result, pending_interpreter_delivery_task
+        pending_interpreter_delivery_result = None
+        if pending_interpreter_delivery_task is not None and not pending_interpreter_delivery_task.done():
+            pending_interpreter_delivery_task.cancel()
+        pending_interpreter_delivery_task = None
+
+    def _get_interpreter_candidate_rejection_reason(
+        result: dict[str, object],
+        *,
+        snapshot: dict[str, object] | None = None,
+        require_latest: bool,
+    ) -> str | None:
+        run_id = result.get("run_id")
+        proactivity_payload = result.get("proactivity")
+        safety_flags = result.get("safety_flags")
+
+        if result.get("status") != "completed":
+            return "result_not_completed"
+        if require_latest:
+            latest_run_id = snapshot.get("latestRunId") if _is_record(snapshot) else None
+            if not isinstance(run_id, str) or latest_run_id != run_id:
+                return "result_not_latest"
+        if not _is_record(proactivity_payload) or proactivity_payload.get("is_candidate") is not True:
+            return "not_proactive_candidate"
+        if not _is_record(safety_flags):
+            return "missing_safety_flags"
+        if safety_flags.get("insufficient_context") is True:
+            return "insufficient_context"
+        if safety_flags.get("needs_fresh_viewport") is True:
+            return "needs_fresh_viewport"
+        return None
+
+    async def _retry_pending_interpreter_delivery_after(delay_s: float) -> None:
+        try:
+            await asyncio.sleep(max(delay_s, 0.1))
+            await _maybe_deliver_pending_interpreter_update(trigger="retry")
+        except asyncio.CancelledError:
+            raise
+
+    def _schedule_pending_interpreter_delivery_retry(delay_s: float) -> None:
+        nonlocal pending_interpreter_delivery_task
+        if pending_interpreter_delivery_task is not None and not pending_interpreter_delivery_task.done():
+            pending_interpreter_delivery_task.cancel()
+        pending_interpreter_delivery_task = asyncio.create_task(
+            _retry_pending_interpreter_delivery_after(delay_s),
+            name=f"interpreter-delivery-retry-{session_id}",
+        )
+
+    async def _maybe_deliver_pending_interpreter_update(*, trigger: str) -> None:
+        nonlocal last_delivered_interpreter_at
+        nonlocal last_delivered_interpreter_key
+        nonlocal pending_interpreter_delivery_result
+        nonlocal pending_interpreter_delivery_task
+
+        result = pending_interpreter_delivery_result
+        pending_interpreter_delivery_task = None
+        if not _is_record(result):
+            pending_interpreter_delivery_result = None
+            return
+
+        snapshot = await interpreter_reasoning_store.get_snapshot(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if not _is_record(snapshot):
+            logger.debug(
+                "Skipping interpreter delivery (%s): missing reasoning snapshot",
+                trigger,
+            )
+            _update_interpreter_delivery_trace(
+                result,
+                send_content_status="skipped",
+                skip_reason="missing_reasoning_snapshot",
+                delivery_trigger=trigger,
+            )
+            pending_interpreter_delivery_result = None
+            return
+
+        now = activity_clock.time()
+        run_id = result.get("run_id")
+        packet_window_id = result.get("packet_window_id")
+        delivery_key = _build_interpreter_delivery_key(result)
+        current_user_speaking = _is_user_speaking_now(now)
+        current_agent_speaking = _is_agent_speaking_now(now)
+
+        skip_reason: str | None = None
+        retry_delay_s: float | None = None
+
+        candidate_rejection_reason = _get_interpreter_candidate_rejection_reason(
+            result,
+            require_latest=False,
+        )
+        if candidate_rejection_reason is not None:
+            skip_reason = candidate_rejection_reason
+        elif current_user_speaking:
+            skip_reason = "user_currently_speaking"
+            retry_delay_s = max(
+                0.1,
+                INTERPRETER_DELIVERY_USER_SPEECH_STALE_S - (now - last_user_activity_at),
+            ) if last_user_activity_at is not None else 1.0
+        elif current_agent_speaking:
+            skip_reason = "agent_currently_speaking"
+            retry_delay_s = max(
+                0.1,
+                INTERPRETER_DELIVERY_AGENT_SPEECH_STALE_S - (now - last_agent_activity_at),
+            ) if last_agent_activity_at is not None else 1.0
+        elif last_agent_activity_at is not None:
+            quiet_remaining_s = INTERPRETER_DELIVERY_AGENT_QUIET_S - (
+                now - last_agent_activity_at
+            )
+            if quiet_remaining_s > 0:
+                skip_reason = "agent_recent_speech"
+                retry_delay_s = quiet_remaining_s
+        if skip_reason is None and last_delivered_interpreter_at is not None:
+            cooldown_remaining_s = INTERPRETER_DELIVERY_COOLDOWN_S - (
+                now - last_delivered_interpreter_at
+            )
+            if cooldown_remaining_s > 0:
+                skip_reason = "cooldown_active"
+                retry_delay_s = cooldown_remaining_s
+        if skip_reason is None and delivery_key is not None:
+            if delivery_key == last_delivered_interpreter_key:
+                skip_reason = "duplicate_delivery"
+
+        if skip_reason is not None:
+            logger.debug(
+                "Skipping interpreter delivery (%s): reason=%s run_id=%s window_id=%s user_speaking=%s agent_speaking=%s cooldown_remaining=%s dedupe_key=%s",
+                trigger,
+                skip_reason,
+                run_id,
+                packet_window_id,
+                current_user_speaking,
+                current_agent_speaking,
+                (
+                    max(0.0, INTERPRETER_DELIVERY_COOLDOWN_S - (now - last_delivered_interpreter_at))
+                    if last_delivered_interpreter_at is not None
+                    else None
+                ),
+                delivery_key,
+            )
+            if retry_delay_s is not None:
+                _update_interpreter_delivery_trace(
+                    result,
+                    send_content_status="pending_retry",
+                    skip_reason=skip_reason,
+                    delivery_trigger=trigger,
+                    delivery_key=delivery_key,
+                    retry_delay_s=retry_delay_s,
+                )
+                _schedule_pending_interpreter_delivery_retry(retry_delay_s)
+            else:
+                _update_interpreter_delivery_trace(
+                    result,
+                    send_content_status=(
+                        "skipped_duplicate"
+                        if skip_reason == "duplicate_delivery"
+                        else "skipped"
+                    ),
+                    skip_reason=skip_reason,
+                    delivery_trigger=trigger,
+                    delivery_key=delivery_key,
+                )
+                pending_interpreter_delivery_result = None
+            return
+
+        semantic_update = _build_interpreter_semantic_update(result)
+        logger.debug(
+            "Delivering interpreter update (%s): run_id=%s window_id=%s dedupe_key=%s",
+            trigger,
+            run_id,
+            packet_window_id,
+            delivery_key,
+        )
+        live_request_queue.send_content(types.Content(parts=[types.Part(text=semantic_update)]))
+        _update_interpreter_delivery_trace(
+            result,
+            send_content_status="delivered",
+            delivery_trigger=trigger,
+            delivery_key=delivery_key,
+            delivered=True,
+        )
+        last_delivered_interpreter_at = now
+        last_delivered_interpreter_key = delivery_key
+        pending_interpreter_delivery_result = None
 
     async def _send_frontend_action_message(frontend_action: dict[str, object]) -> None:
         logger.debug("Sending frontend action: %s", json.dumps(frontend_action))
@@ -1357,6 +1831,71 @@ async def websocket_endpoint(
                 }
             )
         )
+
+    async def _send_interpreter_lifecycle_event(
+        lifecycle_event: dict[str, object]
+    ) -> None:
+        nonlocal pending_interpreter_delivery_result
+        frontend_action = _build_interpreter_lifecycle_action(lifecycle_event)
+        if frontend_action is None:
+            logger.warning(
+                "Ignoring invalid interpreter lifecycle event: %s",
+                json.dumps(lifecycle_event),
+            )
+        else:
+            await _send_frontend_action_message(frontend_action)
+
+        if lifecycle_event.get("state") != "completed":
+            return
+
+        snapshot = await interpreter_reasoning_store.get_snapshot(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if not _is_record(snapshot):
+            return
+        latest_result = snapshot.get("latestResult")
+        if not _is_record(latest_result):
+            return
+        candidate_rejection_reason = _get_interpreter_candidate_rejection_reason(
+            latest_result,
+            snapshot=snapshot,
+            require_latest=True,
+        )
+        if candidate_rejection_reason is not None:
+            _update_interpreter_delivery_trace(
+                latest_result,
+                send_content_status="skipped",
+                skip_reason=candidate_rejection_reason,
+                delivery_trigger="completed_lifecycle",
+            )
+            return
+
+        previous_pending_result = pending_interpreter_delivery_result
+        previous_pending_run_id = (
+            previous_pending_result.get("run_id")
+            if _is_record(previous_pending_result)
+            else None
+        )
+        latest_run_id = latest_result.get("run_id")
+        if (
+            isinstance(previous_pending_run_id, str)
+            and isinstance(latest_run_id, str)
+            and previous_pending_run_id != latest_run_id
+        ):
+            _update_interpreter_delivery_trace(
+                previous_pending_result,
+                send_content_status="replaced_by_newer_candidate",
+                skip_reason="replaced_by_newer_candidate",
+                delivery_trigger="completed_lifecycle",
+                delivery_key=_build_interpreter_delivery_key(previous_pending_result),
+                extra_updates={
+                    "send_content_replaced_by_run_id": latest_run_id,
+                    "send_content_replaced_at": interpreter_trace_now_iso(),
+                },
+            )
+        pending_interpreter_delivery_result = latest_result
+        await _maybe_deliver_pending_interpreter_update(trigger="completed_lifecycle")
 
     async def _send_realtime_image_data_url(data_url: str) -> bool:
         if not isinstance(data_url, str) or not data_url.startswith("data:"):
@@ -1404,6 +1943,7 @@ async def websocket_endpoint(
 
     async def upstream_task() -> None:
         """Receives messages from WebSocket and sends to LiveRequestQueue."""
+        nonlocal latest_closed_canvas_window_id
         logger.debug("upstream_task started")
         while True:
             # Receive message from WebSocket (text or binary)
@@ -1443,6 +1983,7 @@ async def websocket_endpoint(
                 # Extract text from JSON and send to LiveRequestQueue
                 if json_message.get("type") == "text":
                     user_text = json_message.get("text", "")
+                    _mark_user_activity(speaking=False)
                     await _add_transcript_entry("user-text", user_text)
                     content = types.Content(
                         parts=[types.Part(text=user_text)]
@@ -1521,6 +2062,101 @@ async def websocket_endpoint(
                             job_id=job_id,
                             payload=context_payload,
                         )
+                        if source_tool == INTERPRETER_REASONING_SOURCE_TOOL:
+                            pending_job = await interpreter_snapshot_job_store.pop_job_if_current(
+                                user_id=user_id,
+                                session_id=session_id,
+                                job_id=job_id,
+                            )
+                            if pending_job is not None:
+                                packet = build_interpreter_input_packet(
+                                    session=pending_job.session,
+                                    canvas_window=pending_job.canvas_window,
+                                    canvas_context=context_payload,
+                                    compacted_session_context=pending_job.compacted_session_context,
+                                    flashcard_snapshot=pending_job.flashcard_snapshot,
+                                )
+                                packet_payload = packet.model_dump(
+                                    mode="python", by_alias=False
+                                )
+                                await interpreter_packet_store.set_packet(
+                                    user_id=user_id,
+                                    session_id=session_id,
+                                    packet=packet_payload,
+                                )
+                                await interpreter_reasoning_store.schedule_reasoning(
+                                    user_id=user_id,
+                                    session_id=session_id,
+                                    packet=packet_payload,
+                                    canvas_context=context_payload,
+                                    lifecycle_callback=_send_interpreter_lifecycle_event,
+                                )
+                                logger.debug(
+                                    "Scheduled interpreter reasoning with fresh snapshot: session_id=%s window_id=%s job_id=%s",
+                                    session_id,
+                                    pending_job.canvas_window.id,
+                                    job_id,
+                                )
+
+                elif json_message.get("type") == "canvas_activity_window":
+                    window_payload = _normalize_canvas_activity_window(
+                        json_message.get("window")
+                    )
+                    if window_payload is None:
+                        continue
+                    latest_closed_canvas_window_id = window_payload.id
+
+                    compacted_context = await build_compacted_session_context(
+                        session_store=session_store,
+                        session_id=session_id,
+                    )
+                    current_session = session_store.get_session(session_id) or session_record
+                    flashcard_snapshot = flashcard_session_store.snapshot(
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                    snapshot_bridge = await canvas_snapshot_session_bridge_store.get_bridge(
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                    if snapshot_bridge is None:
+                        logger.warning(
+                            "Skipping interpreter snapshot request without live bridge: session_id=%s window_id=%s",
+                            session_id,
+                            window_payload.id,
+                        )
+                        continue
+
+                    snapshot_job_id = f"interpreter-snapshot-{uuid4()}"
+                    await interpreter_snapshot_job_store.set_job(
+                        user_id=user_id,
+                        session_id=session_id,
+                        job=PendingInterpreterSnapshotJob(
+                            job_id=snapshot_job_id,
+                            session=current_session,
+                            canvas_window=window_payload,
+                            compacted_session_context=compacted_context,
+                            flashcard_snapshot=flashcard_snapshot,
+                        ),
+                    )
+                    await snapshot_bridge.send_frontend_action(
+                        {
+                            "type": CANVAS_VIEWPORT_SNAPSHOT_REQUESTED_ACTION,
+                            "source_tool": INTERPRETER_REASONING_SOURCE_TOOL,
+                            "job_id": snapshot_job_id,
+                            "payload": {
+                                "title": "Refreshing canvas view",
+                                "message": "Capturing a fresh viewport snapshot and context",
+                            },
+                        }
+                    )
+                    logger.debug(
+                        "Queued interpreter snapshot request: session_id=%s window_id=%s close_reason=%s job_id=%s",
+                        session_id,
+                        window_payload.id,
+                        window_payload.close_reason,
+                        snapshot_job_id,
+                    )
 
                 elif json_message.get("type") == "canvas_delegate_result":
                     source_tool = json_message.get("source_tool")
@@ -1609,14 +2245,19 @@ async def websocket_endpoint(
                 ev = event.model_dump(exclude_none=True, by_alias=True)
 
                 if ev.get("turnComplete"):
+                    _clear_user_speaking_state()
+                    _mark_agent_activity(speaking=False)
                     await _persist_turn("completed")
                     continue
                 if ev.get("interrupted"):
+                    _clear_user_speaking_state()
+                    _mark_agent_activity(speaking=False)
                     await _persist_turn("interrupted")
                     continue
 
                 if ev.get("inputTranscription", {}).get("text"):
                     it = ev["inputTranscription"]
+                    _mark_user_activity(speaking=not it.get("finished", False))
                     await _add_transcript_entry(
                         "user-transcription",
                         it["text"],
@@ -1624,6 +2265,8 @@ async def websocket_endpoint(
                     )
                 if ev.get("outputTranscription", {}).get("text"):
                     ot = ev["outputTranscription"]
+                    _clear_user_speaking_state()
+                    _mark_agent_activity(speaking=not ot.get("finished", False))
                     await _add_transcript_entry(
                         "agent-transcription",
                         ot["text"],
@@ -1632,6 +2275,8 @@ async def websocket_endpoint(
                 if ev.get("content", {}).get("parts"):
                     for part in ev["content"]["parts"]:
                         if part.get("text") and not part.get("thought"):
+                            _clear_user_speaking_state()
+                            _mark_agent_activity(speaking=bool(ev.get("partial")))
                             await _add_transcript_entry(
                                 "agent-text",
                                 part["text"],
@@ -1671,6 +2316,15 @@ async def websocket_endpoint(
             frontend_action = extract_frontend_action(result)
             if frontend_action is not None:
                 await _send_frontend_action_message(frontend_action)
+            semantic_update = _build_background_tool_semantic_update(result)
+            if semantic_update:
+                logger.debug(
+                    "Sending background tool semantic update from %s: %s",
+                    task_label,
+                    semantic_update,
+                )
+                content = types.Content(parts=[types.Part(text=semantic_update)])
+                live_request_queue.send_content(content)
 
     # Run the core websocket pair concurrently.
     # Background tool-result relays stay attached to the session, but they do not
@@ -1749,6 +2403,19 @@ async def websocket_endpoint(
             canvas_delegate_background_result_queue,
         )
         await canvas_snapshot_session_bridge_store.clear_bridge(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        await interpreter_packet_store.clear_session(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        await interpreter_reasoning_store.clear_session(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        _clear_pending_interpreter_delivery()
+        await interpreter_snapshot_job_store.clear_session(
             user_id=user_id,
             session_id=session_id,
         )

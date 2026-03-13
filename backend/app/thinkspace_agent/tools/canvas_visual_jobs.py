@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from uuid import uuid4
 
@@ -14,10 +15,11 @@ from google.genai import Client
 from google.genai import types as genai_types
 from google.genai.types import GenerateContentResponse
 from pydantic import BaseModel
-from thinkspace_agent.tools.canvas_visual_trace import summarize_context
+from thinkspace_agent.tools.canvas_visual_trace import now_iso, summarize_context
 
 from thinkspace_agent.config import (
     get_canvas_visual_image_model,
+    get_canvas_visual_planner_include_screenshot,
     get_canvas_visual_planner_model,
 )
 
@@ -290,6 +292,9 @@ def _build_visual_generation_prompt(
         "Follow the user-orchestrated brief exactly.",
         "Return a single clean image, not a collage, UI mockup, or multi-panel board.",
         "Prefer clear diagrammatic composition suited for learning.",
+        "Make the visual pedagogically legible at a glance with clean hierarchy.",
+        "Include important labels or named parts from the brief directly in the visual when appropriate.",
+        "Avoid decorative scene elements that do not help teach the concept.",
         normalized_prompt,
     ]
     if normalized_title_hint:
@@ -327,6 +332,7 @@ def _build_placement_planner_prompt(
     aspect_ratio_hint: str,
     placement_hint: str,
     viewport_bounds: dict[str, float],
+    screenshot_enabled: bool,
 ) -> str:
     serialized_context = {
         key: value for key, value in context.items() if key != "screenshot_data_url"
@@ -342,7 +348,11 @@ def _build_placement_planner_prompt(
             "Requirements:",
             "- Respect the provided viewport bounds and keep the image fully visible inside the viewport.",
             "- Prefer low-overlap open space relative to existing blurry shapes and selected content.",
-            "- Use selected shapes and screenshot semantics to avoid covering the active teaching focus.",
+            (
+                "- Use selected shapes and screenshot semantics to avoid covering the active teaching focus."
+                if screenshot_enabled
+                else "- Use selected shapes and structured canvas context to avoid covering the active teaching focus."
+            ),
             "- The output width and height must preserve the requested aspect ratio.",
             "- If placement_hint is auto, choose the clearest open area in the current viewport.",
             "- If placement_hint is directional, honor it when reasonable without causing excessive overlap.",
@@ -361,10 +371,13 @@ def _plan_canvas_visual_placement(
     aspect_ratio_hint: str,
     placement_hint: str,
 ) -> dict[str, object]:
+    started_at = now_iso()
+    started_perf = time.perf_counter()
     viewport_bounds = _extract_viewport_bounds(context)
+    screenshot_enabled = get_canvas_visual_planner_include_screenshot()
     screenshot_part = None
     screenshot_data_url = context.get("screenshot_data_url")
-    if isinstance(screenshot_data_url, str):
+    if screenshot_enabled and isinstance(screenshot_data_url, str):
         parsed = _parse_data_url(screenshot_data_url)
         if parsed is not None:
             mime_type, image_bytes = parsed
@@ -382,6 +395,7 @@ def _plan_canvas_visual_placement(
             aspect_ratio_hint=aspect_ratio_hint,
             placement_hint=placement_hint,
             viewport_bounds=viewport_bounds,
+            screenshot_enabled=screenshot_enabled,
         )
     ]
     if screenshot_part is not None:
@@ -415,11 +429,16 @@ def _plan_canvas_visual_placement(
         viewport_bounds=viewport_bounds,
         aspect_ratio_hint=aspect_ratio_hint,
     )
+    completed_at = now_iso()
     return {
         "geometry": final_geometry,
         "trace": {
             "planner_model": get_canvas_visual_planner_model(),
             "placement_hint": placement_hint,
+            "screenshot_included_in_request": screenshot_part is not None,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_ms": max(0, int((time.perf_counter() - started_perf) * 1000)),
             "planner_prompt": contents[0],
             "raw_response_payload": raw_response_payload,
             "parsed_plan": plan.model_dump(),
@@ -462,14 +481,17 @@ def _generate_canvas_visual_image(
     visual_style_hint: str,
     aspect_ratio_hint: str,
 ) -> dict[str, object]:
+    started_at = now_iso()
+    started_perf = time.perf_counter()
+    generation_prompt = _build_visual_generation_prompt(
+        prompt,
+        title_hint=title_hint,
+        visual_style_hint=visual_style_hint,
+    )
     client = _build_client()
     response = client.models.generate_content(
         model=get_canvas_visual_image_model(),
-        contents=_build_visual_generation_prompt(
-            prompt,
-            title_hint=title_hint,
-            visual_style_hint=visual_style_hint,
-        ),
+        contents=generation_prompt,
         config=genai_types.GenerateContentConfig(
             response_modalities=["IMAGE", "TEXT"],
             image_config=genai_types.ImageConfig(
@@ -488,6 +510,7 @@ def _generate_canvas_visual_image(
         title_hint=title_hint,
         visual_style_hint=visual_style_hint,
     )
+    completed_at = now_iso()
     return {
         "image_url": image_url,
         "title": title,
@@ -495,11 +518,10 @@ def _generate_canvas_visual_image(
         "mime_type": mime_type,
         "image_trace": {
             "image_model": get_canvas_visual_image_model(),
-            "generation_prompt": _build_visual_generation_prompt(
-                prompt,
-                title_hint=title_hint,
-                visual_style_hint=visual_style_hint,
-            ),
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_ms": max(0, int((time.perf_counter() - started_perf) * 1000)),
+            "generation_prompt": generation_prompt,
             "mime_type": mime_type,
         },
     }
@@ -515,6 +537,8 @@ async def generate_canvas_visual_artifact(
     placement_context: dict[str, object],
 ) -> dict[str, object]:
     """Generate a static canvas visual artifact without blocking the event loop."""
+    artifact_started_at = now_iso()
+    artifact_started_perf = time.perf_counter()
     normalized_aspect_ratio = _normalize_aspect_ratio_hint(aspect_ratio_hint)
     normalized_placement_hint = placement_hint.strip() or "auto"
     viewport_bounds = _extract_viewport_bounds(placement_context)
@@ -557,6 +581,10 @@ async def generate_canvas_visual_artifact(
             "trace": {
                 "planner_model": get_canvas_visual_planner_model(),
                 "placement_hint": normalized_placement_hint,
+                "screenshot_included_in_request": False,
+                "started_at": None,
+                "completed_at": None,
+                "duration_ms": None,
                 "planner_prompt": None,
                 "raw_response_payload": None,
                 "parsed_plan": None,
@@ -573,6 +601,7 @@ async def generate_canvas_visual_artifact(
         "Canvas placement planner trace: %s",
         json.dumps(planner_trace, ensure_ascii=True),
     )
+    artifact_completed_at = now_iso()
     return {
         "artifact_id": artifact_id,
         "image_url": image_result["image_url"],
@@ -583,6 +612,13 @@ async def generate_canvas_visual_artifact(
         "w": geometry["w"],
         "h": geometry["h"],
         "planner_trace": planner_trace,
+        "artifact_timing": {
+            "started_at": artifact_started_at,
+            "completed_at": artifact_completed_at,
+            "duration_ms": max(
+                0, int((time.perf_counter() - artifact_started_perf) * 1000)
+            ),
+        },
         "context_summary": summarize_context(placement_context),
         "image_trace": image_result["image_trace"],
         "mime_type": image_result["mime_type"],

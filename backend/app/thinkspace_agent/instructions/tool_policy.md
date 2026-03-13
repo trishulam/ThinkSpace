@@ -101,8 +101,14 @@ For rendered teaching visuals:
 - do not use `canvas.generate_visual` for mindmaps, flowcharts, concept maps,
   timelines, structured writing layouts, or other artifacts that should be
   created as native canvas content
-- provide the full semantic visual brief in `prompt`
-- always provide `aspect_ratio_hint`
+- provide the full semantic visual brief in `prompt`; the prompt should be
+  detailed and self-sufficient rather than a short label
+- include the subject, composition, key labeled parts, and any important
+  exclusions directly in `prompt` when they matter
+- always provide `aspect_ratio_hint` as one of these exact literals only:
+  `1:1`, `4:3`, `3:4`, `16:9`, `9:16`
+- never use vague aspect-ratio words such as `landscape`, `portrait`, `wide`,
+  or `tall`
 - use `placement_hint` only as semantic steering; the tool decides the final
   geometry
 - use `title_hint` or `visual_style_hint` only when they materially help

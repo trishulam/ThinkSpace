@@ -1,3 +1,5 @@
+import type { CanvasActivityWindow } from '../canvasActivityWindow'
+
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting'
 export type TalkingState = 'none' | 'user' | 'agent' | 'thinking'
 export type AgentSubtitleStatus = 'idle' | 'active' | 'complete' | 'interrupted'
@@ -40,6 +42,7 @@ export type FrontendActionType =
 	| 'canvas.delegate_requested'
 	| 'canvas.insert_visual'
 	| 'canvas.insert_widget'
+	| 'interpreter.lifecycle'
 	| 'flashcards.begin'
 	| 'flashcards.show'
 	| 'flashcards.next'
@@ -56,6 +59,16 @@ export interface FrontendAction {
 export interface FrontendActionMessage {
 	type: 'frontend_action'
 	action: FrontendAction
+}
+
+export interface InterpreterLifecyclePayload {
+	state: 'started' | 'completed' | 'failed'
+	run_id: string
+	packet_window_id: string
+	title?: string
+	message?: string
+	trace_file?: string
+	error?: string
 }
 
 export interface ToolResultEnvelope {
@@ -102,4 +115,9 @@ export interface CanvasDelegateResultMessage {
 	job_id: string
 	status: 'completed' | 'failed'
 	error?: string
+}
+
+export interface CanvasActivityWindowMessage {
+	type: 'canvas_activity_window'
+	window: CanvasActivityWindow
 }
