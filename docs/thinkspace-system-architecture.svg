@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-labelledby="title desc">
+  <title id="title">ThinkSpace system architecture</title>
+  <desc id="desc">High-level architecture showing the learner, frontend session canvas, backend live runtime, orchestrator, tool layer, tldraw canvas agent, canvas interpreter, and debug traces.</desc>
+  <defs>
+    <style>
+      .bg { fill: #0b1020; }
+      .panel { fill: #121933; stroke: #6ea8fe; stroke-width: 3; rx: 24; ry: 24; }
+      .panel-soft { fill: #141d3c; stroke: #78dce8; stroke-width: 3; rx: 24; ry: 24; }
+      .panel-warm { fill: #1d1833; stroke: #ffb86b; stroke-width: 3; rx: 24; ry: 24; }
+      .panel-accent { fill: #17263d; stroke: #8be9a8; stroke-width: 3; rx: 24; ry: 24; }
+      .title { fill: #f7fbff; font: 700 32px Arial, sans-serif; }
+      .label { fill: #eef4ff; font: 700 22px Arial, sans-serif; }
+      .body { fill: #bfd0ee; font: 500 17px Arial, sans-serif; }
+      .small { fill: #9eb2d8; font: 500 15px Arial, sans-serif; }
+      .arrow-blue { stroke: #6ea8fe; stroke-width: 4; fill: none; }
+      .arrow-cyan { stroke: #78dce8; stroke-width: 4; fill: none; }
+      .arrow-gold { stroke: #ffb86b; stroke-width: 4; fill: none; }
+      .arrow-green { stroke: #8be9a8; stroke-width: 4; fill: none; }
+      .caption { fill: #8ea3cc; font: 600 16px Arial, sans-serif; letter-spacing: 0.08em; }
+    </style>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6ea8fe"/>
+    </marker>
+    <marker id="arrowCyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#78dce8"/>
+    </marker>
+    <marker id="arrowGold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#ffb86b"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8be9a8"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="980"/>
+  <text class="title" x="70" y="78">ThinkSpace End-to-End System Architecture</text>
+  <text class="caption" x="70" y="112">ORCHESTRATION, EXECUTION, PERCEPTION, ACKNOWLEDGEMENT, AND SECOND-BRAIN REASONING</text>
+
+  <rect class="panel-warm" x="70" y="350" width="180" height="120"/>
+  <text class="label" x="120" y="398">Learner</text>
+  <text class="body" x="102" y="430">voice, text, images</text>
+
+  <rect class="panel" x="330" y="270" width="360" height="280"/>
+  <text class="label" x="390" y="320">Frontend SessionCanvas</text>
+  <text class="body" x="380" y="360">canvas rendering</text>
+  <text class="body" x="380" y="392">flashcards UI</text>
+  <text class="body" x="380" y="424">websocket client</text>
+  <text class="body" x="380" y="456">context capture + screenshots</text>
+  <text class="body" x="380" y="488">canvas change tracking</text>
+  <text class="body" x="380" y="520">activity windowing</text>
+
+  <rect class="panel" x="790" y="240" width="400" height="340"/>
+  <text class="label" x="860" y="290">Backend Live Runtime</text>
+  <text class="body" x="845" y="330">FastAPI websocket endpoint</text>
+  <text class="body" x="845" y="362">ADK live session bridge</text>
+  <text class="body" x="845" y="394">tool coordination + job relays</text>
+  <text class="body" x="845" y="426">frontend action / ack handling</text>
+  <text class="body" x="845" y="458">transcript persistence</text>
+  <text class="body" x="845" y="490">session compaction refresh</text>
+  <text class="body" x="845" y="522">interpreter delivery gate</text>
+
+  <rect class="panel-soft" x="1260" y="140" width="260" height="180"/>
+  <text class="label" x="1302" y="190">ThinkSpace</text>
+  <text class="label" x="1308" y="222">Orchestrator</text>
+  <text class="body" x="1304" y="258">top-level tutor brain</text>
+  <text class="body" x="1304" y="288">strategy + tool choice</text>
+
+  <rect class="panel-soft" x="1260" y="390" width="260" height="220"/>
+  <text class="label" x="1336" y="440">Tool Layer</text>
+  <text class="body" x="1303" y="478">canvas.generate_visual</text>
+  <text class="body" x="1303" y="510">canvas.delegate_task</text>
+  <text class="body" x="1303" y="542">canvas.viewport_snapshot</text>
+  <text class="body" x="1303" y="574">flashcards.*</text>
+
+  <rect class="panel-accent" x="350" y="650" width="320" height="170"/>
+  <text class="label" x="404" y="700">Tldraw Canvas Agent</text>
+  <text class="body" x="402" y="740">frontend worker for</text>
+  <text class="body" x="402" y="772">editable canvas tasks</text>
+
+  <rect class="panel-accent" x="810" y="670" width="360" height="190"/>
+  <text class="label" x="882" y="720">Canvas Interpreter</text>
+  <text class="body" x="865" y="760">second-brain reasoning layer</text>
+  <text class="body" x="865" y="792">packet + screenshot grounding</text>
+  <text class="body" x="865" y="824">proactive guidance candidate</text>
+
+  <rect class="panel-warm" x="1270" y="710" width="250" height="140"/>
+  <text class="label" x="1338" y="760">Debug Traces</text>
+  <text class="body" x="1316" y="798">tool traces</text>
+  <text class="body" x="1316" y="826">interpreter traces</text>
+
+  <path class="arrowGold" marker-start="url(#arrowGold)" marker-end="url(#arrowGold)" d="M 250 410 C 280 410, 290 410, 330 410"/>
+  <path class="arrowBlue" marker-start="url(#arrowBlue)" marker-end="url(#arrowBlue)" d="M 690 410 C 735 410, 748 410, 790 410"/>
+  <path class="arrowCyan" marker-start="url(#arrowCyan)" marker-end="url(#arrowCyan)" d="M 1190 290 C 1220 290, 1230 250, 1260 230"/>
+  <path class="arrowCyan" marker-start="url(#arrowCyan)" marker-end="url(#arrowCyan)" d="M 1190 470 C 1220 470, 1230 500, 1260 500"/>
+  <path class="arrowGreen" marker-start="url(#arrowGreen)" marker-end="url(#arrowGreen)" d="M 510 550 C 510 600, 510 610, 510 650"/>
+  <path class="arrowGreen" marker-start="url(#arrowGreen)" marker-end="url(#arrowGreen)" d="M 990 580 C 990 620, 990 630, 990 670"/>
+
+  <path class="arrowBlue" marker-end="url(#arrowBlue)" d="M 650 600 C 760 640, 810 640, 880 670"/>
+  <path class="arrowBlue" marker-start="url(#arrowBlue)" marker-end="url(#arrowBlue)" d="M 1190 520 C 1240 580, 1240 700, 1270 760"/>
+  <path class="arrowGreen" marker-end="url(#arrowGreen)" d="M 670 735 C 730 735, 760 735, 810 735"/>
+  <path class="arrowGold" marker-end="url(#arrowGold)" d="M 1390 610 C 1390 650, 1390 675, 1390 710"/>
+  <path class="arrowGold" marker-end="url(#arrowGold)" d="M 1080 860 C 1150 860, 1205 840, 1270 790"/>
+  <path class="arrowGold" marker-end="url(#arrowGold)" d="M 1470 610 C 1490 650, 1490 680, 1470 710"/>
+
+  <text class="small" x="110" y="510">conversation</text>
+  <text class="small" x="487" y="388">frontend actions, screenshots, acks</text>
+  <text class="small" x="1220" y="202">semantic tutoring loop</text>
+  <text class="small" x="1226" y="486">tool calls + results</text>
+  <text class="small" x="520" y="615">delegate execution</text>
+  <text class="small" x="1010" y="635">second-brain trigger</text>
+  <text class="small" x="739" y="651">canvas windows</text>
+  <text class="small" x="1414" y="669">observability</text>
+
+  <rect x="70" y="890" width="1460" height="2" fill="#24324f"/>
+  <text class="small" x="70" y="930">Source of truth split: backend owns tutoring semantics and session state; frontend owns visible execution and fresh canvas capture.</text>
+</svg>
