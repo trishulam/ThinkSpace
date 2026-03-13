@@ -385,6 +385,7 @@ The repo now includes these workflows:
   - runs Terraform format and validate checks
 - `deploy-gcp.yml`
   - builds backend and frontend images with Cloud Build
+  - submits builds asynchronously and polls build status instead of streaming logs
   - deploys the backend and frontend Cloud Run services
   - smoke-checks the public URLs
 - `deploy-cloudflare-worker.yml`
