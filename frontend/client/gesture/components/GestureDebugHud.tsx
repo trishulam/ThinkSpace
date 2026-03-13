@@ -6,7 +6,7 @@ interface GestureDebugHudProps {
 	logs: GestureLogEntry[]
 	onToggle: () => void
 	onClearLogs: () => void
-	onExportTrace: () => void
+	onExportTrace?: () => void
 }
 
 function formatPoint(point: GestureRuntimeState['cursorPoint']) {
@@ -80,7 +80,12 @@ export function GestureDebugHud({
 						<div className="gesture-sidebar-panel__subtitle">Waiting for runtime</div>
 					</div>
 					<div className="gesture-sidebar-panel__actions">
-						<button className="gesture-sidebar-panel__clear" onClick={onExportTrace} type="button">
+						<button
+							className="gesture-sidebar-panel__clear"
+							onClick={onExportTrace}
+							type="button"
+							disabled={!onExportTrace}
+						>
 							Export trace
 						</button>
 						<button className="gesture-sidebar-panel__clear" onClick={onClearLogs} type="button">
@@ -107,7 +112,12 @@ export function GestureDebugHud({
 					<div className="gesture-sidebar-panel__subtitle">Canvas gesture runtime</div>
 				</div>
 				<div className="gesture-sidebar-panel__actions">
-					<button className="gesture-sidebar-panel__clear" onClick={onExportTrace} type="button">
+					<button
+						className="gesture-sidebar-panel__clear"
+						onClick={onExportTrace}
+						type="button"
+						disabled={!onExportTrace}
+					>
 						Export trace
 					</button>
 					<button className="gesture-sidebar-panel__clear" onClick={onClearLogs} type="button">

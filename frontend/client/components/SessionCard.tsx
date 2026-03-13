@@ -237,22 +237,22 @@ export const SessionCard: React.FC<SessionCardProps> = ({
 
         <div className="ts-home-session-card-actions">
           <button
-            className="ts-home-inline-ghost-btn"
+            className="ts-home-inline-text-btn"
             onClick={handleSummary}
             type="button"
             title="View replay"
           >
             <ReplayIcon />
-            View Replay
+            Replay
           </button>
           <button
-            className="ts-home-inline-primary-btn"
+            className="ts-home-inline-text-btn ts-home-inline-text-btn--primary"
             onClick={handleResume}
             type="button"
             title="Resume session"
           >
             <PlayIcon />
-            {session.status === "completed" ? "Open Session" : "Continue"}
+            {session.status === "completed" ? "Open" : "Continue"}
           </button>
         </div>
       </div>

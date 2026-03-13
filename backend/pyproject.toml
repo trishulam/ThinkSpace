@@ -19,6 +19,7 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "google-cloud-firestore>=2.24.0",
     "google-cloud-storage>=3.8.0",
+    "pg8000>=1.31.5",
 ]
 
 [project.optional-dependencies]

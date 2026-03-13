@@ -1,0 +1,99 @@
+name: Deploy GCP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "infra/**"
+      - ".github/workflows/deploy-gcp.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-gcp-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build And Deploy GCP
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ssn-fyp
+      GCP_REGION: asia-south1
+      TF_WORKING_DIR: infra/environments/prod
+      TF_STATE_BUCKET: ssn-fyp-thinkspace-tfstate
+      TF_STATE_PREFIX: prod
+      BACKEND_IMAGE: asia-south1-docker.pkg.dev/ssn-fyp/thinkspace/backend:${{ github.sha }}
+      FRONTEND_IMAGE: asia-south1-docker.pkg.dev/ssn-fyp/thinkspace/frontend:${{ github.sha }}
+      PROD_TLDRAW_AGENT_STREAM_URL: https://thinkspace-canvas-agent.pradeeshxdev.workers.dev/stream
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Build backend image with Cloud Build
+        run: |
+          gcloud builds submit backend \
+            --project="${GCP_PROJECT_ID}" \
+            --config=backend/cloudbuild.yaml \
+            --substitutions=_IMAGE="${BACKEND_IMAGE}"
+
+      - name: Initialize Terraform backend
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=${TF_STATE_PREFIX}"
+
+      - name: Deploy backend service
+        env:
+          TF_VAR_backend_image: ${{ env.BACKEND_IMAGE }}
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" apply \
+            -target=google_cloud_run_v2_service.backend \
+            -target=google_cloud_run_v2_service_iam_member.backend_public \
+            -auto-approve
+
+      - name: Read backend service URL
+        id: backend-url
+        run: |
+          BACKEND_URL="$(terraform -chdir="${TF_WORKING_DIR}" output -raw backend_service_url)"
+          BACKEND_WS_URL="wss://${BACKEND_URL#https://}"
+          echo "backend_url=${BACKEND_URL}" >> "$GITHUB_OUTPUT"
+          echo "backend_ws_url=${BACKEND_WS_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Build frontend image with Cloud Build
+        run: |
+          gcloud builds submit frontend \
+            --project="${GCP_PROJECT_ID}" \
+            --config=frontend/cloudbuild.yaml \
+            --substitutions=_IMAGE="${FRONTEND_IMAGE}",_VITE_AGENT_BACKEND_URL="${{ steps.backend-url.outputs.backend_ws_url }}",_VITE_SESSION_API_BASE_URL="${{ steps.backend-url.outputs.backend_url }}",_VITE_TLDRAW_AGENT_STREAM_URL="${PROD_TLDRAW_AGENT_STREAM_URL}"
+
+      - name: Deploy full production stack
+        env:
+          TF_VAR_backend_image: ${{ env.BACKEND_IMAGE }}
+          TF_VAR_frontend_image: ${{ env.FRONTEND_IMAGE }}
+        run: terraform -chdir="${TF_WORKING_DIR}" apply -auto-approve
+
+      - name: Smoke check deployed services
+        run: |
+          FRONTEND_URL="$(terraform -chdir="${TF_WORKING_DIR}" output -raw frontend_service_url)"
+          BACKEND_URL="$(terraform -chdir="${TF_WORKING_DIR}" output -raw backend_service_url)"
+          curl -sS -o /dev/null -w 'frontend:%{http_code}\n' "${FRONTEND_URL}"
+          curl -sS -o /dev/null -w 'backend:%{http_code}\n' "${BACKEND_URL}"
