@@ -52,6 +52,9 @@ For flashcards:
   instead of calling it again
 - do not talk about the next question until `flashcards.next` has completed and
   the system confirms that the next card is visible in the UI
+- when you call `flashcards.next`, do not include the next question text in that
+  same response; wait for the semantic confirmation and then ask the exact
+  visible question
 - do not assume `flashcards.show` is complete the moment the tool finishes;
   treat the deck as fully ready only after the system tells you it is visible in
   the UI

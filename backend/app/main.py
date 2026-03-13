@@ -882,9 +882,13 @@ def _apply_flashcard_ack_state(
         if front:
             return (
                 "The next flashcard is now visible in the UI. "
-                f"Ask the learner this question: {front}"
+                "Ask the learner exactly this question, word for word: "
+                f"{front}"
             )
-        return "The next flashcard is now visible in the UI. Ask the next question."
+        return (
+            "The next flashcard is now visible in the UI. "
+            "Ask the exact visible next question."
+        )
 
     if action_type == "flashcards.clear":
         return None
