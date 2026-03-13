@@ -50,10 +50,34 @@ jobs:
 
       - name: Build backend image with Cloud Build
         run: |
-          gcloud builds submit backend \
+          BACKEND_BUILD_ID="$(gcloud builds submit backend \
             --project="${GCP_PROJECT_ID}" \
             --config=backend/cloudbuild.yaml \
-            --substitutions=_IMAGE="${BACKEND_IMAGE}"
+            --substitutions=_IMAGE="${BACKEND_IMAGE}" \
+            --async \
+            --format='value(metadata.build.id)')"
+          echo "Started backend build: ${BACKEND_BUILD_ID}"
+          for attempt in $(seq 1 120); do
+            BACKEND_BUILD_STATUS="$(gcloud builds describe "${BACKEND_BUILD_ID}" \
+              --project="${GCP_PROJECT_ID}" \
+              --format='value(status)')"
+            echo "Backend build status: ${BACKEND_BUILD_STATUS}"
+            case "${BACKEND_BUILD_STATUS}" in
+              SUCCESS)
+                break
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                gcloud builds describe "${BACKEND_BUILD_ID}" --project="${GCP_PROJECT_ID}"
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          if [ "${BACKEND_BUILD_STATUS}" != "SUCCESS" ]; then
+            echo "Backend build did not complete successfully in time."
+            gcloud builds describe "${BACKEND_BUILD_ID}" --project="${GCP_PROJECT_ID}"
+            exit 1
+          fi
 
       - name: Initialize Terraform backend
         run: |
@@ -80,10 +104,34 @@ jobs:
 
       - name: Build frontend image with Cloud Build
         run: |
-          gcloud builds submit frontend \
+          FRONTEND_BUILD_ID="$(gcloud builds submit frontend \
             --project="${GCP_PROJECT_ID}" \
             --config=frontend/cloudbuild.yaml \
-            --substitutions=_IMAGE="${FRONTEND_IMAGE}",_VITE_AGENT_BACKEND_URL="${{ steps.backend-url.outputs.backend_ws_url }}",_VITE_SESSION_API_BASE_URL="${{ steps.backend-url.outputs.backend_url }}",_VITE_TLDRAW_AGENT_STREAM_URL="${PROD_TLDRAW_AGENT_STREAM_URL}"
+            --substitutions=_IMAGE="${FRONTEND_IMAGE}",_VITE_AGENT_BACKEND_URL="${{ steps.backend-url.outputs.backend_ws_url }}",_VITE_SESSION_API_BASE_URL="${{ steps.backend-url.outputs.backend_url }}",_VITE_TLDRAW_AGENT_STREAM_URL="${PROD_TLDRAW_AGENT_STREAM_URL}" \
+            --async \
+            --format='value(metadata.build.id)')"
+          echo "Started frontend build: ${FRONTEND_BUILD_ID}"
+          for attempt in $(seq 1 120); do
+            FRONTEND_BUILD_STATUS="$(gcloud builds describe "${FRONTEND_BUILD_ID}" \
+              --project="${GCP_PROJECT_ID}" \
+              --format='value(status)')"
+            echo "Frontend build status: ${FRONTEND_BUILD_STATUS}"
+            case "${FRONTEND_BUILD_STATUS}" in
+              SUCCESS)
+                break
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                gcloud builds describe "${FRONTEND_BUILD_ID}" --project="${GCP_PROJECT_ID}"
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          if [ "${FRONTEND_BUILD_STATUS}" != "SUCCESS" ]; then
+            echo "Frontend build did not complete successfully in time."
+            gcloud builds describe "${FRONTEND_BUILD_ID}" --project="${GCP_PROJECT_ID}"
+            exit 1
+          fi
 
       - name: Deploy full production stack
         env:
