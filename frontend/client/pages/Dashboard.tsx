@@ -27,17 +27,6 @@ const FILTER_OPTIONS: Array<{ value: DashboardFilter; label: string }> = [
   { value: "recording", label: "Recording Ready" },
 ];
 
-const LEARNING_TIPS = [
-  {
-    title: "Spaced repetition",
-    body: "Revisit a recent transcript or replay within 24 hours to strengthen long-term recall.",
-  },
-  {
-    title: "Active recall",
-    body: "Pause after a session and explain the core idea in your own words before checking the notes again.",
-  },
-];
-
 const PINNED_SESSIONS = [
   "Quantum Computing 101",
   "Game Theory Strategy",
@@ -286,49 +275,30 @@ export const Dashboard: React.FC = () => {
     `Review the main idea from ${recommendationTopic} and explain it back in your own words.`;
 
   const sidebar = (
-    <aside className="ts-home-sidebar">
-      <section className="ts-home-sidebar-card">
-        <div className="ts-home-sidebar-header">
-          <span className="ts-home-sidebar-icon">✦</span>
-          <h3>Learning Tips</h3>
+    <aside className="ts-home-rail">
+      <section className="ts-home-rail-section ts-home-rail-section--accent">
+        <div className="ts-home-rail-header">
+          <span className="ts-home-rail-kicker">Recommended Next</span>
+          <h3>Return to {recommendationTopic}</h3>
         </div>
-        <div className="ts-home-tip-stack">
-          {LEARNING_TIPS.map((tip) => (
-            <article key={tip.title} className="ts-home-tip-item">
-              <p className="ts-home-tip-title">{tip.title}</p>
-              <p className="ts-home-tip-body">{tip.body}</p>
-            </article>
-          ))}
-        </div>
+        <p className="ts-home-rail-body">{recommendationBody}</p>
+        {latestSession ? (
+          <button
+            className="ts-home-sidebar-link"
+            onClick={() => handleSummarySession(latestSession.id)}
+            type="button"
+          >
+            Open replay
+          </button>
+        ) : (
+          <span className="ts-home-sidebar-caption">Appears once you create a session</span>
+        )}
       </section>
 
-      <section className="ts-home-sidebar-card ts-home-sidebar-card--dark">
-        <div className="ts-home-sidebar-header">
-          <span className="ts-home-sidebar-icon">↗</span>
-          <h3>Recommended Next</h3>
-        </div>
-        <div className="ts-home-recommendation-card">
-          <p className="ts-home-recommendation-kicker">Review prompt</p>
-          <h4>Return to {recommendationTopic}</h4>
-          <p>{recommendationBody}</p>
-          {latestSession ? (
-            <button
-              className="ts-home-sidebar-link"
-              onClick={() => handleSummarySession(latestSession.id)}
-              type="button"
-            >
-              Open replay
-            </button>
-          ) : (
-            <span className="ts-home-sidebar-caption">Appears once you create a session</span>
-          )}
-        </div>
-      </section>
-
-      <section className="ts-home-sidebar-card">
-        <div className="ts-home-sidebar-header">
-          <span className="ts-home-sidebar-icon">📌</span>
-          <h3>Pinned Sessions</h3>
+      <section className="ts-home-rail-section">
+        <div className="ts-home-rail-header">
+          <span className="ts-home-rail-kicker">Pinned Sessions</span>
+          <h3>Quick access</h3>
         </div>
         <ul className="ts-home-pin-list">
           {PINNED_SESSIONS.map((title) => (
@@ -340,9 +310,6 @@ export const Dashboard: React.FC = () => {
             </li>
           ))}
         </ul>
-        <button className="ts-home-secondary-btn ts-home-secondary-btn--full" type="button">
-          Manage Pins
-        </button>
       </section>
     </aside>
   );
@@ -363,32 +330,32 @@ export const Dashboard: React.FC = () => {
           </p>
         )}
 
-        <div className="ts-home-grid">
-          <div className="ts-home-main">
-            <section className="ts-home-hero">
-              <div className="ts-home-hero-copy">
-                <p className="ts-home-eyebrow">Learning Dashboard</p>
-                <h1>Welcome back.</h1>
-                <p className="ts-home-hero-text">
-                  Your place to learn concepts deeply, revisit session replays, and master topics
-                  with AI-guided study sessions.
-                </p>
-                <div className="ts-home-hero-actions">
-                  <button className="ts-home-primary-btn" onClick={handleNewSession} type="button">
-                    Start New Session
-                  </button>
-                  <button
-                    className="ts-home-secondary-btn"
-                    onClick={() => latestSession && handleResumeSession(latestSession.id)}
-                    type="button"
-                    disabled={!latestSession}
-                  >
-                    Continue Last Session
-                  </button>
-                </div>
-              </div>
-            </section>
+        <section className="ts-home-banner">
+          <div className="ts-home-banner-copy">
+            <p className="ts-home-eyebrow">Learning Dashboard</p>
+            <h1>Welcome back.</h1>
+            <p className="ts-home-hero-text">
+              Your place to learn concepts deeply, revisit session replays, and master topics
+              with AI-guided study sessions.
+            </p>
+            <div className="ts-home-hero-actions">
+              <button className="ts-home-primary-btn" onClick={handleNewSession} type="button">
+                Start New Session
+              </button>
+              <button
+                className="ts-home-secondary-btn"
+                onClick={() => latestSession && handleResumeSession(latestSession.id)}
+                type="button"
+                disabled={!latestSession}
+              >
+                Continue Last Session
+              </button>
+            </div>
+          </div>
+        </section>
 
+        <div className="ts-home-workspace">
+          <div className="ts-home-main">
             {isLoading ? (
               <section className="ts-home-section">
                 <div className="ts-home-section-header">
@@ -429,11 +396,10 @@ export const Dashboard: React.FC = () => {
                     </button>
                   </div>
 
-                  <div className="ts-home-feature-grid">
+                  <div className="ts-home-feature-surface">
                     {continueLearningSessions.map((session) => {
-                      const artifacts = artifactBySessionId[session.id];
                       return (
-                        <article key={session.id} className="ts-home-feature-card">
+                        <article key={session.id} className="ts-home-feature-slab">
                           <div className="ts-home-feature-meta">
                             <span className="ts-home-feature-badge">{getModeLabel(session.mode)}</span>
                             <span>{formatRelativeTime(session.lastActive)}</span>
@@ -484,7 +450,7 @@ export const Dashboard: React.FC = () => {
                   </div>
 
                   {filteredSessions.length > 0 ? (
-                    <div className="ts-home-session-list">
+                    <div className="ts-home-session-surface">
                       {filteredSessions.map((session) => (
                         <SessionCard
                           key={session.id}

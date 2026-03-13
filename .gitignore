@@ -36,6 +36,13 @@ out/
 .wrangler/
 .mf/
 
+# Terraform
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/terraform.tfvars
+**/terraform.tfvars.json
+
 debug_traces/
  
 backend/app/data/

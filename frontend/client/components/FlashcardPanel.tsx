@@ -178,7 +178,7 @@ export function FlashcardPanel({ state }: FlashcardPanelProps) {
     <aside className="flashcard-panel-overlay" aria-live="polite">
       <div className="flashcard-panel-scene">
         <div
-          key={card.id}
+          key={currentCard.id}
           className={`flashcard-panel-card-shell${entryMotionClass}${cardMotionClass}`}
         >
           {outgoingCard ? renderCardFace(outgoingCard, "outgoing") : null}

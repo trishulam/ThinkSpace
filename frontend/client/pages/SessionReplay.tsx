@@ -354,7 +354,8 @@ export const SessionReplay: React.FC = () => {
           </section>
         ) : (
           <div className="ts-replay-layout">
-            <div className="ts-replay-top-grid">
+            <section className="ts-replay-surface">
+              <div className="ts-replay-top-grid">
               <section className="ts-replay-video-card">
                 <div className="ts-replay-card-header">
                   <div>
@@ -517,9 +518,11 @@ export const SessionReplay: React.FC = () => {
                   </div>
                 )}
               </section>
-            </div>
+              </div>
+            </section>
 
-            <div className="ts-replay-bottom-grid">
+            <section className="ts-replay-surface">
+              <div className="ts-replay-bottom-grid">
               <section className="ts-replay-panel ts-replay-panel--transcript">
                 <div className="ts-replay-card-header">
                   <div>
@@ -594,7 +597,8 @@ export const SessionReplay: React.FC = () => {
                 </section>
 
               </div>
-            </div>
+              </div>
+            </section>
           </div>
         )}
       </div>
