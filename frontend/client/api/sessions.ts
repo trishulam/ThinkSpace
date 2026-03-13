@@ -127,6 +127,29 @@ export interface ApiKeyMomentGenerationResponse {
   debug?: unknown;
 }
 
+export type ApiReplayArtifactStatus =
+  | "idle"
+  | "pending"
+  | "processing"
+  | "ready"
+  | "failed"
+  | "unavailable";
+
+export interface ApiSessionReplayStatus {
+  sessionId: string;
+  replayStatus: "idle" | "processing" | "ready" | "failed" | "partial";
+  transcriptStatus: ApiReplayArtifactStatus;
+  transcriptTurnCount: number;
+  videoStatus: ApiReplayArtifactStatus;
+  videoSegmentCount: number;
+  videoError: string | null;
+  keyMomentsStatus: ApiReplayArtifactStatus;
+  keyMomentCount: number;
+  keyMomentsError: string | null;
+  requestedAt: string | null;
+  updatedAt: string;
+}
+
 export interface CreateSessionRequest extends NewSessionData {
   userId?: string;
 }
@@ -253,6 +276,14 @@ export async function getSessionRecordingManifest(
 ): Promise<ApiSessionRecordingManifest> {
   return requestJson<ApiSessionRecordingManifest>(
     `/v1/sessions/${encodeURIComponent(sessionId)}/recordings`
+  );
+}
+
+export async function getSessionReplayStatus(
+  sessionId: string
+): Promise<ApiSessionReplayStatus> {
+  return requestJson<ApiSessionReplayStatus>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/replay-status`
   );
 }
 

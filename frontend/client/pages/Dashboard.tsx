@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getSessionRecordingManifest, getSessionResume } from "../api/sessions";
+import { getSessionReplayStatus } from "../api/sessions";
 import { useSession } from "../context/SessionContext";
 import { TopNavigation } from "../components/TopNavigation";
 import { SessionCard } from "../components/SessionCard";
@@ -11,11 +11,16 @@ import { NewSessionData, Session } from "../types/session";
 type DashboardFilter = "all" | "active" | "completed" | "transcript" | "recording";
 
 type SessionArtifactState = {
+  replayStatus: "idle" | "processing" | "ready" | "failed" | "partial";
+  transcriptStatus: "idle" | "pending" | "processing" | "ready" | "failed" | "unavailable";
   hasTranscript: boolean;
   transcriptTurns: number;
+  videoStatus: "idle" | "pending" | "processing" | "ready" | "failed" | "unavailable";
   hasRecording: boolean;
   recordingSegments: number;
+  keyMomentsStatus: "idle" | "pending" | "processing" | "ready" | "failed" | "unavailable";
   hasFlashcards: boolean;
+  isReplayReady: boolean;
   isLoading: boolean;
 };
 
@@ -34,11 +39,16 @@ const PINNED_SESSIONS = [
 ];
 
 const EMPTY_ARTIFACT_STATE: SessionArtifactState = {
+  replayStatus: "idle",
+  transcriptStatus: "idle",
   hasTranscript: false,
   transcriptTurns: 0,
+  videoStatus: "idle",
   hasRecording: false,
   recordingSegments: 0,
+  keyMomentsStatus: "idle",
   hasFlashcards: false,
+  isReplayReady: false,
   isLoading: true,
 };
 
@@ -117,28 +127,6 @@ const getLevelLabel = (level: Session["level"]): string => {
   }
 };
 
-const buildResourceList = (
-  session: Session,
-  artifacts: SessionArtifactState | undefined
-): string[] => {
-  const resources: string[] = [];
-
-  if (artifacts?.hasTranscript) {
-    resources.push("Transcript");
-  }
-  if (artifacts?.hasRecording) {
-    resources.push("Recording");
-  }
-  if (artifacts?.hasFlashcards) {
-    resources.push("Flashcards");
-  }
-  if (session.summary || session.checkpointCount > 0) {
-    resources.push("Replay");
-  }
-
-  return resources;
-};
-
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const { sessions, createSession, isLoading, error } = useSession();
@@ -187,31 +175,37 @@ export const Dashboard: React.FC = () => {
 
     void Promise.all(
       sessions.map(async (session) => {
-        const [resumeResult, manifestResult] = await Promise.allSettled([
-          getSessionResume(session.id),
-          getSessionRecordingManifest(session.id),
-        ]);
+        try {
+          const status = await getSessionReplayStatus(session.id);
+          const transcriptTurns = status.transcriptTurnCount;
+          const recordingSegments = status.videoSegmentCount;
+          const hasRecording = status.videoStatus === "ready";
 
-        const transcriptTurns =
-          resumeResult.status === "fulfilled" ? resumeResult.value.transcript?.length ?? 0 : 0;
-        const recordingSegments =
-          manifestResult.status === "fulfilled" ? manifestResult.value.segments.length : 0;
-        const hasRecording =
-          manifestResult.status === "fulfilled"
-            ? Boolean(manifestResult.value.finalRelativePath) || manifestResult.value.segments.length > 0
-            : false;
-
-        return [
-          session.id,
-          {
-            hasTranscript: transcriptTurns > 0,
-            transcriptTurns,
-            hasRecording,
-            recordingSegments,
-            hasFlashcards: transcriptTurns > 0,
-            isLoading: false,
-          },
-        ] as const;
+          return [
+            session.id,
+            {
+              replayStatus: status.replayStatus,
+              transcriptStatus: status.transcriptStatus,
+              hasTranscript: transcriptTurns > 0,
+              transcriptTurns,
+              videoStatus: status.videoStatus,
+              hasRecording,
+              recordingSegments,
+              keyMomentsStatus: status.keyMomentsStatus,
+              hasFlashcards: status.keyMomentsStatus === "ready" || transcriptTurns > 0,
+              isReplayReady: status.replayStatus === "ready",
+              isLoading: false,
+            },
+          ] as const;
+        } catch {
+          return [
+            session.id,
+            {
+              ...EMPTY_ARTIFACT_STATE,
+              isLoading: false,
+            },
+          ] as const;
+        }
       })
     ).then((results) => {
       if (cancelled) {
@@ -259,8 +253,8 @@ export const Dashboard: React.FC = () => {
         activeFilter === "all" ||
         (activeFilter === "active" && session.status !== "completed") ||
         (activeFilter === "completed" && session.status === "completed") ||
-        (activeFilter === "transcript" && Boolean(artifacts?.hasTranscript)) ||
-        (activeFilter === "recording" && Boolean(artifacts?.hasRecording));
+        (activeFilter === "transcript" && artifacts?.transcriptStatus === "ready") ||
+        (activeFilter === "recording" && artifacts?.videoStatus === "ready");
 
       return matchesQuery && matchesFilter;
     });

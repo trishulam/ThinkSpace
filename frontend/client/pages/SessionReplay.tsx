@@ -1,15 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  finalizeSessionRecordings,
-  generateSessionKeyMoments,
   getSessionRecordingFinalUrl,
   getSessionKeyMoments,
   getSessionRecordingManifest,
+  getSessionReplayStatus,
   getSessionResume,
   type ApiSessionKeyMoment,
   type ApiSessionKeyMomentArtifact,
   type ApiSessionRecordingManifest,
+  type ApiSessionReplayStatus,
   type ApiSessionResumeResponse,
   type ApiTranscriptEntry,
   type ApiTranscriptTurn,
@@ -47,24 +47,13 @@ function parseTimestampMs(value: string | null | undefined): number | null {
   return Number.isFinite(timestampMs) ? timestampMs : null;
 }
 
-async function loadSessionKeyMomentArtifact(
+async function loadStoredKeyMomentArtifact(
   sessionId: string
 ): Promise<ApiSessionKeyMomentArtifact | null> {
   try {
     return await getSessionKeyMoments(sessionId);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (!/key moments not found/i.test(message)) {
-      console.warn("Failed to load key moments", error);
-      return null;
-    }
-  }
-
-  try {
-    const generated = await generateSessionKeyMoments(sessionId);
-    return generated.artifact;
-  } catch (error) {
-    console.warn("Failed to generate key moments", error);
+    console.warn("Failed to load stored key moments", error);
     return null;
   }
 }
@@ -185,6 +174,9 @@ export const SessionReplay: React.FC = () => {
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId: string }>();
   const [manifest, setManifest] = useState<ApiSessionRecordingManifest | null>(null);
+  const [replayArtifactStatus, setReplayArtifactStatus] = useState<ApiSessionReplayStatus | null>(
+    null
+  );
   const [sessionResume, setSessionResume] = useState<ApiSessionResumeResponse | null>(null);
   const [keyMomentArtifact, setKeyMomentArtifact] = useState<ApiSessionKeyMomentArtifact | null>(
     null
@@ -208,54 +200,99 @@ export const SessionReplay: React.FC = () => {
     setError(null);
     setKeyMomentArtifact(null);
 
-    void Promise.allSettled([
-      getSessionRecordingManifest(sessionId),
-      getSessionResume(sessionId),
-      loadSessionKeyMomentArtifact(sessionId),
-    ])
-      .then(async ([manifestResult, resumeResult, keyMomentResult]) => {
-        if (manifestResult.status === "rejected") {
-          throw manifestResult.reason;
-        }
-        if (resumeResult.status === "rejected") {
-          throw resumeResult.reason;
-        }
-
-        const nextManifest = manifestResult.value;
-        const resumePayload = resumeResult.value;
-        let resolvedManifest = nextManifest;
-        if (!resolvedManifest.finalRelativePath && resolvedManifest.segments.length > 0) {
-          resolvedManifest = await finalizeSessionRecordings(sessionId);
-        }
+    void (async () => {
+      try {
+        const [statusPayload, manifestPayload, resumePayload] = await Promise.all([
+          getSessionReplayStatus(sessionId),
+          getSessionRecordingManifest(sessionId),
+          getSessionResume(sessionId),
+        ]);
+        const nextKeyMomentArtifact =
+          statusPayload.keyMomentsStatus === "ready"
+            ? await loadStoredKeyMomentArtifact(sessionId)
+            : null;
         if (cancelled) {
           return;
         }
-        setManifest(resolvedManifest);
+        setReplayArtifactStatus(statusPayload);
+        setManifest(manifestPayload);
         setSessionResume(resumePayload);
         setTranscript(resumePayload.transcript ?? []);
-        if (keyMomentResult.status === "fulfilled") {
-          setKeyMomentArtifact(keyMomentResult.value);
-        }
-      })
-      .catch((loadError) => {
+        setKeyMomentArtifact(nextKeyMomentArtifact);
+      } catch (loadError) {
         if (!cancelled) {
           setError(
             loadError instanceof Error ? loadError.message : "Unable to load session replay"
           );
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) {
           setIsLoading(false);
         }
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
     };
   }, [sessionId]);
 
-  const finalVideoUrl = manifest?.finalRelativePath
+  useEffect(() => {
+    if (!sessionId || !replayArtifactStatus) {
+      return;
+    }
+
+    const shouldPoll =
+      replayArtifactStatus.replayStatus === "processing" ||
+      replayArtifactStatus.videoStatus === "pending" ||
+      replayArtifactStatus.videoStatus === "processing" ||
+      (replayArtifactStatus.videoStatus === "ready" && !manifest?.finalRelativePath) ||
+      replayArtifactStatus.keyMomentsStatus === "pending" ||
+      replayArtifactStatus.keyMomentsStatus === "processing" ||
+      (replayArtifactStatus.keyMomentsStatus === "ready" && keyMomentArtifact === null);
+
+    if (!shouldPoll) {
+      return;
+    }
+
+    let cancelled = false;
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        try {
+          const nextStatus = await getSessionReplayStatus(sessionId);
+          if (cancelled) {
+            return;
+          }
+          setReplayArtifactStatus(nextStatus);
+
+          const nextManifest = await getSessionRecordingManifest(sessionId);
+          if (cancelled) {
+            return;
+          }
+          setManifest(nextManifest);
+
+          if (nextStatus.keyMomentsStatus === "ready") {
+            const nextKeyMomentArtifact = await loadStoredKeyMomentArtifact(sessionId);
+            if (!cancelled) {
+              setKeyMomentArtifact(nextKeyMomentArtifact);
+            }
+          } else if (!cancelled) {
+            setKeyMomentArtifact(null);
+          }
+        } catch (pollError) {
+          console.warn("Failed to poll replay readiness", pollError);
+        }
+      })();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [keyMomentArtifact, manifest?.finalRelativePath, replayArtifactStatus, sessionId]);
+
+  const finalVideoUrl =
+    replayArtifactStatus?.videoStatus === "ready" && manifest?.finalRelativePath
     ? getSessionRecordingFinalUrl(sessionId ?? "")
     : null;
   const keyMoments = useMemo(
@@ -295,7 +332,10 @@ export const SessionReplay: React.FC = () => {
     [sessionResume?.session, transcript]
   );
   const sessionTitle = sessionResume?.session.topic ?? "Session Summary";
-  const replayStatus = manifest?.finalRelativePath ? "Ready" : toDisplayStatus(manifest?.status);
+  const replayStatus = toDisplayStatus(
+    replayArtifactStatus?.replayStatus ??
+      (manifest?.finalRelativePath ? "ready" : manifest?.status ?? "idle")
+  );
 
   if (!sessionId) {
     return <div>Session not found</div>;
@@ -435,8 +475,12 @@ export const SessionReplay: React.FC = () => {
                   <div className="ts-replay-empty">
                     <h3>Replay video not available yet</h3>
                     <p>
-                      Status: {manifest?.status ?? "idle"}
-                      {manifest?.error ? ` - ${manifest.error}` : ""}
+                      Status: {replayArtifactStatus?.videoStatus ?? manifest?.status ?? "idle"}
+                      {replayArtifactStatus?.videoError
+                        ? ` - ${replayArtifactStatus.videoError}`
+                        : manifest?.error
+                          ? ` - ${manifest.error}`
+                          : ""}
                     </p>
                   </div>
                 )}
@@ -449,9 +493,19 @@ export const SessionReplay: React.FC = () => {
                     <h2>Important segments</h2>
                   </div>
                 </div>
-                {keyMoments.length === 0 ? (
+                {replayArtifactStatus?.keyMomentsStatus === "processing" ||
+                replayArtifactStatus?.keyMomentsStatus === "pending" ? (
                   <div className="ts-replay-empty">
-                    <p>No key moments were inferred for this session yet.</p>
+                    <p>Generating key moments from the completed transcript.</p>
+                  </div>
+                ) : keyMoments.length === 0 ? (
+                  <div className="ts-replay-empty">
+                    <p>
+                      {replayArtifactStatus?.keyMomentsStatus === "failed"
+                        ? replayArtifactStatus.keyMomentsError ||
+                          "Key moments could not be generated for this session."
+                        : "No key moments were inferred for this session yet."}
+                    </p>
                   </div>
                 ) : (
                   <div className="ts-replay-moments">

@@ -2,11 +2,16 @@ import React from "react";
 import { Session } from "../types/session";
 
 interface SessionAvailability {
+  replayStatus: "idle" | "processing" | "ready" | "failed" | "partial";
+  transcriptStatus: "idle" | "pending" | "processing" | "ready" | "failed" | "unavailable";
   hasTranscript: boolean;
   transcriptTurns: number;
+  videoStatus: "idle" | "pending" | "processing" | "ready" | "failed" | "unavailable";
   hasRecording: boolean;
   recordingSegments: number;
+  keyMomentsStatus: "idle" | "pending" | "processing" | "ready" | "failed" | "unavailable";
   hasFlashcards: boolean;
+  isReplayReady: boolean;
   isLoading: boolean;
 }
 
@@ -161,8 +166,13 @@ export const SessionCard: React.FC<SessionCardProps> = ({
     availability?.hasTranscript ? "Transcript" : null,
     availability?.hasRecording ? "Recording" : null,
     availability?.hasFlashcards ? "Flashcards" : null,
-    session.summary || session.checkpointCount > 0 ? "Replay" : null,
+    availability?.isReplayReady ? "Replay" : null,
   ].filter((value): value is string => Boolean(value));
+  const replayButtonLabel =
+    availability?.replayStatus === "processing" ? "Preparing replay" : "Replay";
+  const isReplayDisabled =
+    availability?.isLoading ||
+    (session.status === "completed" && availability?.isReplayReady === false);
 
   const handleResume = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -241,9 +251,10 @@ export const SessionCard: React.FC<SessionCardProps> = ({
             onClick={handleSummary}
             type="button"
             title="View replay"
+            disabled={Boolean(isReplayDisabled)}
           >
             <ReplayIcon />
-            Replay
+            {replayButtonLabel}
           </button>
           <button
             className="ts-home-inline-text-btn ts-home-inline-text-btn--primary"

@@ -23,7 +23,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from google.adk.events import Event, EventActions
 from google.adk.agents.live_request_queue import LiveRequestQueue
@@ -37,6 +37,11 @@ from session_key_moments import (
     SessionKeyMomentArtifact,
     create_key_moment_store,
     generate_key_moment_response,
+)
+from session_replay_status import (
+    SessionReplayStatus,
+    create_replay_status_store,
+    default_replay_status,
 )
 from session_recordings import SessionRecordingManifest, SessionRecordingStore
 from session_store import (
@@ -1009,9 +1014,212 @@ recording_store = SessionRecordingStore(Path(__file__).parent / "data" / "sessio
 key_moment_store = create_key_moment_store(
     Path(__file__).parent / "data" / "session_key_moments"
 )
+replay_status_store = create_replay_status_store(
+    Path(__file__).parent / "data" / "session_replay_status"
+)
+pending_replay_jobs: set[tuple[str, str]] = set()
+replay_job_tasks: set[asyncio.Task[None]] = set()
 
 # Define your runner
 runner = Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
+
+
+def _refresh_session_replay_status(session: SessionRecord) -> SessionReplayStatus:
+    transcript = session_store.list_turns(session.session_id)
+    manifest = recording_store.get_manifest(session.session_id)
+    key_moment_artifact = key_moment_store.get_artifact(session.session_id)
+    status = replay_status_store.get_status(session.session_id) or default_replay_status(
+        session.session_id
+    )
+
+    status.transcript_turn_count = len(transcript)
+    status.transcript_status = "ready" if session.status == "completed" else "idle"
+    status.video_segment_count = len(manifest.segments)
+
+    if manifest.final_relative_path:
+        status.video_status = "ready"
+        status.video_error = None
+    elif manifest.status == "processing":
+        status.video_status = "processing"
+        status.video_error = None
+    elif manifest.status == "failed" or manifest.error:
+        status.video_status = "failed"
+        status.video_error = manifest.error
+    elif session.status == "completed" and manifest.segments:
+        if status.video_status not in {"failed", "processing"}:
+            status.video_status = "pending"
+            status.video_error = None
+    elif session.status == "completed":
+        status.video_status = "unavailable"
+        status.video_error = None
+    else:
+        status.video_status = "idle"
+        status.video_error = None
+
+    if key_moment_artifact is not None:
+        status.key_moments_status = "ready"
+        status.key_moment_count = len(key_moment_artifact.key_moments)
+        status.key_moments_error = None
+    elif session.status == "completed" and transcript:
+        if status.key_moments_status not in {"failed", "processing"}:
+            status.key_moments_status = "pending"
+            status.key_moment_count = 0
+            status.key_moments_error = None
+    elif session.status == "completed":
+        status.key_moments_status = "unavailable"
+        status.key_moment_count = 0
+        status.key_moments_error = None
+    else:
+        status.key_moments_status = "idle"
+        status.key_moment_count = 0
+        status.key_moments_error = None
+
+    if status.requested_at is None and session.status == "completed":
+        status.requested_at = datetime.now(timezone.utc).isoformat()
+
+    return replay_status_store.save_status(status)
+
+
+def _enqueue_replay_job(
+    session_id: str,
+    job_name: str,
+    coroutine_factory,
+) -> None:
+    job_key = (session_id, job_name)
+    if job_key in pending_replay_jobs:
+        return
+
+    pending_replay_jobs.add(job_key)
+
+    async def runner_wrapper() -> None:
+        try:
+            await coroutine_factory()
+        finally:
+            pending_replay_jobs.discard(job_key)
+
+    task = asyncio.create_task(
+        runner_wrapper(),
+        name=f"replay-{job_name}-{session_id}",
+    )
+    replay_job_tasks.add(task)
+    task.add_done_callback(replay_job_tasks.discard)
+
+
+async def _run_recording_finalize_job(session_id: str) -> None:
+    replay_status_store.merge_status(
+        session_id,
+        requested_at=datetime.now(timezone.utc).isoformat(),
+        video_status="processing",
+        video_error=None,
+    )
+    try:
+        manifest = await asyncio.to_thread(recording_store.finalize_session, session_id)
+    except ValueError:
+        replay_status_store.merge_status(
+            session_id,
+            video_status="unavailable",
+            video_error=None,
+            video_segment_count=0,
+        )
+        return
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("Replay video finalize job failed for session_id=%s", session_id)
+        replay_status_store.merge_status(
+            session_id,
+            video_status="failed",
+            video_error=str(exc),
+        )
+        return
+
+    replay_status_store.merge_status(
+        session_id,
+        video_status="ready",
+        video_error=None,
+        video_segment_count=len(manifest.segments),
+    )
+
+
+async def _run_key_moment_job(session_id: str) -> None:
+    replay_status_store.merge_status(
+        session_id,
+        requested_at=datetime.now(timezone.utc).isoformat(),
+        key_moments_status="processing",
+        key_moments_error=None,
+    )
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        replay_status_store.merge_status(
+            session_id,
+            key_moments_status="failed",
+            key_moments_error="Session not found",
+        )
+        return
+
+    transcript = session_store.list_turns(session_id)
+    if not transcript:
+        replay_status_store.merge_status(
+            session_id,
+            key_moments_status="unavailable",
+            key_moments_error=None,
+            key_moment_count=0,
+        )
+        return
+
+    try:
+        response = await generate_key_moment_response(
+            session=session,
+            transcript=transcript,
+        )
+        key_moment_store.save_artifact(response.artifact)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("Key moment job failed for session_id=%s", session_id)
+        replay_status_store.merge_status(
+            session_id,
+            key_moments_status="failed",
+            key_moments_error=str(exc),
+            key_moment_count=0,
+        )
+        return
+
+    replay_status_store.merge_status(
+        session_id,
+        key_moments_status="ready",
+        key_moments_error=None,
+        key_moment_count=len(response.artifact.key_moments),
+    )
+
+
+def _trigger_session_replay_jobs(session: SessionRecord) -> SessionReplayStatus:
+    transcript = session_store.list_turns(session.session_id)
+    manifest = recording_store.get_manifest(session.session_id)
+    replay_status_store.merge_status(
+        session.session_id,
+        requested_at=datetime.now(timezone.utc).isoformat(),
+        transcript_status="ready",
+        transcript_turn_count=len(transcript),
+        video_status="pending" if manifest.segments else "unavailable",
+        video_segment_count=len(manifest.segments),
+        video_error=None,
+        key_moments_status="pending" if transcript else "unavailable",
+        key_moment_count=0,
+        key_moments_error=None,
+    )
+
+    if manifest.segments:
+        _enqueue_replay_job(
+            session.session_id,
+            "video",
+            lambda: _run_recording_finalize_job(session.session_id),
+        )
+    if transcript:
+        _enqueue_replay_job(
+            session.session_id,
+            "key-moments",
+            lambda: _run_key_moment_job(session.session_id),
+        )
+
+    return _refresh_session_replay_status(session)
 
 # ========================================
 # HTTP Endpoints
@@ -1119,6 +1327,20 @@ async def get_session_key_moments(session_id: str):
     return artifact
 
 
+@app.get(
+    "/v1/sessions/{session_id}/replay-status",
+    response_model=SessionReplayStatus,
+)
+async def get_session_replay_status(session_id: str):
+    """Return replay artifact readiness for a session."""
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return _refresh_session_replay_status(session)
+
+
 @app.post(
     "/v1/sessions/{session_id}/key-moments:generate",
     response_model=KeyMomentGenerationResponse,
@@ -1155,6 +1377,14 @@ async def generate_session_key_moments(
         ) from exc
 
     key_moment_store.save_artifact(response.artifact)
+    replay_status_store.merge_status(
+        session_id,
+        transcript_status="ready",
+        transcript_turn_count=len(transcript),
+        key_moments_status="ready",
+        key_moment_count=len(response.artifact.key_moments),
+        key_moments_error=None,
+    )
     if not include_debug:
         response.debug = None
     return response
@@ -1214,11 +1444,29 @@ async def finalize_session_recordings(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        return recording_store.finalize_session(session_id)
+        manifest = recording_store.finalize_session(session_id)
     except ValueError as exc:
+        replay_status_store.merge_status(
+            session_id,
+            video_status="unavailable",
+            video_error=None,
+            video_segment_count=0,
+        )
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
+        replay_status_store.merge_status(
+            session_id,
+            video_status="failed",
+            video_error=str(exc),
+        )
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    replay_status_store.merge_status(
+        session_id,
+        video_status="ready",
+        video_error=None,
+        video_segment_count=len(manifest.segments),
+    )
+    return manifest
 
 
 @app.get("/v1/sessions/{session_id}/recordings/final")
@@ -1229,11 +1477,11 @@ async def get_session_recording_final(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
     manifest = recording_store.get_manifest(session_id)
-    final_path = recording_store.get_final_video_path(session_id)
-    if final_path is None or not manifest.final_mime_type:
+    final_bytes = recording_store.get_final_video_bytes(session_id)
+    if final_bytes is None or not manifest.final_mime_type:
         raise HTTPException(status_code=404, detail="Final replay video not found")
 
-    return FileResponse(final_path, media_type=manifest.final_mime_type)
+    return Response(content=final_bytes, media_type=manifest.final_mime_type)
 
 
 @app.get("/v1/sessions/{session_id}/adk-debug")
@@ -1308,9 +1556,11 @@ async def create_checkpoint(session_id: str, request: CheckpointCreateRequest):
 async def complete_session(session_id: str):
     """Mark a session as completed."""
     try:
-        return session_store.complete_session(session_id)
+        session = session_store.complete_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
+    _trigger_session_replay_jobs(session)
+    return session
 
 
 # ========================================

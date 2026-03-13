@@ -20,7 +20,6 @@ import {
 import {
   createCheckpoint,
   completeSession,
-  finalizeSessionRecordings,
   getSessionResume,
   transcriptToEventLog,
 } from "../api/sessions";
@@ -813,7 +812,6 @@ export const SessionCanvas: React.FC = () => {
         await stopRecordingIfNeeded();
         canvasActivityWindowManagerRef.current?.flush("manual");
         ws.disconnect();
-        await finalizeSessionRecordings(sessionId);
         await completeSession(sessionId);
         navigate(`/session/${sessionId}/replay`);
       } catch (error) {
