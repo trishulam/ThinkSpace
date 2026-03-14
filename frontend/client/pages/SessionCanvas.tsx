@@ -1,4 +1,6 @@
 import React from "react";
+import ReactDOM from "react-dom/client";
+import { flushSync } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // import { useSession } from '../context/SessionContext'
@@ -6,6 +8,7 @@ import {
   AssetRecordType,
   DefaultSizeStyle,
   // ErrorBoundary,
+  defaultShapeUtils,
   Editor,
   TLShapeId,
   TLComponents,
@@ -52,6 +55,10 @@ import {
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useAudioWorklets } from "../hooks/useAudioWorklets";
 import { useSessionRecording } from "../hooks/useSessionRecording";
+import type {
+  GraphWidgetSpec,
+  NotationWidgetSpec,
+} from "../api/widgets";
 import {
   CanvasActivityWindowManager,
   type CanvasActivityWindow,
@@ -69,6 +76,11 @@ import type {
   InterpreterLifecyclePayload,
   TalkingState,
 } from "../types/agent-live";
+import { thinkspaceShapeUtils } from "../components/widgets/ThinkspaceWidgetShapeUtil";
+import {
+  NotationCardContent,
+  notationCardRootStyle,
+} from "../components/widgets/NotationWidget";
 
 // Customize tldraw's styles to play to the agent's strengths
 DefaultSizeStyle.setDefaultValue("s");
@@ -316,6 +328,17 @@ type CanvasInsertVisualPayload = {
   mime_type?: string;
 };
 
+type CanvasInsertWidgetPayload = {
+  artifact_id: string;
+  widget_kind: "graph" | "notation";
+  title: string;
+  spec: GraphWidgetSpec | NotationWidgetSpec;
+  x: number;
+  y: number;
+  w?: number;
+  h?: number;
+};
+
 type CanvasDelegatePayload = {
   goal: string;
   target_scope: "viewport" | "selection";
@@ -337,6 +360,35 @@ const CANVAS_ERROR_TOAST_VISIBLE_MS = 4000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isGraphWidgetSpec(value: unknown): value is GraphWidgetSpec {
+  return (
+    isRecord(value) &&
+    typeof value.title === "string" &&
+    typeof value.expression === "string" &&
+    typeof value.x_min === "number" &&
+    typeof value.x_max === "number" &&
+    typeof value.y_min === "number" &&
+    typeof value.y_max === "number" &&
+    typeof value.x_label === "string" &&
+    typeof value.y_label === "string"
+  );
+}
+
+function isNotationWidgetSpec(value: unknown): value is NotationWidgetSpec {
+  return (
+    isRecord(value) &&
+    typeof value.title === "string" &&
+    Array.isArray(value.blocks) &&
+    value.blocks.every(
+      (block) =>
+        isRecord(block) &&
+        typeof block.latex === "string" &&
+        typeof block.label === "string",
+    ) &&
+    typeof value.annotation === "string"
+  );
 }
 
 function normalizeCanvasInsertVisualPayload(
@@ -378,6 +430,172 @@ function normalizeCanvasInsertVisualPayload(
     w,
     h,
     mime_type: typeof mimeType === "string" ? mimeType : undefined,
+  };
+}
+
+function normalizeCanvasInsertWidgetPayload(
+  payload: unknown,
+): CanvasInsertWidgetPayload | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const artifactId = payload.artifact_id;
+  const widgetKind = payload.widget_kind;
+  const title = payload.title;
+  const spec = payload.spec;
+  const x = payload.x;
+  const y = payload.y;
+  const w = payload.w;
+  const h = payload.h;
+
+  if (
+    typeof artifactId !== "string" ||
+    (widgetKind !== "graph" && widgetKind !== "notation") ||
+    typeof title !== "string" ||
+    typeof x !== "number" ||
+    typeof y !== "number"
+  ) {
+    return null;
+  }
+
+  if (
+    (widgetKind === "graph" && !isGraphWidgetSpec(spec)) ||
+    (widgetKind === "notation" && !isNotationWidgetSpec(spec))
+  ) {
+    return null;
+  }
+
+  return {
+    artifact_id: artifactId,
+    widget_kind: widgetKind,
+    title,
+    spec: spec as GraphWidgetSpec | NotationWidgetSpec,
+    x,
+    y,
+    w: typeof w === "number" ? w : undefined,
+    h: typeof h === "number" ? h : undefined,
+  };
+}
+
+function measureNotationWidgetSize(spec: NotationWidgetSpec): { w: number; h: number } {
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "-10000px";
+  host.style.pointerEvents = "none";
+  host.style.visibility = "hidden";
+  host.style.zIndex = "-1";
+  host.style.width = "max-content";
+  host.style.maxWidth = "none";
+  document.body.appendChild(host);
+
+  const root = ReactDOM.createRoot(host);
+
+  try {
+    flushSync(() => {
+      root.render(
+        <div
+          style={{
+            ...notationCardRootStyle,
+            width: "max-content",
+            maxWidth: "none",
+          }}
+        >
+          <NotationCardContent spec={spec} />
+        </div>,
+      );
+    });
+
+    const element = host.firstElementChild as HTMLElement | null;
+    const rect = element?.getBoundingClientRect();
+    const measuredWidth = element
+      ? Math.max(rect?.width ?? 0, element.scrollWidth)
+      : 0;
+    const measuredHeight = element
+      ? Math.max(rect?.height ?? 0, element.scrollHeight)
+      : 0;
+
+    return {
+      w: Math.max(220, Math.ceil(measuredWidth || 420)),
+      h: Math.max(180, Math.ceil(measuredHeight || 220)),
+    };
+  } finally {
+    root.unmount();
+    document.body.removeChild(host);
+  }
+}
+
+function waitForNextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+async function measureNotationWidgetSizeAsync(
+  spec: NotationWidgetSpec,
+): Promise<{ w: number; h: number }> {
+  const initialSize = measureNotationWidgetSize(spec);
+  const fontSet = (document as Document & { fonts?: FontFaceSet }).fonts;
+  if (fontSet?.ready) {
+    await fontSet.ready;
+    await waitForNextPaint();
+    return measureNotationWidgetSize(spec);
+  }
+
+  return initialSize;
+}
+
+async function insertWidgetIntoCanvas(
+  editor: Editor,
+  payload: CanvasInsertWidgetPayload,
+): Promise<{
+  applied: boolean;
+  summary: string;
+  shapeId?: TLShapeId;
+  bounds?: { x: number; y: number; w: number; h: number };
+}> {
+  const shapeId = createShapeId();
+  const createdAt = new Date().toISOString();
+  const widgetMeta = buildGeneratedWidgetMeta(payload, createdAt);
+  const resolvedSize =
+    payload.widget_kind === "notation"
+      ? await measureNotationWidgetSizeAsync(payload.spec as NotationWidgetSpec)
+      : {
+          w: payload.w ?? 640,
+          h: payload.h ?? 420,
+        };
+
+  editor.createShapes([
+    {
+      id: shapeId,
+      type: "thinkspace-widget",
+      x: payload.x,
+      y: payload.y,
+      props: {
+        w: resolvedSize.w,
+        h: resolvedSize.h,
+        widgetKind: payload.widget_kind,
+        specJson: JSON.stringify(payload.spec),
+      },
+      meta: widgetMeta,
+    } as never,
+  ]);
+
+  editor.select(shapeId);
+
+  return {
+    applied: true,
+    summary: payload.title
+      ? `Title: ${payload.title}`
+      : "Widget inserted into canvas",
+    shapeId,
+    bounds: {
+      x: payload.x,
+      y: payload.y,
+      w: resolvedSize.w,
+      h: resolvedSize.h,
+    },
   };
 }
 
@@ -504,6 +722,24 @@ function buildGeneratedVisualMeta(
   };
 }
 
+function buildGeneratedWidgetMeta(
+  payload: CanvasInsertWidgetPayload,
+  createdAt: string,
+) {
+  return {
+    artifactId: payload.artifact_id,
+    title: payload.title,
+    thinkspace_actor: "agent",
+    thinkspace_source_tool:
+      payload.widget_kind === "graph"
+        ? "canvas.generate_graph"
+        : "canvas.generate_notation",
+    thinkspace_artifact_id: payload.artifact_id,
+    thinkspace_widget_kind: payload.widget_kind,
+    thinkspace_created_at: createdAt,
+  };
+}
+
 function mergeDelegateCreatedShapeMeta(
   existingMeta: Record<string, unknown>,
   jobId: string,
@@ -622,6 +858,7 @@ function insertVisualIntoCanvas(
     },
   };
 }
+
 
 function getDelegateBounds(editor: Editor, payload: CanvasDelegatePayload) {
   if (payload.target_scope === "selection") {
@@ -1367,6 +1604,97 @@ export const SessionCanvas: React.FC = () => {
           }
           return;
         }
+        case "canvas.insert_widget": {
+          if (!editor) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Canvas editor is not ready",
+            });
+            return;
+          }
+
+          const insertPayload = normalizeCanvasInsertWidgetPayload(action.payload);
+          if (!insertPayload) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Invalid canvas widget payload",
+            });
+            return;
+          }
+
+          void (async () => {
+            try {
+              const result = await insertWidgetIntoCanvas(editor, insertPayload);
+              if (result.applied) {
+                if (result.bounds && result.shapeId) {
+                  await sendFocusedScreenshot(
+                    captureCanvasScreenshotForBounds(
+                      editor,
+                      result.bounds,
+                      [result.shapeId],
+                    ),
+                    "Failed to capture generated widget screenshot",
+                  );
+                }
+                clearCanvasToast();
+                ws.sendFrontendAck({
+                  status: "applied",
+                  action_type: action.type,
+                  source_tool: action.source_tool,
+                  job_id: action.job_id,
+                  summary: result.summary,
+                });
+              } else {
+                showCanvasToast(
+                  {
+                    jobId: action.job_id,
+                    title: "Widget insertion failed",
+                    message: result.summary,
+                    severity: "error",
+                    isLoading: false,
+                  },
+                  CANVAS_ERROR_TOAST_VISIBLE_MS,
+                );
+                ws.sendFrontendAck({
+                  status: "failed",
+                  action_type: action.type,
+                  source_tool: action.source_tool,
+                  job_id: action.job_id,
+                  summary: result.summary,
+                });
+              }
+            } catch (error) {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Widget insertion failed";
+              showCanvasToast(
+                {
+                  jobId: action.job_id,
+                  title: "Widget insertion failed",
+                  message,
+                  severity: "error",
+                  isLoading: false,
+                },
+                CANVAS_ERROR_TOAST_VISIBLE_MS,
+              );
+              ws.sendFrontendAck({
+                status: "failed",
+                action_type: action.type,
+                source_tool: action.source_tool,
+                job_id: action.job_id,
+                summary: message,
+              });
+            }
+          })();
+          return;
+        }
         case "flashcards.begin":
         case "flashcards.show":
         case "flashcards.next":
@@ -1743,6 +2071,7 @@ export const SessionCanvas: React.FC = () => {
               onMount={setEditor}
               licenseKey="tldraw-2026-06-18/WyJIUVlKamNRTCIsWyIqIl0sMTYsIjIwMjYtMDYtMTgiXQ.quVBu6P7tCMq3MRg6LyYhHKOvgiHA4PJpP1CiA3D2qPpLTuOPTHjvNNZjrkyFKtNsrvtiKocSV+PLk44uh6j2Q"
               tools={tools}
+              shapeUtils={[...defaultShapeUtils, ...thinkspaceShapeUtils]}
               overrides={overrides}
               components={components}
             >

@@ -2136,7 +2136,6 @@
   justify-content: space-between;
   gap: 22px;
   padding: 22px;
-  cursor: pointer;
 }
 
 .ts-home-session-card:hover {
@@ -2149,6 +2148,25 @@
   align-items: flex-start;
   min-width: 0;
   flex: 1;
+}
+
+.ts-home-session-card-main--interactive {
+  border: none;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ts-home-session-card-main--interactive:hover .ts-home-session-card-title {
+  color: #5b2bee;
+}
+
+.ts-home-session-card-main--interactive:focus-visible {
+  outline: 2px solid rgba(91, 43, 238, 0.42);
+  outline-offset: 8px;
 }
 
 .ts-home-session-card-icon {
@@ -2267,6 +2285,7 @@
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .ts-home-inline-primary-btn,
@@ -3009,18 +3028,26 @@
 }
 
 .ts-home-inline-text-btn {
-  border: none;
-  background: transparent;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(255, 255, 255, 0.82);
   color: #475569;
-  padding: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .ts-home-inline-text-btn--primary,
@@ -3028,9 +3055,35 @@
   color: #5b2bee;
 }
 
+.ts-home-inline-text-btn:hover:not(:disabled) {
+  border-color: rgba(91, 43, 238, 0.26);
+  background: rgba(91, 43, 238, 0.06);
+  transform: translateY(-1px);
+}
+
+.ts-home-inline-text-btn:focus-visible {
+  outline: 2px solid rgba(91, 43, 238, 0.28);
+  outline-offset: 2px;
+}
+
 .ts-home-inline-text-btn:disabled {
-  cursor: default;
   opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ts-home-inline-text-btn--secondary {
+  min-width: 112px;
+}
+
+.ts-home-inline-text-btn--primary {
+  min-width: 126px;
+  border-color: transparent;
+  background: rgba(91, 43, 238, 0.1);
+}
+
+.ts-home-inline-text-btn--primary:hover:not(:disabled) {
+  background: rgba(91, 43, 238, 0.14);
 }
 
 .ts-home-inline-text-btn svg {
@@ -4018,23 +4071,62 @@
 }
 
 .ts-home-inline-text-btn {
-  border: none;
-  background: transparent;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(255, 255, 255, 0.82);
   color: #475569;
-  padding: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .ts-home-inline-text-btn--primary,
 .ts-home-inline-text-btn:hover {
   color: #5b2bee;
+}
+
+.ts-home-inline-text-btn:hover:not(:disabled) {
+  border-color: rgba(91, 43, 238, 0.26);
+  background: rgba(91, 43, 238, 0.06);
+  transform: translateY(-1px);
+}
+
+.ts-home-inline-text-btn:focus-visible {
+  outline: 2px solid rgba(91, 43, 238, 0.28);
+  outline-offset: 2px;
+}
+
+.ts-home-inline-text-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ts-home-inline-text-btn--secondary {
+  min-width: 112px;
+}
+
+.ts-home-inline-text-btn--primary {
+  min-width: 126px;
+  border-color: transparent;
+  background: rgba(91, 43, 238, 0.1);
+}
+
+.ts-home-inline-text-btn--primary:hover:not(:disabled) {
+  background: rgba(91, 43, 238, 0.14);
 }
 
 .ts-home-inline-text-btn svg {

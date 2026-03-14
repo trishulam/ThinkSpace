@@ -101,7 +101,11 @@ function isToolResultMessage(value: unknown): value is ToolResultMessage {
 
 function formatToolResultContent(message: ToolResultMessage): string {
 	const summary = message.result.summary || message.result.tool
-	if (message.result.tool !== 'canvas.generate_visual') {
+	if (
+		message.result.tool !== 'canvas.generate_visual' &&
+		message.result.tool !== 'canvas.generate_graph' &&
+		message.result.tool !== 'canvas.generate_notation'
+	) {
 		return `${message.result.status}: ${summary}`
 	}
 

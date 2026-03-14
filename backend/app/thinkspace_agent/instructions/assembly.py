@@ -30,6 +30,29 @@ def _build_static_instruction() -> str:
     return "\n\n".join(part for part in parts if part)
 
 
+def get_static_instruction_text() -> str:
+    """Return the assembled static instruction text."""
+
+    return _build_static_instruction()
+
+
+def build_instruction_text(memory: str | None = None) -> str:
+    """Return the full instruction text for an optional memory payload."""
+
+    static_instruction = _build_static_instruction()
+    if not isinstance(memory, str) or not memory.strip():
+        return static_instruction
+
+    return (
+        f"{static_instruction}\n\n"
+        "## Learner Conversation Memory\n"
+        "The following is persisted memory from earlier turns in this same session. "
+        "Use it to answer follow-up questions, maintain continuity, and avoid claiming "
+        "that you cannot recall prior discussion when the memory below contains it.\n\n"
+        f"{memory.strip()}"
+    )
+
+
 def build_instruction() -> Callable[[ReadonlyContext], str | Awaitable[str]]:
     """Build an instruction provider that injects persisted learner memory."""
 
