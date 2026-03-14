@@ -12,6 +12,7 @@ import {
 	TldrawUiContextProvider,
 	TLShape,
 } from 'tldraw'
+import { thinkspaceShapeUtils } from '../widgets/ThinkspaceWidgetShapeUtil'
 
 export function TldrawViewer({
 	shapes,
@@ -69,7 +70,7 @@ export function TldrawViewer({
 					components={components ?? {}}
 					inferDarkMode={false}
 					onMount={setEditor}
-					shapeUtils={defaultShapeUtils}
+					shapeUtils={[...defaultShapeUtils, ...thinkspaceShapeUtils]}
 					bindingUtils={defaultBindingUtils}
 					tools={tools}
 					textOptions={defaultTextOptions}

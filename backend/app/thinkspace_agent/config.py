@@ -9,6 +9,7 @@ DEFAULT_FLASHCARD_MODEL = "gemini-3-flash-preview"
 DEFAULT_KEY_MOMENT_MODEL = "gemini-3-flash-preview"
 DEFAULT_SESSION_COMPACTION_MODEL = "gemini-3-flash-preview"
 DEFAULT_CANVAS_INTERPRETER_MODEL = "gemini-3-flash-preview"
+DEFAULT_WIDGET_REASONER_MODEL = "gemini-2.5-flash"
 DEFAULT_CANVAS_VISUAL_PLANNER_MODEL = "gemini-2.5-flash"
 DEFAULT_CANVAS_VISUAL_IMAGE_QUALITY_MODEL = "gemini-3.1-flash-image-preview"
 DEFAULT_CANVAS_VISUAL_IMAGE_FAST_MODEL = "gemini-2.5-flash-image"
@@ -68,6 +69,15 @@ def get_canvas_interpreter_model() -> str:
     return os.getenv(
         "THINKSPACE_CANVAS_INTERPRETER_MODEL",
         DEFAULT_CANVAS_INTERPRETER_MODEL,
+    )
+
+
+def get_widget_reasoner_model() -> str:
+    """Return the model used by the widget reasoner playground service."""
+
+    return os.getenv(
+        "THINKSPACE_WIDGET_REASONER_MODEL",
+        DEFAULT_WIDGET_REASONER_MODEL,
     )
 
 

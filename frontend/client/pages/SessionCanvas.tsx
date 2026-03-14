@@ -6,6 +6,7 @@ import {
   AssetRecordType,
   DefaultSizeStyle,
   // ErrorBoundary,
+  defaultShapeUtils,
   Editor,
   TLShapeId,
   TLComponents,
@@ -52,6 +53,10 @@ import {
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useAudioWorklets } from "../hooks/useAudioWorklets";
 import { useSessionRecording } from "../hooks/useSessionRecording";
+import type {
+  GraphWidgetSpec,
+  NotationWidgetSpec,
+} from "../api/widgets";
 import {
   CanvasActivityWindowManager,
   type CanvasActivityWindow,
@@ -69,6 +74,7 @@ import type {
   InterpreterLifecyclePayload,
   TalkingState,
 } from "../types/agent-live";
+import { thinkspaceShapeUtils } from "../components/widgets/ThinkspaceWidgetShapeUtil";
 
 // Customize tldraw's styles to play to the agent's strengths
 DefaultSizeStyle.setDefaultValue("s");
@@ -211,6 +217,17 @@ type CanvasInsertVisualPayload = {
   mime_type?: string;
 };
 
+type CanvasInsertWidgetPayload = {
+  artifact_id: string;
+  widget_kind: "graph" | "notation";
+  title: string;
+  spec: GraphWidgetSpec | NotationWidgetSpec;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
 type CanvasDelegatePayload = {
   goal: string;
   target_scope: "viewport" | "selection";
@@ -232,6 +249,35 @@ const CANVAS_ERROR_TOAST_VISIBLE_MS = 4000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isGraphWidgetSpec(value: unknown): value is GraphWidgetSpec {
+  return (
+    isRecord(value) &&
+    typeof value.title === "string" &&
+    typeof value.expression === "string" &&
+    typeof value.x_min === "number" &&
+    typeof value.x_max === "number" &&
+    typeof value.y_min === "number" &&
+    typeof value.y_max === "number" &&
+    typeof value.x_label === "string" &&
+    typeof value.y_label === "string"
+  );
+}
+
+function isNotationWidgetSpec(value: unknown): value is NotationWidgetSpec {
+  return (
+    isRecord(value) &&
+    typeof value.title === "string" &&
+    Array.isArray(value.blocks) &&
+    value.blocks.every(
+      (block) =>
+        isRecord(block) &&
+        typeof block.latex === "string" &&
+        typeof block.label === "string",
+    ) &&
+    typeof value.annotation === "string"
+  );
 }
 
 function normalizeCanvasInsertVisualPayload(
@@ -273,6 +319,53 @@ function normalizeCanvasInsertVisualPayload(
     w,
     h,
     mime_type: typeof mimeType === "string" ? mimeType : undefined,
+  };
+}
+
+function normalizeCanvasInsertWidgetPayload(
+  payload: unknown,
+): CanvasInsertWidgetPayload | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const artifactId = payload.artifact_id;
+  const widgetKind = payload.widget_kind;
+  const title = payload.title;
+  const spec = payload.spec;
+  const x = payload.x;
+  const y = payload.y;
+  const w = payload.w;
+  const h = payload.h;
+
+  if (
+    typeof artifactId !== "string" ||
+    (widgetKind !== "graph" && widgetKind !== "notation") ||
+    typeof title !== "string" ||
+    typeof x !== "number" ||
+    typeof y !== "number" ||
+    typeof w !== "number" ||
+    typeof h !== "number"
+  ) {
+    return null;
+  }
+
+  if (
+    (widgetKind === "graph" && !isGraphWidgetSpec(spec)) ||
+    (widgetKind === "notation" && !isNotationWidgetSpec(spec))
+  ) {
+    return null;
+  }
+
+  return {
+    artifact_id: artifactId,
+    widget_kind: widgetKind,
+    title,
+    spec: spec as GraphWidgetSpec | NotationWidgetSpec,
+    x,
+    y,
+    w,
+    h,
   };
 }
 
@@ -399,6 +492,24 @@ function buildGeneratedVisualMeta(
   };
 }
 
+function buildGeneratedWidgetMeta(
+  payload: CanvasInsertWidgetPayload,
+  createdAt: string,
+) {
+  return {
+    artifactId: payload.artifact_id,
+    title: payload.title,
+    thinkspace_actor: "agent",
+    thinkspace_source_tool:
+      payload.widget_kind === "graph"
+        ? "canvas.generate_graph"
+        : "canvas.generate_notation",
+    thinkspace_artifact_id: payload.artifact_id,
+    thinkspace_widget_kind: payload.widget_kind,
+    thinkspace_created_at: createdAt,
+  };
+}
+
 function mergeDelegateCreatedShapeMeta(
   existingMeta: Record<string, unknown>,
   jobId: string,
@@ -509,6 +620,52 @@ function insertVisualIntoCanvas(
       : "Visual inserted into canvas",
     shapeId,
     assetId,
+    bounds: {
+      x: payload.x,
+      y: payload.y,
+      w: payload.w,
+      h: payload.h,
+    },
+  };
+}
+
+function insertWidgetIntoCanvas(
+  editor: Editor,
+  payload: CanvasInsertWidgetPayload,
+): {
+  applied: boolean;
+  summary: string;
+  shapeId?: TLShapeId;
+  bounds?: { x: number; y: number; w: number; h: number };
+} {
+  const shapeId = createShapeId();
+  const createdAt = new Date().toISOString();
+  const widgetMeta = buildGeneratedWidgetMeta(payload, createdAt);
+
+  editor.createShapes([
+    {
+      id: shapeId,
+      type: "thinkspace-widget",
+      x: payload.x,
+      y: payload.y,
+      props: {
+        w: payload.w,
+        h: payload.h,
+        widgetKind: payload.widget_kind,
+        specJson: JSON.stringify(payload.spec),
+      },
+      meta: widgetMeta,
+    } as never,
+  ]);
+
+  editor.select(shapeId);
+
+  return {
+    applied: true,
+    summary: payload.title
+      ? `Title: ${payload.title}`
+      : "Widget inserted into canvas",
+    shapeId,
     bounds: {
       x: payload.x,
       y: payload.y,
@@ -1261,6 +1418,73 @@ export const SessionCanvas: React.FC = () => {
           }
           return;
         }
+        case "canvas.insert_widget": {
+          if (!editor) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Canvas editor is not ready",
+            });
+            return;
+          }
+
+          const insertPayload = normalizeCanvasInsertWidgetPayload(action.payload);
+          if (!insertPayload) {
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: "Invalid canvas widget payload",
+            });
+            return;
+          }
+
+          const result = insertWidgetIntoCanvas(editor, insertPayload);
+          if (result.applied) {
+            void (async () => {
+              if (result.bounds && result.shapeId) {
+                await sendFocusedScreenshot(
+                  captureCanvasScreenshotForBounds(
+                    editor,
+                    result.bounds,
+                    [result.shapeId],
+                  ),
+                  "Failed to capture generated widget screenshot",
+                );
+              }
+              clearCanvasToast();
+              ws.sendFrontendAck({
+                status: "applied",
+                action_type: action.type,
+                source_tool: action.source_tool,
+                job_id: action.job_id,
+                summary: result.summary,
+              });
+            })();
+          } else {
+            showCanvasToast(
+              {
+                jobId: action.job_id,
+                title: "Widget insertion failed",
+                message: result.summary,
+                severity: "error",
+                isLoading: false,
+              },
+              CANVAS_ERROR_TOAST_VISIBLE_MS,
+            );
+            ws.sendFrontendAck({
+              status: "failed",
+              action_type: action.type,
+              source_tool: action.source_tool,
+              job_id: action.job_id,
+              summary: result.summary,
+            });
+          }
+          return;
+        }
         case "flashcards.begin":
         case "flashcards.show":
         case "flashcards.next":
@@ -1637,6 +1861,7 @@ export const SessionCanvas: React.FC = () => {
               onMount={setEditor}
               licenseKey="tldraw-2026-06-18/WyJIUVlKamNRTCIsWyIqIl0sMTYsIjIwMjYtMDYtMTgiXQ.quVBu6P7tCMq3MRg6LyYhHKOvgiHA4PJpP1CiA3D2qPpLTuOPTHjvNNZjrkyFKtNsrvtiKocSV+PLk44uh6j2Q"
               tools={tools}
+              shapeUtils={[...defaultShapeUtils, ...thinkspaceShapeUtils]}
               overrides={overrides}
               components={components}
             >

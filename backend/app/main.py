@@ -69,6 +69,13 @@ from thinkspace_agent.tools.canvas_visual_jobs import (  # noqa: E402
 from thinkspace_agent.tools.canvas_visuals import (  # noqa: E402
     CANVAS_GENERATE_VISUAL_TOOL,
 )
+from thinkspace_agent.tools.canvas_widget_jobs import (  # noqa: E402
+    canvas_widget_job_outbox,
+)
+from thinkspace_agent.tools.canvas_widgets import (  # noqa: E402
+    CANVAS_GENERATE_GRAPH_TOOL,
+    CANVAS_GENERATE_NOTATION_TOOL,
+)
 from thinkspace_agent.tools.canvas_delegate import (  # noqa: E402
     CANVAS_DELEGATE_TASK_TOOL,
 )
@@ -114,6 +121,15 @@ from thinkspace_agent.context.interpreter_reasoning_trace import (  # noqa: E402
     now_iso as interpreter_trace_now_iso,
     update_interpreter_reasoning_trace,
 )
+from thinkspace_agent.instructions.assembly import (  # noqa: E402
+    build_instruction_text,
+    get_static_instruction_text,
+)
+from thinkspace_agent.widgets.models import (  # noqa: E402
+    WidgetReasonerRequest,
+    WidgetReasonerResponse,
+)
+from thinkspace_agent.widgets.reasoner import reason_widget  # noqa: E402
 
 def _configure_logging() -> None:
     """Configure console and rotating file logging for the backend."""
@@ -729,6 +745,43 @@ def _build_tool_result_message(result: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _summarize_live_tool_declarations() -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for tool in getattr(agent, "tools", []) or []:
+        tool_name = getattr(tool, "name", type(tool).__name__)
+        declaration_getter = getattr(tool, "_get_declaration", None)
+        if not callable(declaration_getter):
+            summaries.append(
+                {
+                    "name": tool_name,
+                    "declaration_available": False,
+                }
+            )
+            continue
+        try:
+            declaration = declaration_getter()
+            parameters = getattr(declaration, "parameters", None)
+            properties = getattr(parameters, "properties", None)
+            required = getattr(parameters, "required", None)
+            summaries.append(
+                {
+                    "name": tool_name,
+                    "declaration_available": True,
+                    "property_names": sorted(list((properties or {}).keys())),
+                    "required": list(required or []),
+                }
+            )
+        except Exception as exc:  # pragma: no cover - debug aid
+            summaries.append(
+                {
+                    "name": tool_name,
+                    "declaration_available": False,
+                    "declaration_error": f"{exc.__class__.__name__}: {exc}",
+                }
+            )
+    return summaries
+
+
 def _build_interpreter_lifecycle_action(
     lifecycle_event: dict[str, object],
 ) -> dict[str, object] | None:
@@ -917,6 +970,18 @@ def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
         )
 
     if (
+        action_type == "canvas.context_requested"
+        and source_tool in {CANVAS_GENERATE_GRAPH_TOOL, CANVAS_GENERATE_NOTATION_TOOL}
+    ):
+        return (
+            f"The `{source_tool}` job is now visibly in progress in the UI. "
+            "Stay on the same topic while the widget is being prepared. Briefly "
+            "recap, review, ask a light reflective question, or make small "
+            "on-topic conversation, but do not describe the widget as already "
+            "visible or complete."
+        )
+
+    if (
         action_type == "canvas.delegate_requested"
         and source_tool == CANVAS_DELEGATE_TASK_TOOL
     ):
@@ -927,6 +992,12 @@ def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
             "small topical conversation, but do not describe the delegated canvas "
             "result as finished yet."
         )
+
+    if action_type == "canvas.insert_widget":
+        summary = ack.get("summary")
+        if summary:
+            return f"The widget is now inserted on the canvas. {summary}"
+        return "The widget is now inserted on the canvas."
 
     if action_type != "canvas.insert_visual":
         return None
@@ -956,6 +1027,15 @@ def _build_background_tool_semantic_update(result: dict[str, object]) -> str | N
             f"Reason: {reason} "
             "Decide whether to retry with a clearer brief, ask a clarifying "
             "question, or use another teaching strategy."
+        )
+
+    if tool in {CANVAS_GENERATE_GRAPH_TOOL, CANVAS_GENERATE_NOTATION_TOOL}:
+        reason = normalized_summary or "The widget could not be generated."
+        return (
+            f"The `{tool}` job failed. "
+            f"Reason: {reason} "
+            "Decide whether to retry with a clearer prompt, ask a clarifying "
+            "question, or continue teaching without the widget."
         )
 
     if tool == CANVAS_DELEGATE_TASK_TOOL:
@@ -1567,6 +1647,28 @@ async def complete_session(session_id: str):
     return session
 
 
+@app.post(
+    "/v1/dev/widgets/reason",
+    response_model=WidgetReasonerResponse,
+)
+async def reason_widget_preview(request: WidgetReasonerRequest):
+    """Generate a widget spec for the frontend playground."""
+
+    try:
+        return await asyncio.to_thread(reason_widget, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "Widget reasoner failed for widget_type=%s",
+            request.widget_type,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Widget reasoner failed: {exc}",
+        ) from exc
+
+
 # ========================================
 # WebSocket Endpoint
 # ========================================
@@ -1684,6 +1786,33 @@ async def websocket_endpoint(
         if adk_session_before_live is not None
         else []
     )
+    adk_session_state_before_live = (
+        getattr(adk_session_before_live, "state", {}) if adk_session_before_live else {}
+    )
+    conversation_memory = (
+        adk_session_state_before_live.get("conversation_memory")
+        if isinstance(adk_session_state_before_live, dict)
+        else None
+    )
+    static_instruction_text = get_static_instruction_text()
+    final_instruction_text = build_instruction_text(
+        conversation_memory if isinstance(conversation_memory, str) else None
+    )
+    tool_declaration_summaries = _summarize_live_tool_declarations()
+    logger.info(
+        "Live handshake payload summary: session_id=%s model=%s static_instruction_len=%s memory_chars=%s final_instruction_len=%s tool_count=%s tools=%s",
+        session_id,
+        model_name,
+        len(static_instruction_text),
+        (
+            len(conversation_memory.strip())
+            if isinstance(conversation_memory, str) and conversation_memory.strip()
+            else 0
+        ),
+        len(final_instruction_text),
+        len(tool_declaration_summaries),
+        json.dumps(tool_declaration_summaries, ensure_ascii=True),
+    )
     recent_non_memory_invocations = _summarize_recent_non_memory_invocations_for_debug(
         adk_events_before_live
     )
@@ -1699,6 +1828,9 @@ async def websocket_endpoint(
         user_id, session_id
     )
     canvas_background_result_queue = await canvas_visual_job_outbox.subscribe(
+        user_id, session_id
+    )
+    canvas_widget_background_result_queue = await canvas_widget_job_outbox.subscribe(
         user_id, session_id
     )
     canvas_delegate_background_result_queue = await canvas_delegate_job_outbox.subscribe(
@@ -2625,6 +2757,13 @@ async def websocket_endpoint(
         ),
         name="websocket-canvas-background-tool-results",
     )
+    canvas_widget_background_results = asyncio.create_task(
+        background_tool_result_task(
+            result_queue=canvas_widget_background_result_queue,
+            task_label="canvas_widget_background_tool_result_task",
+        ),
+        name="websocket-canvas-widget-background-tool-results",
+    )
     canvas_delegate_background_results = asyncio.create_task(
         background_tool_result_task(
             result_queue=canvas_delegate_background_result_queue,
@@ -2635,6 +2774,7 @@ async def websocket_endpoint(
     background_tasks = (
         flashcard_background_results,
         canvas_background_results,
+        canvas_widget_background_results,
         canvas_delegate_background_results,
     )
 
@@ -2675,6 +2815,11 @@ async def websocket_endpoint(
             user_id,
             session_id,
             canvas_background_result_queue,
+        )
+        await canvas_widget_job_outbox.unsubscribe(
+            user_id,
+            session_id,
+            canvas_widget_background_result_queue,
         )
         await canvas_delegate_job_outbox.unsubscribe(
             user_id,
@@ -2719,6 +2864,8 @@ async def websocket_endpoint(
             try:
                 await task
             except asyncio.CancelledError:
+                pass
+            except WebSocketDisconnect:
                 pass
             except Exception:
                 raise

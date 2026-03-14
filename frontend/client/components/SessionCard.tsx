@@ -185,8 +185,13 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   };
 
   return (
-    <div className="ts-home-session-card" onClick={() => onResume(session.id)}>
-      <div className="ts-home-session-card-main">
+    <article className="ts-home-session-card">
+      <button
+        className="ts-home-session-card-main ts-home-session-card-main--interactive"
+        onClick={() => onResume(session.id)}
+        type="button"
+        aria-label={`Open ${session.topic} session`}
+      >
         <div className="ts-home-session-card-icon" style={{ background: bgColor }}>
           {emoji}
         </div>
@@ -231,7 +236,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
             )}
           </div>
         </div>
-      </div>
+      </button>
 
       <div className="ts-home-session-card-aside">
         <div className="ts-home-session-card-stats">
@@ -247,7 +252,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
 
         <div className="ts-home-session-card-actions">
           <button
-            className="ts-home-inline-text-btn"
+            className="ts-home-inline-text-btn ts-home-inline-text-btn--secondary"
             onClick={handleSummary}
             type="button"
             title="View replay"
@@ -267,6 +272,6 @@ export const SessionCard: React.FC<SessionCardProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </article>
   );
 };

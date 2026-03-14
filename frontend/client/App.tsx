@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import {
   DefaultSizeStyle,
+  defaultShapeUtils,
   ErrorBoundary,
   TLComponents,
   Tldraw,
@@ -20,6 +21,7 @@ import { AgentViewportBoundsHighlights } from "./components/highlights/AgentView
 import { AllContextHighlights } from "./components/highlights/ContextHighlights";
 import { TargetAreaTool } from "./tools/TargetAreaTool";
 import { TargetShapeTool } from "./tools/TargetShapeTool";
+import { thinkspaceShapeUtils } from "./components/widgets/ThinkspaceWidgetShapeUtil";
 
 // Customize tldraw's styles to play to the agent's strengths
 DefaultSizeStyle.setDefaultValue("s");
@@ -91,6 +93,7 @@ function App() {
             persistenceKey="tldraw-agent-demo"
             licenseKey="tldraw-2026-06-18/WyJIUVlKamNRTCIsWyIqIl0sMTYsIjIwMjYtMDYtMTgiXQ.quVBu6P7tCMq3MRg6LyYhHKOvgiHA4PJpP1CiA3D2qPpLTuOPTHjvNNZjrkyFKtNsrvtiKocSV+PLk44uh6j2Q"
             tools={tools}
+            shapeUtils={[...defaultShapeUtils, ...thinkspaceShapeUtils]}
             overrides={overrides}
             components={components}
           >
