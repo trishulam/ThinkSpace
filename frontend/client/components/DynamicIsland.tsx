@@ -6,6 +6,7 @@ interface DynamicIslandStatus {
   message?: string;
   severity: "info" | "error";
   isLoading: boolean;
+  channel: "canvas" | "tutor";
 }
 
 interface DynamicIslandProps {
@@ -143,11 +144,18 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
                   status.isLoading ? " is-loading" : ""
                 }`}
               />
-              <span className="ts-notch-status-title">{status.title}</span>
+              <div className="ts-notch-status-copy">
+                <div className="ts-notch-status-meta">
+                  <span className="ts-notch-status-kicker">
+                    {status.channel === "tutor" ? "Tutor" : "Canvas"}
+                  </span>
+                  <span className="ts-notch-status-title">{status.title}</span>
+                </div>
+                {status.message && (
+                  <div className="ts-notch-status-message">{status.message}</div>
+                )}
+              </div>
             </div>
-            {status.message && (
-              <div className="ts-notch-status-message">{status.message}</div>
-            )}
           </>
         )}
       </div>

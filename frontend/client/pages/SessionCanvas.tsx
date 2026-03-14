@@ -348,18 +348,111 @@ type CanvasDelegatePayload = {
   message?: string;
 };
 
+type NotchStatusChannel = "canvas" | "tutor";
+
 type CanvasJobToastState = {
   jobId?: string;
   title: string;
   message?: string;
   severity: "info" | "error";
   isLoading: boolean;
+  channel: NotchStatusChannel;
 };
 
 const CANVAS_ERROR_TOAST_VISIBLE_MS = 4000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function normalizeToastText(value?: string): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized || undefined;
+}
+
+function presentNotchToast(
+  toast: Omit<CanvasJobToastState, "channel">,
+  channel: NotchStatusChannel,
+): CanvasJobToastState {
+  const rawTitle = normalizeToastText(toast.title) ?? "";
+  const rawMessage = normalizeToastText(toast.message);
+  const title = rawTitle.toLowerCase();
+
+  if (toast.severity === "error") {
+    return {
+      ...toast,
+      channel,
+      title:
+        channel === "tutor"
+          ? "Couldn't review your work"
+          : "Couldn't update the canvas",
+      message: rawMessage ?? "Please try again in a moment.",
+    };
+  }
+
+  if (channel === "tutor") {
+    return {
+      ...toast,
+      channel,
+      title: "Reviewing your work",
+      message: "Using your latest canvas work to guide the lesson",
+    };
+  }
+
+  if (title.includes("creating graph")) {
+    return {
+      ...toast,
+      channel,
+      title: "Preparing graph",
+      message: "Adding it to your canvas",
+    };
+  }
+
+  if (title.includes("creating notation")) {
+    return {
+      ...toast,
+      channel,
+      title: "Preparing notation",
+      message: "Adding it to your canvas",
+    };
+  }
+
+  if (title.includes("creating visual")) {
+    return {
+      ...toast,
+      channel,
+      title: "Preparing visual",
+      message: "Adding it to your canvas",
+    };
+  }
+
+  if (title.includes("refreshing canvas view")) {
+    return {
+      ...toast,
+      channel,
+      title: "Reviewing canvas",
+      message: "Looking at the latest canvas state",
+    };
+  }
+
+  if (title.includes("editing canvas")) {
+    return {
+      ...toast,
+      channel,
+      title: "Updating canvas",
+      message: "Making changes on the board",
+    };
+  }
+
+  return {
+    ...toast,
+    channel,
+    title: rawTitle || "Updating canvas",
+    message: rawMessage ?? "Working on the latest request",
+  };
 }
 
 function isGraphWidgetSpec(value: unknown): value is GraphWidgetSpec {
@@ -1197,14 +1290,15 @@ export const SessionCanvas: React.FC = () => {
   }, [clearCanvasToastTimer]);
 
   const showCanvasToast = useCallback(
-    (nextToast: CanvasJobToastState, autoDismissMs?: number) => {
+    (nextToast: Omit<CanvasJobToastState, "channel">, autoDismissMs?: number) => {
       clearCanvasToastTimer();
-      setCanvasJobToast(nextToast);
+      const presentedToast = presentNotchToast(nextToast, "canvas");
+      setCanvasJobToast(presentedToast);
 
       if (autoDismissMs && autoDismissMs > 0) {
         canvasToastTimerRef.current = setTimeout(() => {
           setCanvasJobToast((current) =>
-            current?.jobId === nextToast.jobId ? null : current,
+            current?.jobId === presentedToast.jobId ? null : current,
           );
           canvasToastTimerRef.current = null;
         }, autoDismissMs);
@@ -1231,14 +1325,15 @@ export const SessionCanvas: React.FC = () => {
   );
 
   const showInterpreterToast = useCallback(
-    (nextToast: CanvasJobToastState, autoDismissMs?: number) => {
+    (nextToast: Omit<CanvasJobToastState, "channel">, autoDismissMs?: number) => {
       clearInterpreterToastTimer();
-      setInterpreterToast(nextToast);
+      const presentedToast = presentNotchToast(nextToast, "tutor");
+      setInterpreterToast(presentedToast);
 
       if (autoDismissMs && autoDismissMs > 0) {
         interpreterToastTimerRef.current = setTimeout(() => {
           setInterpreterToast((current) =>
-            current?.jobId === nextToast.jobId ? null : current,
+            current?.jobId === presentedToast.jobId ? null : current,
           );
           interpreterToastTimerRef.current = null;
         }, autoDismissMs);

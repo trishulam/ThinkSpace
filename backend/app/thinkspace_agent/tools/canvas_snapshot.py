@@ -68,40 +68,6 @@ def _get_session_identity(
     return user_id, session_id
 
 
-def _sanitize_snapshot_payload(context: dict[str, object]) -> dict[str, object]:
-    viewport_bounds = context.get("user_viewport_bounds")
-    agent_viewport_bounds = context.get("agent_viewport_bounds")
-    selected_shape_ids = context.get("selected_shape_ids")
-    selected_shapes = context.get("selected_shape_details")
-    visible_shapes = context.get("blurry_shapes")
-    peripheral_shapes = context.get("peripheral_clusters")
-    canvas_lints = context.get("canvas_lints")
-
-    payload: dict[str, object] = {
-        "captured_at": context.get("captured_at"),
-        "viewport_bounds": viewport_bounds if isinstance(viewport_bounds, dict) else None,
-        "agent_viewport_bounds": (
-            agent_viewport_bounds if isinstance(agent_viewport_bounds, dict) else None
-        ),
-        "selected_shape_ids": (
-            selected_shape_ids if isinstance(selected_shape_ids, list) else []
-        ),
-        "selected_shapes": selected_shapes if isinstance(selected_shapes, list) else [],
-        "visible_shapes": visible_shapes if isinstance(visible_shapes, list) else [],
-        "peripheral_shapes": (
-            peripheral_shapes if isinstance(peripheral_shapes, list) else []
-        ),
-        "canvas_lints": canvas_lints if isinstance(canvas_lints, list) else [],
-    }
-    payload["snapshot_summary"] = {
-        "selected_shape_count": len(payload["selected_shape_ids"]),
-        "visible_shape_count": len(payload["visible_shapes"]),
-        "peripheral_cluster_count": len(payload["peripheral_shapes"]),
-        "lint_count": len(payload["canvas_lints"]),
-    }
-    return payload
-
-
 @dataclass
 class CanvasSnapshotSessionBridge:
     send_frontend_action: Callable[[dict[str, object]], Awaitable[None]]
@@ -142,7 +108,7 @@ canvas_snapshot_session_bridge_store = CanvasSnapshotSessionBridgeStore()
 async def canvas_viewport_snapshot(
     tool_context: ToolContext | None = None,
 ) -> dict[str, object]:
-    """Capture a fresh viewport snapshot and structured canvas context."""
+    """Capture a fresh viewport screenshot for the current canvas viewport."""
 
     job_id = f"viewport-snapshot-{uuid4()}"
     user_id, session_id = _get_session_identity(tool_context)
@@ -236,8 +202,9 @@ async def canvas_viewport_snapshot(
     return _build_tool_result(
         status="completed",
         tool=CANVAS_VIEWPORT_SNAPSHOT_TOOL,
-        summary="Captured a fresh viewport snapshot and context",
-        payload=_sanitize_snapshot_payload(context),
+        summary=(
+            "Refer to the attached screenshot for the current canvas viewport snapshot"
+        ),
         job_id=job_id,
     )
 
