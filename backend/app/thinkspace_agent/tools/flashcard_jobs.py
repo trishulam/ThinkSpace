@@ -225,6 +225,19 @@ class FlashcardSessionStore:
             "is_answer_revealed": state.is_answer_revealed,
         }
 
+        next_card: dict[str, object] | None = None
+        next_index = safe_index + 1
+        if next_index < len(cards):
+            next_card_raw = cards[next_index]
+            if isinstance(next_card_raw, dict):
+                next_card = {
+                    "id": next_card_raw.get("id"),
+                    "front": next_card_raw.get("front"),
+                    "index": next_index,
+                    "position": next_index + 1,
+                    "total_cards": len(cards),
+                }
+
         return {
             "id": deck_id,
             "title": title,
@@ -232,6 +245,7 @@ class FlashcardSessionStore:
             "current_index": safe_index,
             "is_answer_revealed": state.is_answer_revealed,
             "current_card": current_card,
+            "next_card": next_card,
             "topic": state.topic,
             "total_cards": len(cards),
             "ui": {

@@ -25,6 +25,9 @@ For flashcards:
 - use `flashcards.next`, `flashcards.reveal_answer`, and `flashcards.end` to
   control the active flashcard session
 - prefer these tools over narrating frontend state changes in prose
+- while a flashcard session is active, treat the flashcard tool payloads as the
+  authoritative grounding for the current card question, current card answer,
+  and following card question; do not rely on conversational memory for these
 - for flashcard interactions, do the UI action first and then talk about what is
   now visible; do not describe a revealed answer or a next card before the
   corresponding tool has been called and the system confirms the UI update

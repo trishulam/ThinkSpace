@@ -178,6 +178,7 @@ def build_flashcard_surface_summary(
     current_index = snapshot.get("current_index")
     total_cards = snapshot.get("total_cards")
     current_card = snapshot.get("current_card")
+    next_card = snapshot.get("next_card")
 
     if not isinstance(topic, str):
         return None
@@ -189,6 +190,14 @@ def build_flashcard_surface_summary(
         front = current_card.get("front")
         if isinstance(front, str) and front.strip():
             parts.append(f"Current prompt: {front.strip()}")
+        back = current_card.get("back")
+        if isinstance(back, str) and back.strip():
+            parts.append(f"Current answer: {back.strip()}")
+
+    if isinstance(next_card, dict):
+        next_front = next_card.get("front")
+        if isinstance(next_front, str) and next_front.strip():
+            parts.append(f"Following prompt: {next_front.strip()}")
 
     return " ".join(parts)
 
