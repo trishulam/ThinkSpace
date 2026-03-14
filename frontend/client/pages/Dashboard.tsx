@@ -280,11 +280,36 @@ export const Dashboard: React.FC = () => {
 
   const handleNewSession = () => setIsNewSessionModalOpen(true);
   const handleOpenCanvas = () => setIsNewSessionModalOpen(true);
-  const handleSessionPreviewOpen = () => {
+  const handleSessionPreviewOpen = async () => {
+    if (isCreatingSession) {
+      return;
+    }
+
     setSessionActionError(null);
     setIsPromptPopoverOpen(false);
     setSessionPreviewStepIndex(0);
     setIsSessionPreviewVisible(true);
+
+    try {
+      setIsCreatingSession(true);
+      const trimmedQuery = searchQuery.trim();
+      const newSession = await createSession({
+        topic: trimmedQuery || "Untitled learning session",
+        goal: trimmedQuery || undefined,
+        mode: "guided",
+        level: "beginner",
+      });
+      navigate(`/session/${newSession.id}`, {
+        state: { skipRestoreOverlay: true },
+      });
+    } catch (createError) {
+      setSessionActionError(
+        createError instanceof Error ? createError.message : "Unable to start the session"
+      );
+      setIsSessionPreviewVisible(false);
+    } finally {
+      setIsCreatingSession(false);
+    }
   };
 
   const handleCreateSession = async (data: NewSessionData) => {
@@ -567,9 +592,6 @@ export const Dashboard: React.FC = () => {
               </button>
               <button type="button" onClick={() => scrollToSection("thinkspace-library")}>
                 Library
-              </button>
-              <button type="button" onClick={handleOpenCanvas}>
-                New Session
               </button>
             </nav>
             <div className="ts-home-landing-nav-actions">

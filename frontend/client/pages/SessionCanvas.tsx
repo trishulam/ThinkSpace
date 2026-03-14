@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { flushSync } from "react-dom";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // import { useSession } from '../context/SessionContext'
 import {
@@ -89,7 +89,6 @@ DefaultSizeStyle.setDefaultValue("s");
 const tools = [TargetShapeTool, TargetAreaTool];
 
 type CustomToolbarProps = {
-  isDesignMode: boolean;
   recordingStatus: string;
   recordingError: string | null;
   recordingSupported: boolean;
@@ -199,7 +198,6 @@ const CanvasRecordingIndicator = ({
 };
 
 const CustomToolbar = ({
-  isDesignMode,
   recordingStatus,
   recordingError,
   recordingSupported,
@@ -209,20 +207,10 @@ const CustomToolbar = ({
   onBackToDashboard,
   onEndSession,
 }: CustomToolbarProps) => {
-  const recordingLabel = isDesignMode
-    ? "Design mode"
-    : isRecording
-      ? "Recording"
-      : recordingStatus;
+  const recordingLabel = isRecording ? "Recording" : recordingStatus;
 
   return (
-    <div
-      className={
-        isDesignMode
-          ? "tldraw-custom-toolbar tldraw-custom-toolbar--dark"
-          : "tldraw-custom-toolbar"
-      }
-    >
+    <div className="tldraw-custom-toolbar tldraw-custom-toolbar--dark">
       <button
         onClick={onBackToDashboard}
         className="tldraw-back-button"
@@ -258,7 +246,7 @@ const CustomToolbar = ({
         />
         <span>{recordingLabel}</span>
       </div>
-      {!isDesignMode && recordingSupported && !isRecording ? (
+      {recordingSupported && !isRecording ? (
         <button
           onClick={onStartRecording}
           type="button"
@@ -268,16 +256,14 @@ const CustomToolbar = ({
           Start Recording
         </button>
       ) : null}
-      {!isDesignMode ? (
-        <button
-          onClick={onEndSession}
-          type="button"
-          disabled={isBusy}
-          style={{ marginLeft: 8 }}
-        >
-          End Session
-        </button>
-      ) : null}
+      <button
+        onClick={onEndSession}
+        type="button"
+        disabled={isBusy}
+        style={{ marginLeft: 8 }}
+      >
+        End Session
+      </button>
       {recordingError ? (
         <div
           style={{
@@ -970,6 +956,7 @@ function getDelegateBounds(editor: Editor, payload: CanvasDelegatePayload) {
 export const SessionCanvas: React.FC = () => {
   const FLASHCARD_BEGIN_VISIBLE_MS = 350;
   const { sessionId } = useParams<{ sessionId: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
   const [app, setApp] = useState<TldrawAgentApp | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -1998,16 +1985,21 @@ export const SessionCanvas: React.FC = () => {
   useEffect(() => {
     if (
       !sessionId ||
-      isRestoringSession ||
       !isRecordingSupported ||
       autoRecordingAttemptedRef.current
     ) {
       return;
     }
 
-    autoRecordingAttemptedRef.current = true;
-    void startRecording();
-  }, [isRecordingSupported, isRestoringSession, sessionId, startRecording]);
+    const timeoutId = window.setTimeout(() => {
+      autoRecordingAttemptedRef.current = true;
+      void startRecording();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [isRecordingSupported, sessionId, startRecording]);
 
   useEffect(() => {
     const latestEvent = ws.eventLog[ws.eventLog.length - 1];
@@ -2157,6 +2149,9 @@ export const SessionCanvas: React.FC = () => {
 
   const notchConnectionState = testConnState ?? ws.connectionState;
   const notchTalkingState = testTalkState ?? ws.talkingState;
+  const suppressRestoreOverlay =
+    ((location.state as { skipRestoreOverlay?: boolean } | null)
+      ?.skipRestoreOverlay ?? false) === true;
 
   if (!sessionId) {
     return <div>Session not found</div>;
@@ -2165,15 +2160,16 @@ export const SessionCanvas: React.FC = () => {
   return (
     <>
       <TldrawUiToastsProvider>
-        <div className="tldraw-agent-container">
+        <div className="tldraw-agent-container tldraw-agent-container--dark">
           <SessionRestoreOverlay
-            isRestoring={isRestoringSession}
+            isRestoring={suppressRestoreOverlay ? false : isRestoringSession}
             error={resumeError}
           />
           <div className="tldraw-canvas" ref={canvasRef}>
             <Tldraw
               persistenceKey={`session-${sessionId}`}
               onMount={setEditor}
+              inferDarkMode
               licenseKey="tldraw-2026-06-18/WyJIUVlKamNRTCIsWyIqIl0sMTYsIjIwMjYtMDYtMTgiXQ.quVBu6P7tCMq3MRg6LyYhHKOvgiHA4PJpP1CiA3D2qPpLTuOPTHjvNNZjrkyFKtNsrvtiKocSV+PLk44uh6j2Q"
               tools={tools}
               shapeUtils={[...defaultShapeUtils, ...thinkspaceShapeUtils]}
@@ -2246,7 +2242,6 @@ export const SessionCanvas: React.FC = () => {
       </TldrawUiToastsProvider>
 
       <CustomToolbar
-        isDesignMode={false}
         recordingStatus={recordingStatus}
         recordingError={sessionActionError || recordingError}
         recordingSupported={isRecordingSupported}
