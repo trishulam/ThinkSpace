@@ -18,11 +18,18 @@ It is intended to be precise enough for engineers extending the system while
 still readable enough for hackathon teammates who need a reliable mental model
 of the product.
 
+Focused companion docs added alongside this reference:
+
+- `docs/canvas-widget-and-placement-architecture.md`
+- `docs/flashcard-grounding-and-ui-confirmation.md`
+
 ## Current Implemented Surface
 
 The currently registered and implemented orchestrator-facing tools are:
 
 - `canvas.generate_visual`
+- `canvas.generate_graph`
+- `canvas.generate_notation`
 - `canvas.delegate_task`
 - `canvas.viewport_snapshot`
 - `flashcards.create`
@@ -32,13 +39,15 @@ The currently registered and implemented orchestrator-facing tools are:
 
 Important status notes:
 
-- `canvas.generate_widget` is a valid future direction, but it is not currently
-  wired into the runtime tool registry.
+- graph and notation generation are now implemented as dedicated widget tools
+  rather than as one generic `canvas.generate_widget` entry point.
 - `canvas.enhance` is documented historically but is not currently implemented
   in the live runtime.
-- the system architecture already supports the main patterns a future
-  `canvas.generate_widget` would need: async job execution, direct output
-  insertion, placement context capture, and frontend acknowledgement.
+- the placement planner contract for visuals and widgets is now anchor-first:
+  the model chooses top-left `x/y`, while deterministic backend or frontend
+  sizing computes the final `w/h`.
+- widget and visual placement now use compact geometry preprocessing plus a
+  screenshot-assisted planner path.
 - beyond the tool surface, the product also includes a gesture-control runtime,
   durable session persistence, recording upload/finalization, dashboard session
   browsing, and session replay.
@@ -82,7 +91,7 @@ flowchart LR
         API["Session REST API"]
         LIVE["ADK live request queue<br/>send_content + send_realtime"]
         ACK["Frontend action + ack handler"]
-        JOBS["Background tool jobs<br/>visuals + flashcards + delegate relay"]
+        JOBS["Background tool jobs<br/>visuals + widgets + flashcards + delegate relay"]
         COMP["Transcript persistence<br/>session compaction"]
     end
 
@@ -204,6 +213,7 @@ The frontend session page in `frontend/client/pages/SessionCanvas.tsx` is the
 execution surface. It:
 
 - renders canvas and flashcard state
+- renders generated graph and notation widgets through the custom widget shape
 - applies backend frontend actions
 - sends structured acknowledgements back to the backend
 - captures canvas screenshots and structured context on demand
@@ -216,8 +226,8 @@ execution surface. It:
 
 There are two main specialist execution patterns today:
 
-- backend-managed async workers for `canvas.generate_visual` and
-  `flashcards.create`
+- backend-managed async workers for `canvas.generate_visual`,
+  `canvas.generate_graph`, `canvas.generate_notation`, and `flashcards.create`
 - frontend-managed canvas execution for `canvas.delegate_task`
 
 ### 5. Gesture System
@@ -304,6 +314,7 @@ Examples:
 
 - "The next flashcard is now visible in the UI..."
 - "The visual is now inserted on the canvas..."
+- "The widget is now inserted on the canvas..."
 - "The `canvas.generate_visual` job failed..."
 - "Interpreter proactive update from the latest canvas understanding..."
 
@@ -346,9 +357,18 @@ Fresh canvas context is built in
 
 This same hybrid context pattern is reused for:
 
-- placement reasoning
-- viewport snapshot tool returns
+- visual and widget placement reasoning
+- viewport snapshot capture
 - interpreter packet grounding
+
+Important boundary:
+
+- the raw structured context is primarily a backend coordination payload
+- `canvas.viewport_snapshot` no longer returns the structured context back to the
+  orchestrator as tool payload
+- instead, the tool returns a semantic instruction to refer to the attached
+  screenshot while the screenshot itself is forwarded through
+  `send_realtime(...)`
 
 ### Canvas Change Tracking
 
@@ -440,8 +460,8 @@ backend's live request queue into ADK.
 - `flashcards.clear`
 
 Not every action type is actively used in the current runtime. For example,
-`canvas.insert_widget` is defined in the shared type surface but not yet wired by
-an implemented tool.
+`canvas.insert_widget` is now actively used by `canvas.generate_graph` and
+`canvas.generate_notation`.
 
 ### Frontend Ack Contract
 
@@ -497,12 +517,18 @@ Current execution shape:
 4. send `canvas.context_requested` to the frontend
 5. frontend captures fresh placement context
 6. backend background job waits for that context
-7. backend runs image generation and placement planning
-8. backend publishes completed result with `canvas.insert_visual`
-9. frontend inserts the asset into the canvas
-10. frontend sends a focused screenshot via `send_realtime(...)`
-11. frontend sends `frontend_ack`
-12. backend converts the ack into semantic tutor context
+7. backend runs image generation and placement planning in parallel
+8. placement planning first compacts the canvas into `occupied_rects` and ranked
+   `free_rects`
+9. the planner receives compact geometry plus screenshot and returns only a
+   top-left anchor
+10. the backend derives final `w/h` by max-filling the selected free rect while
+    preserving the requested aspect ratio
+11. backend publishes completed result with `canvas.insert_visual`
+12. frontend inserts the asset into the canvas
+13. frontend sends a focused screenshot via `send_realtime(...)`
+14. frontend sends `frontend_ack`
+15. backend converts the ack into semantic tutor context
 
 Important behavior notes:
 
@@ -510,6 +536,11 @@ Important behavior notes:
 - the tool is long-running
 - the frontend-visible in-progress cue is currently driven by
   `canvas.context_requested`
+- the planner no longer returns `w/h`; it returns only `x/y`
+- the backend owns final image sizing using the chosen free rect, aspect ratio,
+  and global min/max bounds
+- screenshot input is enabled so placement can be semantically better than
+  simply picking the largest empty region
 - successful insertion, not backend job completion alone, is the point where the
   tutor may safely talk as if the visual is present
 
@@ -517,9 +548,86 @@ Observability:
 
 - writes a dedicated `generate_visual` trace file
 - records context wait timing
+- records geometry-prep timing and compact payload size
 - records placement planner trace
 - records image generator trace
 - records total job duration
+
+### Sequence: `canvas.generate_graph`
+
+Purpose:
+
+- create a rendered 2D graph widget and place it on the canvas
+
+Input contract:
+
+- `prompt`
+- optional `placement_hint`
+
+Current execution shape:
+
+1. validate the request in `canvas_widgets.py`
+2. create a per-job canvas-context request future
+3. return `accepted`
+4. send `canvas.context_requested` to the frontend
+5. frontend captures fresh placement context
+6. backend runs the widget reasoner and placement planner in parallel
+7. the reasoner converts the prompt into a typed graph spec
+8. the planner receives compact geometry plus screenshot and returns only a
+   top-left anchor
+9. the backend computes final graph `w/h` by max-filling the chosen free rect
+   using the graph card aspect ratio and graph-specific min/max bounds
+10. backend publishes completed result with `canvas.insert_widget`
+11. frontend inserts the graph widget
+12. frontend sends a focused screenshot via `send_realtime(...)`
+13. frontend sends `frontend_ack`
+14. backend converts the ack into semantic tutor context
+
+Important behavior notes:
+
+- graph generation uses a shared backend widget reasoner
+- graph sizing is backend-owned, not planner-owned
+- successful insertion, not backend completion alone, is when the tutor may
+  safely talk as if the graph is present
+
+### Sequence: `canvas.generate_notation`
+
+Purpose:
+
+- create a rendered notation card for formulas, derivations, or proof steps and
+  place it on the canvas
+
+Input contract:
+
+- `prompt`
+- optional `placement_hint`
+
+Current execution shape:
+
+1. validate the request in `canvas_widgets.py`
+2. create a per-job canvas-context request future
+3. return `accepted`
+4. send `canvas.context_requested` to the frontend
+5. frontend captures fresh placement context
+6. backend runs the widget reasoner and placement planner in parallel
+7. the reasoner converts the prompt into a typed notation spec with one or more
+   LaTeX blocks
+8. the planner receives compact geometry plus screenshot and returns only a
+   top-left anchor
+9. backend publishes completed result with `canvas.insert_widget`
+10. frontend renders the notation card off-screen, measures best-fit size from
+    the actual DOM output, and inserts the widget at the planned anchor
+11. frontend sends a focused screenshot via `send_realtime(...)`
+12. frontend sends `frontend_ack`
+13. backend converts the ack into semantic tutor context
+
+Important behavior notes:
+
+- notation sizing is frontend-owned because rendered LaTeX determines the true
+  best-fit dimensions
+- the planner does not choose notation `w/h`
+- this separation avoids the clipping and excess-whitespace issues that happen
+  when backend geometry guesses the notation card size
 
 ### Sequence: `canvas.delegate_task`
 
@@ -569,13 +677,14 @@ Current execution shape:
 3. backend sends `canvas.viewport_snapshot_requested`
 4. frontend builds a fresh context packet
 5. frontend returns `canvas_context_response`
-6. backend returns structured context payload to the tool caller
-7. backend separately forwards the screenshot through `send_realtime(...)`
+6. backend separately forwards the screenshot through `send_realtime(...)`
+7. backend returns a semantic tool result instructing the model to refer to the
+   attached screenshot
 
 Design rule:
 
-- the tool result contains structured semantic context
-- the raw screenshot blob stays out of the tool result payload
+- the tool result stays semantically lightweight
+- the screenshot blob and structured context stay out of the tool result payload
 - the screenshot is still delivered to the live model as perception
 
 ### Sequence: `flashcards.create`
@@ -597,6 +706,8 @@ Current execution shape:
 Important behavior notes:
 
 - the frontend auto-shows the created deck
+- the tool payload now carries deterministic grounding for the current question,
+  current answer, next question, and UI visibility state
 - the tutor should not assume the deck is visible until the ack-derived semantic
   update arrives
 
@@ -617,6 +728,8 @@ Current execution shape:
 
 Important behavior notes:
 
+- the tool payload returned by `flashcards.next` already includes the newly
+  current question and answer plus the following question after that
 - the tutor must not preview the next question in the same turn as the tool call
 - the tutor must ask only the exact visible question after UI confirmation
 
@@ -635,6 +748,13 @@ Current execution shape:
 5. backend converts the ack into semantic tutor context instructing the tutor to
    explain the now-visible answer and then pause
 
+Important behavior notes:
+
+- the tool payload includes the current question, current answer, and following
+  question even before the tutor speaks again
+- the tutor must still wait for ack-derived semantic confirmation before talking
+  as if the answer is visible
+
 ### `flashcards.end`
 
 Purpose:
@@ -648,34 +768,32 @@ Current execution shape:
 - frontend clears the flashcard panel
 - frontend acknowledges the clear action
 
-## Planned But Not Yet Implemented Tool Family
+## Placement Geometry Preprocessor
 
-### `canvas.generate_widget`
+The placement planner no longer reasons over the full raw canvas context. Before
+the model sees the canvas, the backend runs a deterministic geometry pass in
+`backend/app/thinkspace_agent/tools/canvas_placement_geometry.py`.
 
-This remains a strong future direction for charts, graphs, and interactive
-teaching surfaces.
+Current algorithm shape:
 
-Most of the architecture it would need already exists:
+1. coerce drawable shapes into normalized rectangles
+2. inflate occupied shapes by safety padding and clip them to the viewport
+3. merge overlapping occupied regions into larger blocked areas
+4. cut the viewport into a finite grid using viewport edges and blocked-rect
+   edges
+5. mark blocked and free cells on that grid
+6. enumerate maximal empty rectangles
+7. rank and trim free-rect candidates
+8. send only `viewport_bounds`, `desired_size`, `occupied_rects`, and
+   `free_rects` to the placement planner
 
-- direct generated-output insertion rather than full board delegation
-- fresh viewport context capture
-- placement planning
-- async background execution
-- frontend action plus acknowledgement
-- focused screenshot grounding
+Why this exists:
 
-Most likely shape:
-
-1. orchestrator provides chart/widget brief
-2. backend obtains fresh placement context
-3. widget generator produces HTML or similar artifact
-4. planner decides `x/y/w/h`
-5. frontend inserts widget
-6. frontend acks
-7. backend sends semantic confirmation
-
-It should remain distinct from `canvas.generate_visual` because the output is a
-live structured surface, not a static rendered artifact.
+- it shrinks planner input size dramatically
+- it makes geometric reasoning deterministic and fast
+- it lets the model focus on semantic region choice instead of rectangle math
+- it gives the backend enough structure to compute final size after the planner
+  returns only an anchor
 
 ## Second Brain: Environment Interpreter
 
@@ -752,6 +870,8 @@ The packet deliberately mixes:
 - structural edit history
 - a fresh current viewport understanding
 - compacted semantic lesson memory
+- flashcard surface grounding that now includes current answer and following
+  question context
 
 ### Interpreter Reasoning Output
 
@@ -847,13 +967,61 @@ sequenceDiagram
     F-->>B: frontend_ack applied
     B->>O: send_content warm holding-pattern guidance
     F->>B: canvas_context_response
-    B->>V: run generation and placement
-    V-->>B: artifact + x/y/w/h + traces
+    B->>V: run image generation and anchor planner in parallel
+    V-->>B: artifact + anchor + backend-sized x/y/w/h + traces
     B->>F: frontend_action canvas.insert_visual
     F->>F: insert visual into canvas
     F->>B: send_realtime focused screenshot
     F-->>B: frontend_ack applied
     B->>O: send_content visual now visible
+```
+
+### `canvas.generate_graph`
+
+```mermaid
+sequenceDiagram
+    participant O as Orchestrator
+    participant B as Backend
+    participant F as Frontend
+    participant W as Widget worker
+
+    O->>B: call canvas.generate_graph(...)
+    B-->>O: tool result accepted
+    B->>F: frontend_action canvas.context_requested
+    F-->>B: frontend_ack applied
+    B->>O: send_content warm holding-pattern guidance
+    F->>B: canvas_context_response
+    B->>W: run reasoner and anchor planner in parallel
+    W-->>B: graph spec + backend-sized x/y/w/h + traces
+    B->>F: frontend_action canvas.insert_widget
+    F->>F: render and insert graph widget
+    F->>B: send_realtime focused screenshot
+    F-->>B: frontend_ack applied
+    B->>O: send_content widget now visible
+```
+
+### `canvas.generate_notation`
+
+```mermaid
+sequenceDiagram
+    participant O as Orchestrator
+    participant B as Backend
+    participant F as Frontend
+    participant W as Widget worker
+
+    O->>B: call canvas.generate_notation(...)
+    B-->>O: tool result accepted
+    B->>F: frontend_action canvas.context_requested
+    F-->>B: frontend_ack applied
+    B->>O: send_content warm holding-pattern guidance
+    F->>B: canvas_context_response
+    B->>W: run reasoner and anchor planner in parallel
+    W-->>B: notation spec + x/y anchor + traces
+    B->>F: frontend_action canvas.insert_widget
+    F->>F: render off-screen, measure, insert notation widget
+    F->>B: send_realtime focused screenshot
+    F-->>B: frontend_ack applied
+    B->>O: send_content widget now visible
 ```
 
 ### `canvas.delegate_task`
@@ -969,6 +1137,8 @@ unlock semantically grounded tutor behavior.
 - `flashcards.next` ack makes the next exact question safe to ask
 - `flashcards.reveal_answer` ack makes the answer safe to explain
 - `canvas.insert_visual` ack makes the visual safe to refer to as present
+- `canvas.insert_widget` ack makes the graph or notation widget safe to refer to
+  as present
 - `canvas.context_requested` and `canvas.delegate_requested` acks can trigger
   warm holding-pattern guidance while long work is still in progress
 
@@ -982,6 +1152,17 @@ unlock semantically grounded tutor behavior.
 - context timing
 - planner trace
 - image trace
+- final result summary
+- error payloads
+- total duration
+
+`canvas.generate_graph` and `canvas.generate_notation` write dedicated trace
+files containing:
+
+- inputs
+- context timing
+- geometry-prep and planner trace
+- reasoner trace
 - final result summary
 - error payloads
 - total duration
@@ -1007,6 +1188,14 @@ The frontend also exposes subtle runtime cues:
 
 These are user-facing observability surfaces, not only debug affordances.
 
+Recent UX update:
+
+- the frontend normalizes raw backend titles like "Creating graph" or
+  "Refreshing canvas view" into simpler learner-facing copy such as
+  "Preparing graph" and "Reviewing canvas"
+- canvas-job and tutor-review cues share a consistent below-notch presentation
+  layer with loading and error states
+
 ## Key Design Rules
 
 - the orchestrator is the only tutor brain
@@ -1024,6 +1213,8 @@ These are user-facing observability surfaces, not only debug affordances.
 Implemented and active:
 
 - generated teaching visuals with placement reasoning
+- generated graph widgets
+- generated notation widgets
 - delegated editable canvas work
 - explicit viewport snapshot tooling
 - flashcards end to end
@@ -1034,13 +1225,12 @@ Implemented and active:
 
 Open but not yet wired:
 
-- `canvas.generate_widget`
 - `knowledge.lookup`
+- broader widget families such as charts or other interactive teaching surfaces
 
 Deferred or intentionally not active right now:
 
 - `canvas.enhance`
-- broader widget family execution details
 - non-canvas interpreter digest families such as gesture digestion
 
 ## File Map
@@ -1050,9 +1240,15 @@ Useful entry points for engineers:
 - `backend/app/main.py`
 - `backend/app/thinkspace_agent/tools/registry.py`
 - `backend/app/thinkspace_agent/tools/canvas_visuals.py`
+- `backend/app/thinkspace_agent/tools/canvas_widgets.py`
+- `backend/app/thinkspace_agent/tools/canvas_visual_jobs.py`
+- `backend/app/thinkspace_agent/tools/canvas_widget_jobs.py`
+- `backend/app/thinkspace_agent/tools/canvas_placement_geometry.py`
 - `backend/app/thinkspace_agent/tools/canvas_snapshot.py`
 - `backend/app/thinkspace_agent/tools/canvas_delegate.py`
 - `backend/app/thinkspace_agent/tools/flashcards.py`
+- `backend/app/thinkspace_agent/widgets/models.py`
+- `backend/app/thinkspace_agent/widgets/reasoner.py`
 - `backend/app/thinkspace_agent/context/interpreter_packet.py`
 - `backend/app/thinkspace_agent/context/interpreter_reasoning.py`
 - `backend/app/thinkspace_agent/context/session_compaction.py`
@@ -1070,4 +1266,5 @@ be:
 
 - a dedicated websocket protocol reference
 - a dedicated interpreter trace debugging guide
-- a future `canvas.generate_widget` design spec
+- a dedicated widget and placement-planner architecture guide
+- a dedicated flashcard grounding and UI-confirmation guide

@@ -822,29 +822,31 @@
 }
 
 .ts-notch-status {
-  margin-top: 8px;
-  min-width: 0;
-  max-width: min(360px, calc(100vw - 32px));
+  margin-top: 10px;
+  min-width: 220px;
+  width: fit-content;
+  max-width: min(340px, calc(100vw - 32px));
   padding: 0;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
   background: linear-gradient(
     180deg,
-    rgba(17, 18, 20, 0.82) 0%,
-    rgba(17, 18, 20, 0.74) 100%
+    rgba(15, 23, 42, 0.76) 0%,
+    rgba(15, 23, 42, 0.62) 100%
   );
   box-shadow:
-    0 12px 32px rgba(0, 0, 0, 0.18),
+    0 18px 44px rgba(2, 6, 23, 0.24),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(16px) saturate(115%);
-  color: rgba(248, 250, 252, 0.92);
+  backdrop-filter: blur(20px) saturate(125%);
+  color: rgba(248, 250, 252, 0.94);
   opacity: 0;
-  transform: translateY(-6px) scale(0.98);
+  transform: translateY(-8px) scale(0.985);
   transition:
     opacity 180ms ease,
-    transform 220ms ease,
+    transform 240ms ease,
     border-color 180ms ease,
-    box-shadow 180ms ease;
+    box-shadow 180ms ease,
+    background 180ms ease;
   overflow: hidden;
 }
 
@@ -854,28 +856,34 @@
 }
 
 .ts-notch-status.is-error {
-  border-color: rgba(248, 113, 113, 0.22);
+  border-color: rgba(248, 113, 113, 0.18);
+  background: linear-gradient(
+    180deg,
+    rgba(44, 15, 18, 0.84) 0%,
+    rgba(38, 14, 18, 0.72) 100%
+  );
   box-shadow:
-    0 12px 34px rgba(127, 29, 29, 0.14),
+    0 18px 42px rgba(127, 29, 29, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .ts-notch-status-row {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 8px 12px 4px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px 14px;
 }
 
 .ts-notch-status-indicator {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   flex-shrink: 0;
-  background: rgba(52, 211, 153, 0.92);
-  box-shadow: 0 0 12px rgba(52, 211, 153, 0.36);
+  margin-top: 6px;
+  background: rgba(34, 197, 94, 0.95);
+  box-shadow: 0 0 14px rgba(34, 197, 94, 0.32);
 }
 
 .ts-notch-status-indicator.is-loading {
@@ -887,23 +895,46 @@
   box-shadow: 0 0 12px rgba(248, 113, 113, 0.32);
 }
 
+.ts-notch-status-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.ts-notch-status-meta {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ts-notch-status-kicker {
+  flex-shrink: 0;
+  font-family: var(--mindpad-font-family);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.86);
+}
+
 .ts-notch-status-title {
+  min-width: 0;
   max-width: 100%;
   font-family: var(--mindpad-font-family);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ts-notch-status-message {
-  padding: 0 12px 10px;
-  text-align: center;
   font-family: var(--mindpad-font-family);
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.45;
   color: rgba(226, 232, 240, 0.72);
 }
 
@@ -1210,24 +1241,27 @@
   }
 
   .ts-notch-status {
-    max-width: min(320px, calc(100vw - 24px));
+    min-width: 200px;
+    max-width: min(300px, calc(100vw - 24px));
     margin-top: 7px;
-    border-radius: 14px;
+    border-radius: 16px;
   }
 
   .ts-notch-status-row {
-    min-height: 30px;
-    padding: 7px 11px 3px;
+    padding: 10px 12px;
     gap: 7px;
   }
 
+  .ts-notch-status-kicker {
+    font-size: 9px;
+  }
+
   .ts-notch-status-title {
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .ts-notch-status-message {
-    font-size: 10px;
-    padding: 0 11px 9px;
+    font-size: 11px;
   }
 
   @keyframes notchWavePulse {

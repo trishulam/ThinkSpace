@@ -875,6 +875,52 @@ def _normalize_canvas_activity_window(
         return None
 
 
+def _extract_flashcard_grounding(snapshot: dict[str, object] | None) -> dict[str, str | None]:
+    current_card = snapshot.get("current_card") if isinstance(snapshot, dict) else None
+    next_card = snapshot.get("next_card") if isinstance(snapshot, dict) else None
+
+    current_question = (
+        current_card.get("front")
+        if isinstance(current_card, dict) and isinstance(current_card.get("front"), str)
+        else None
+    )
+    current_answer = (
+        current_card.get("back")
+        if isinstance(current_card, dict) and isinstance(current_card.get("back"), str)
+        else None
+    )
+    next_question = (
+        next_card.get("front")
+        if isinstance(next_card, dict) and isinstance(next_card.get("front"), str)
+        else None
+    )
+
+    return {
+        "current_question": current_question.strip() if current_question else None,
+        "current_answer": current_answer.strip() if current_answer else None,
+        "next_question": next_question.strip() if next_question else None,
+    }
+
+
+def _build_flashcard_grounding_suffix(snapshot: dict[str, object] | None) -> str:
+    grounding = _extract_flashcard_grounding(snapshot)
+    parts: list[str] = []
+
+    current_question = grounding["current_question"]
+    if current_question:
+        parts.append(f"Current question: {current_question}.")
+
+    current_answer = grounding["current_answer"]
+    if current_answer:
+        parts.append(f"Current answer: {current_answer}.")
+
+    next_question = grounding["next_question"]
+    if next_question:
+        parts.append(f"Following question: {next_question}.")
+
+    return " ".join(parts)
+
+
 def _apply_flashcard_ack_state(
     ack: dict[str, str], user_id: str, session_id: str
 ) -> str | None:
@@ -895,16 +941,13 @@ def _apply_flashcard_ack_state(
             user_id=user_id,
             session_id=session_id,
         )
-        current_card = snapshot.get("current_card") if isinstance(snapshot, dict) else None
-        front = (
-            current_card.get("front")
-            if isinstance(current_card, dict) and isinstance(current_card.get("front"), str)
-            else None
-        )
-        if front:
+        grounding_suffix = _build_flashcard_grounding_suffix(snapshot)
+        if grounding_suffix:
             return (
                 "The flashcards are now visible in the UI. "
-                f"The first question is: {front}"
+                f"{grounding_suffix} "
+                "Ask the learner exactly the current visible question, and do not "
+                "reveal the answer or following card yet."
             )
         return "The flashcards are now visible in the UI."
 
@@ -913,17 +956,13 @@ def _apply_flashcard_ack_state(
             user_id=user_id,
             session_id=session_id,
         )
-        current_card = snapshot.get("current_card") if isinstance(snapshot, dict) else None
-        answer = (
-            current_card.get("back")
-            if isinstance(current_card, dict) and isinstance(current_card.get("back"), str)
-            else None
-        )
-        if answer:
+        grounding_suffix = _build_flashcard_grounding_suffix(snapshot)
+        if grounding_suffix:
             return (
                 "The current flashcard answer is now visible in the UI. "
-                f"The revealed answer is: {answer}. "
-                "Briefly explain it, then pause and wait for the learner."
+                f"{grounding_suffix} "
+                "Briefly explain the revealed answer, then pause and wait for the "
+                "learner."
             )
         return (
             "The current flashcard answer is now visible in the UI. "
@@ -935,17 +974,12 @@ def _apply_flashcard_ack_state(
             user_id=user_id,
             session_id=session_id,
         )
-        current_card = snapshot.get("current_card") if isinstance(snapshot, dict) else None
-        front = (
-            current_card.get("front")
-            if isinstance(current_card, dict) and isinstance(current_card.get("front"), str)
-            else None
-        )
-        if front:
+        grounding_suffix = _build_flashcard_grounding_suffix(snapshot)
+        if grounding_suffix:
             return (
                 "The next flashcard is now visible in the UI. "
-                "Ask the learner exactly this question, word for word: "
-                f"{front}"
+                f"{grounding_suffix} "
+                "Ask the learner exactly the current visible question, word for word."
             )
         return (
             "The next flashcard is now visible in the UI. "

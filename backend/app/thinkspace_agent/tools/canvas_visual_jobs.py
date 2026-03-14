@@ -23,22 +23,29 @@ from thinkspace_agent.config import (
     get_canvas_visual_planner_model,
 )
 
+from .canvas_placement_geometry import (
+    build_compact_placement_payload,
+    clamp_anchor_to_rect,
+    fit_rect_from_anchor,
+    select_free_rect_for_anchor,
+)
+
 logger = logging.getLogger(__name__)
 
-MIN_VISUAL_SIZE = 180
+MIN_VISUAL_SHORT_EDGE = 240
+MAX_VISUAL_WIDTH = 960
+MAX_VISUAL_HEIGHT = 720
 DEFAULT_VIEWPORT_WIDTH = 1440
 DEFAULT_VIEWPORT_HEIGHT = 900
 DEFAULT_CANVAS_PADDING = 48
 SUPPORTED_ASPECT_RATIOS = {"1:1", "4:3", "3:4", "16:9", "9:16"}
 
 
-class CanvasVisualPlacementPlan(BaseModel):
-    """Structured output for final canvas placement geometry."""
+class CanvasVisualPlacementAnchor(BaseModel):
+    """Structured output for anchor-only visual placement."""
 
     x: float
     y: float
-    w: float
-    h: float
 
 
 @dataclass
@@ -141,8 +148,8 @@ def _extract_viewport_bounds(context: dict[str, object] | None) -> dict[str, flo
     return {
         "x": x,
         "y": y,
-        "w": max(w, float(MIN_VISUAL_SIZE)),
-        "h": max(h, float(MIN_VISUAL_SIZE)),
+        "w": max(w, float(MIN_VISUAL_SHORT_EDGE)),
+        "h": max(h, float(MIN_VISUAL_SHORT_EDGE)),
     }
 
 
@@ -155,8 +162,14 @@ def _derive_initial_size(aspect_ratio_hint: str, viewport_bounds: dict[str, floa
     aspect_ratio = _aspect_ratio_value(aspect_ratio_hint)
     viewport_w = viewport_bounds["w"]
     viewport_h = viewport_bounds["h"]
-    usable_w = max(viewport_w - (DEFAULT_CANVAS_PADDING * 2), float(MIN_VISUAL_SIZE))
-    usable_h = max(viewport_h - (DEFAULT_CANVAS_PADDING * 2), float(MIN_VISUAL_SIZE))
+    usable_w = max(
+        min(viewport_w - (DEFAULT_CANVAS_PADDING * 2), float(MAX_VISUAL_WIDTH)),
+        float(MIN_VISUAL_SHORT_EDGE),
+    )
+    usable_h = max(
+        min(viewport_h - (DEFAULT_CANVAS_PADDING * 2), float(MAX_VISUAL_HEIGHT)),
+        float(MIN_VISUAL_SHORT_EDGE),
+    )
 
     max_w = usable_w * 0.46
     max_h = usable_h * 0.48
@@ -167,65 +180,50 @@ def _derive_initial_size(aspect_ratio_hint: str, viewport_bounds: dict[str, floa
         height = max_h
         width = height * aspect_ratio
 
-    width = max(width, float(MIN_VISUAL_SIZE))
-    height = max(height, float(MIN_VISUAL_SIZE))
+    width = max(width, float(MIN_VISUAL_SHORT_EDGE))
+    height = max(height, float(MIN_VISUAL_SHORT_EDGE))
     return round(width), round(height)
 
 
-def _clamp_geometry_to_viewport(
+def _build_geometry_from_anchor(
     *,
-    plan: CanvasVisualPlacementPlan,
+    anchor: CanvasVisualPlacementAnchor,
+    compact_context: dict[str, object],
     viewport_bounds: dict[str, float],
     aspect_ratio_hint: str,
-) -> dict[str, float]:
-    viewport_x = viewport_bounds["x"]
-    viewport_y = viewport_bounds["y"]
-    viewport_w = viewport_bounds["w"]
-    viewport_h = viewport_bounds["h"]
+) -> tuple[dict[str, float], dict[str, float] | None]:
     aspect_ratio = _aspect_ratio_value(aspect_ratio_hint)
+    selected_free_rect = select_free_rect_for_anchor(
+        compact_payload=compact_context,
+        x=anchor.x,
+        y=anchor.y,
+    )
+    if selected_free_rect is None:
+        selected_free_rect = {
+            "x": viewport_bounds["x"] + DEFAULT_CANVAS_PADDING,
+            "y": viewport_bounds["y"] + DEFAULT_CANVAS_PADDING,
+            "w": max(viewport_bounds["w"] - (DEFAULT_CANVAS_PADDING * 2), 0.0),
+            "h": max(viewport_bounds["h"] - (DEFAULT_CANVAS_PADDING * 2), 0.0),
+        }
 
-    width = float(plan.w)
-    height = float(plan.h)
-
-    max_width = max(viewport_w - (DEFAULT_CANVAS_PADDING * 2), float(MIN_VISUAL_SIZE))
-    max_height = max(viewport_h - (DEFAULT_CANVAS_PADDING * 2), float(MIN_VISUAL_SIZE))
-
-    width = min(width, max_width)
-    height = min(height, max_height)
-
-    # Preserve the aspect ratio even after clamping model output.
-    height_from_width = width / aspect_ratio
-    if height_from_width <= max_height:
-        height = height_from_width
-    else:
-        height = max_height
-        width = height * aspect_ratio
-
-    width = max(width, float(MIN_VISUAL_SIZE))
-    height = max(height, float(MIN_VISUAL_SIZE))
-
-    min_x = viewport_x + DEFAULT_CANVAS_PADDING
-    min_y = viewport_y + DEFAULT_CANVAS_PADDING
-    max_x = viewport_x + viewport_w - DEFAULT_CANVAS_PADDING - width
-    max_y = viewport_y + viewport_h - DEFAULT_CANVAS_PADDING - height
-
-    if max_x < min_x:
-        centered_x = viewport_x + (viewport_w - width) / 2
-        x = centered_x
-    else:
-        x = min(max(float(plan.x), min_x), max_x)
-
-    if max_y < min_y:
-        centered_y = viewport_y + (viewport_h - height) / 2
-        y = centered_y
-    else:
-        y = min(max(float(plan.y), min_y), max_y)
-
-    return {
-        "x": round(x),
-        "y": round(y),
-        "w": round(width),
-        "h": round(height),
+    clamped_anchor = clamp_anchor_to_rect(
+        x=float(anchor.x),
+        y=float(anchor.y),
+        rect=selected_free_rect,
+    )
+    geometry = fit_rect_from_anchor(
+        anchor_x=clamped_anchor["x"],
+        anchor_y=clamped_anchor["y"],
+        free_rect=selected_free_rect,
+        aspect_ratio=aspect_ratio,
+        max_width=float(MAX_VISUAL_WIDTH),
+        max_height=float(MAX_VISUAL_HEIGHT),
+    )
+    return geometry, {
+        "x": round(selected_free_rect["x"]),
+        "y": round(selected_free_rect["y"]),
+        "w": round(selected_free_rect["w"]),
+        "h": round(selected_free_rect["h"]),
     }
 
 
@@ -234,7 +232,7 @@ def _build_fallback_placement(
     viewport_bounds: dict[str, float],
     aspect_ratio_hint: str,
     placement_hint: str,
-) -> dict[str, float]:
+) -> tuple[dict[str, float], dict[str, float] | None]:
     width, height = _derive_initial_size(aspect_ratio_hint, viewport_bounds)
     viewport_x = viewport_bounds["x"]
     viewport_y = viewport_bounds["y"]
@@ -255,10 +253,14 @@ def _build_fallback_placement(
     elif placement_hint == "viewport_bottom":
         y = viewport_y + viewport_h - DEFAULT_CANVAS_PADDING - height
 
-    return _clamp_geometry_to_viewport(
-        plan=CanvasVisualPlacementPlan(x=x, y=y, w=width, h=height),
-        viewport_bounds=viewport_bounds,
-        aspect_ratio_hint=aspect_ratio_hint,
+    return (
+        {
+            "x": round(x),
+            "y": round(y),
+            "w": round(width),
+            "h": round(height),
+        },
+        None,
     )
 
 
@@ -328,15 +330,11 @@ def _derive_visual_title(
 
 def _build_placement_planner_prompt(
     *,
-    context: dict[str, object],
+    compact_context: dict[str, object],
     aspect_ratio_hint: str,
     placement_hint: str,
     viewport_bounds: dict[str, float],
-    screenshot_enabled: bool,
 ) -> str:
-    serialized_context = {
-        key: value for key, value in context.items() if key != "screenshot_data_url"
-    }
     suggested_w, suggested_h = _derive_initial_size(
         aspect_ratio_hint,
         viewport_bounds,
@@ -344,23 +342,21 @@ def _build_placement_planner_prompt(
     return "\n".join(
         [
             "You plan where a generated teaching visual should be inserted on a ThinkSpace canvas.",
-            "Return only the final page-space geometry for the image.",
+            "Return only the page-space x and y for the image's top-left corner.",
             "Requirements:",
-            "- Respect the provided viewport bounds and keep the image fully visible inside the viewport.",
-            "- Prefer low-overlap open space relative to existing blurry shapes and selected content.",
-            (
-                "- Use selected shapes and screenshot semantics to avoid covering the active teaching focus."
-                if screenshot_enabled
-                else "- Use selected shapes and structured canvas context to avoid covering the active teaching focus."
-            ),
-            "- The output width and height must preserve the requested aspect ratio.",
+            "- Respect the provided viewport bounds and choose a top-left coordinate that lies inside one of the free rects when possible.",
+            "- Occupied rects are blocked areas with safety padding already applied.",
+            "- Free rects are open candidate regions already computed from the viewport and blocked areas.",
+            "- Use the screenshot to choose the semantically best open region when one is provided.",
+            "- The backend will expand from your top-left coordinate to the largest size that fits while preserving the requested aspect ratio.",
+            "- Choose a top-left coordinate that leaves room for the image to grow rightward and downward inside the intended free region.",
             "- If placement_hint is auto, choose the clearest open area in the current viewport.",
             "- If placement_hint is directional, honor it when reasonable without causing excessive overlap.",
             f"Requested aspect ratio: {aspect_ratio_hint}",
             f"Placement hint: {placement_hint}",
             f"Suggested starting size: {suggested_w}x{suggested_h}",
-            "Canvas context JSON:",
-            json.dumps(serialized_context, ensure_ascii=True),
+            "Placement geometry JSON:",
+            json.dumps(compact_context, ensure_ascii=True),
         ]
     )
 
@@ -374,6 +370,13 @@ def _plan_canvas_visual_placement(
     started_at = now_iso()
     started_perf = time.perf_counter()
     viewport_bounds = _extract_viewport_bounds(context)
+    desired_w, desired_h = _derive_initial_size(aspect_ratio_hint, viewport_bounds)
+    compact_context, geometry_prep = build_compact_placement_payload(
+        context=context,
+        viewport_bounds=viewport_bounds,
+        desired_w=desired_w,
+        desired_h=desired_h,
+    )
     screenshot_enabled = get_canvas_visual_planner_include_screenshot()
     screenshot_part = None
     screenshot_data_url = context.get("screenshot_data_url")
@@ -391,11 +394,10 @@ def _plan_canvas_visual_placement(
     client = _build_client()
     contents: list[object] = [
         _build_placement_planner_prompt(
-            context=context,
+            compact_context=compact_context,
             aspect_ratio_hint=aspect_ratio_hint,
             placement_hint=placement_hint,
             viewport_bounds=viewport_bounds,
-            screenshot_enabled=screenshot_enabled,
         )
     ]
     if screenshot_part is not None:
@@ -407,7 +409,7 @@ def _plan_canvas_visual_placement(
         config=genai_types.GenerateContentConfig(
             temperature=0.2,
             response_mime_type="application/json",
-            response_schema=CanvasVisualPlacementPlan,
+            response_schema=CanvasVisualPlacementAnchor,
         ),
     )
 
@@ -419,16 +421,15 @@ def _plan_canvas_visual_placement(
         if isinstance(response.parsed, BaseModel)
         else response.parsed
     )
-    plan = CanvasVisualPlacementPlan.model_validate(response.parsed)
-    if plan.w <= 0 or plan.h <= 0:
-        raise ValueError(
-            f"Canvas placement planner returned non-positive geometry: w={plan.w}, h={plan.h}"
-        )
-    final_geometry = _clamp_geometry_to_viewport(
-        plan=plan,
+    plan = CanvasVisualPlacementAnchor.model_validate(response.parsed)
+    final_geometry, selected_free_rect = _build_geometry_from_anchor(
+        anchor=plan,
+        compact_context=compact_context,
         viewport_bounds=viewport_bounds,
         aspect_ratio_hint=aspect_ratio_hint,
     )
+    if final_geometry["w"] <= 0 or final_geometry["h"] <= 0:
+        raise ValueError("Canvas placement backend could not size a positive geometry from anchor")
     completed_at = now_iso()
     return {
         "geometry": final_geometry,
@@ -436,12 +437,14 @@ def _plan_canvas_visual_placement(
             "planner_model": get_canvas_visual_planner_model(),
             "placement_hint": placement_hint,
             "screenshot_included_in_request": screenshot_part is not None,
+            "geometry_prep": geometry_prep,
             "started_at": started_at,
             "completed_at": completed_at,
             "duration_ms": max(0, int((time.perf_counter() - started_perf) * 1000)),
             "planner_prompt": contents[0],
             "raw_response_payload": raw_response_payload,
             "parsed_plan": plan.model_dump(),
+            "selected_free_rect": selected_free_rect,
             "final_geometry": final_geometry,
             "used_fallback": False,
         },
@@ -576,7 +579,7 @@ async def generate_canvas_visual_artifact(
             "Canvas placement planner failed, using fallback placement: %s",
             placement_result,
         )
-        fallback_geometry = _build_fallback_placement(
+        fallback_geometry, fallback_free_rect = _build_fallback_placement(
             viewport_bounds=viewport_bounds,
             aspect_ratio_hint=normalized_aspect_ratio,
             placement_hint=normalized_placement_hint,
@@ -593,6 +596,7 @@ async def generate_canvas_visual_artifact(
                 "planner_prompt": None,
                 "raw_response_payload": None,
                 "parsed_plan": None,
+                "selected_free_rect": fallback_free_rect,
                 "final_geometry": fallback_geometry,
                 "used_fallback": True,
                 "fallback_reason": str(placement_result),

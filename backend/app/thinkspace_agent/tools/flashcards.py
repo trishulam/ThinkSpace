@@ -111,6 +111,82 @@ def _build_flashcard_control_payload(
     return control_payload or None
 
 
+def _build_flashcard_grounding_payload(
+    payload: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+
+    grounding_payload: dict[str, object] = {}
+
+    topic = payload.get("topic")
+    if isinstance(topic, str) and topic.strip():
+        grounding_payload["topic"] = topic.strip()
+
+    title = payload.get("title")
+    if isinstance(title, str) and title.strip():
+        grounding_payload["title"] = title.strip()
+
+    total_cards = payload.get("total_cards")
+    if isinstance(total_cards, int):
+        grounding_payload["total_cards"] = total_cards
+
+    current_card = payload.get("current_card")
+    if isinstance(current_card, dict):
+        current_question = current_card.get("front")
+        current_answer = current_card.get("back")
+        current_position = current_card.get("position")
+        current_index = current_card.get("index")
+        is_answer_revealed = current_card.get("is_answer_revealed")
+
+        normalized_current_card: dict[str, object] = {}
+        if isinstance(current_question, str) and current_question.strip():
+            normalized_current_card["question"] = current_question.strip()
+        if isinstance(current_answer, str) and current_answer.strip():
+            normalized_current_card["answer"] = current_answer.strip()
+        if isinstance(current_position, int):
+            normalized_current_card["position"] = current_position
+        if isinstance(current_index, int):
+            normalized_current_card["index"] = current_index
+        if isinstance(is_answer_revealed, bool):
+            normalized_current_card["is_answer_revealed"] = is_answer_revealed
+        if normalized_current_card:
+            grounding_payload["current_card"] = normalized_current_card
+
+    next_card = payload.get("next_card")
+    if isinstance(next_card, dict):
+        next_question = next_card.get("front")
+        next_position = next_card.get("position")
+        next_index = next_card.get("index")
+
+        normalized_next_card: dict[str, object] = {}
+        if isinstance(next_question, str) and next_question.strip():
+            normalized_next_card["question"] = next_question.strip()
+        if isinstance(next_position, int):
+            normalized_next_card["position"] = next_position
+        if isinstance(next_index, int):
+            normalized_next_card["index"] = next_index
+        if normalized_next_card:
+            grounding_payload["next_card"] = normalized_next_card
+
+    ui_state = payload.get("ui")
+    if isinstance(ui_state, dict):
+        normalized_ui_state: dict[str, object] = {}
+        deck_visible = ui_state.get("deck_visible")
+        if isinstance(deck_visible, bool):
+            normalized_ui_state["deck_visible"] = deck_visible
+        answer_visible = ui_state.get("answer_visible")
+        if isinstance(answer_visible, bool):
+            normalized_ui_state["answer_visible"] = answer_visible
+        visible_index = ui_state.get("visible_index")
+        if isinstance(visible_index, int):
+            normalized_ui_state["visible_index"] = visible_index
+        if normalized_ui_state:
+            grounding_payload["ui"] = normalized_ui_state
+
+    return grounding_payload or None
+
+
 async def _run_flashcard_generation_job(
     *,
     user_id: str,
@@ -131,10 +207,10 @@ async def _run_flashcard_generation_job(
             status="completed",
             tool=FLASHCARDS_CREATE_TOOL,
             summary=(
-                "Flashcards created. "
-                f"First question: {active_payload['current_card']['front']}"
+                "Flashcards created. Wait until the UI confirms the first card is "
+                "visible before asking it."
             ),
-            payload=active_payload,
+            payload=_build_flashcard_grounding_payload(active_payload),
             frontend_action=_build_frontend_action(
                 FLASHCARDS_SHOW_ACTION,
                 FLASHCARDS_CREATE_TOOL,
@@ -266,7 +342,7 @@ def flashcards_next(tool_context: ToolContext | None = None) -> dict[str, object
             status="failed",
             tool=FLASHCARDS_NEXT_TOOL,
             summary="The active flashcard deck is missing current card context",
-            payload=current_payload,
+            payload=_build_flashcard_grounding_payload(current_payload),
         )
 
     current_index = current_payload.get("current_index")
@@ -276,7 +352,7 @@ def flashcards_next(tool_context: ToolContext | None = None) -> dict[str, object
             status="failed",
             tool=FLASHCARDS_NEXT_TOOL,
             summary="The active flashcard deck state is incomplete",
-            payload=current_payload,
+            payload=_build_flashcard_grounding_payload(current_payload),
         )
 
     ui_state = current_payload.get("ui")
@@ -293,7 +369,7 @@ def flashcards_next(tool_context: ToolContext | None = None) -> dict[str, object
                 "The next flashcard is already being shown. Wait until it is visible "
                 "in the UI before calling `flashcards.next` again."
             ),
-            payload=_build_flashcard_control_payload(current_payload),
+            payload=_build_flashcard_grounding_payload(current_payload),
         )
 
     if current_index >= total_cards - 1:
@@ -301,7 +377,7 @@ def flashcards_next(tool_context: ToolContext | None = None) -> dict[str, object
             status="completed",
             tool=FLASHCARDS_NEXT_TOOL,
             summary="Already at the final flashcard",
-            payload=current_payload,
+            payload=_build_flashcard_grounding_payload(current_payload),
         )
 
     next_payload = flashcard_session_store.advance(
@@ -317,7 +393,7 @@ def flashcards_next(tool_context: ToolContext | None = None) -> dict[str, object
             "Requested the next flashcard. Wait until the UI confirms the next card "
             "is visible before asking it."
         ),
-        payload=control_payload,
+        payload=_build_flashcard_grounding_payload(next_payload),
         frontend_action=_build_frontend_action(
             FLASHCARDS_NEXT_TOOL,
             FLASHCARDS_NEXT_TOOL,
@@ -360,13 +436,13 @@ def flashcards_reveal_answer(
                     "The current flashcard answer is already being revealed. "
                     "Wait until it is visible in the UI."
                 ),
-                payload=_build_flashcard_control_payload(current_payload),
+                payload=_build_flashcard_grounding_payload(current_payload),
             )
         return _build_tool_result(
             status="completed",
             tool=FLASHCARDS_REVEAL_ANSWER_TOOL,
             summary="The current flashcard answer is already revealed",
-            payload=current_payload,
+            payload=_build_flashcard_grounding_payload(current_payload),
         )
 
     revealed_payload = flashcard_session_store.reveal(
@@ -382,7 +458,7 @@ def flashcards_reveal_answer(
             "Requested answer reveal. Wait until the UI confirms the answer is "
             "visible before explaining it."
         ),
-        payload=control_payload,
+        payload=_build_flashcard_grounding_payload(revealed_payload),
         frontend_action=_build_frontend_action(
             FLASHCARDS_REVEAL_ANSWER_TOOL,
             FLASHCARDS_REVEAL_ANSWER_TOOL,
@@ -416,7 +492,7 @@ def flashcards_end(tool_context: ToolContext | None = None) -> dict[str, object]
         status="completed",
         tool=FLASHCARDS_END_TOOL,
         summary="Cleared the active flashcard session",
-        payload=current_payload,
+        payload=_build_flashcard_grounding_payload(current_payload),
         frontend_action=_build_frontend_action(
             FLASHCARDS_CLEAR_ACTION,
             FLASHCARDS_END_TOOL,
