@@ -45,6 +45,10 @@ interface AgentSidebarProps {
   onClearLog: () => void;
   onClearGestureLogs: () => void;
   onToggleGestures: () => void;
+  onTestNotchConnect: () => void;
+  onTestNotchDisconnect: () => void;
+  onTestNotchThinking: () => void;
+  onTestNotchSpeaking: () => void;
 }
 
 export function AgentSidebar({
@@ -63,6 +67,10 @@ export function AgentSidebar({
   onClearLog,
   onClearGestureLogs,
   onToggleGestures,
+  onTestNotchConnect,
+  onTestNotchDisconnect,
+  onTestNotchThinking,
+  onTestNotchSpeaking,
 }: AgentSidebarProps) {
   const [showAudioEvents, setShowAudioEvents] = useState(false);
   const [activeTab, setActiveTab] = useState<
@@ -167,6 +175,51 @@ export function AgentSidebar({
         >
           Canvas Agent
         </button>
+      </div>
+
+      <div
+        style={{
+          padding: "10px 12px",
+          borderBottom: "1px solid rgba(148, 163, 184, 0.12)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 800,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            color: "rgba(100, 116, 139, 0.9)",
+          }}
+        >
+          Notch test
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 8,
+          }}
+        >
+          <button className="agent-sidebar-clear-btn" onClick={onTestNotchConnect}>
+            Connect
+          </button>
+          <button
+            className="agent-sidebar-clear-btn"
+            onClick={onTestNotchDisconnect}
+          >
+            Disconnect
+          </button>
+          <button className="agent-sidebar-clear-btn" onClick={onTestNotchThinking}>
+            Thinking
+          </button>
+          <button className="agent-sidebar-clear-btn" onClick={onTestNotchSpeaking}>
+            Speaking
+          </button>
+        </div>
       </div>
 
       {activeTab === "agent" ? (

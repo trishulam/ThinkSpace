@@ -89,6 +89,7 @@ DefaultSizeStyle.setDefaultValue("s");
 const tools = [TargetShapeTool, TargetAreaTool];
 
 type CustomToolbarProps = {
+  isDesignMode: boolean;
   recordingStatus: string;
   recordingError: string | null;
   recordingSupported: boolean;
@@ -114,18 +115,17 @@ function formatRecordingDuration(totalSeconds: number): string {
 
 type CanvasCaptureHudProps = {
   gestureState: GestureRuntimeState | null;
-  isRecording: boolean;
-  recordingStatus: string;
   recordingError: string | null;
+};
+
+type CanvasRecordingIndicatorProps = {
+  isVisible: boolean;
   elapsedSeconds: number;
 };
 
 const CanvasCaptureHud = ({
   gestureState,
-  isRecording,
-  recordingStatus,
   recordingError,
-  elapsedSeconds,
 }: CanvasCaptureHudProps) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const gestureStream = gestureState?.stream ?? null;
@@ -149,22 +149,6 @@ const CanvasCaptureHud = ({
 
   return (
     <div className="ts-canvas-capture-hud">
-      <div className="ts-canvas-capture-hud__header">
-        <div className="ts-canvas-capture-hud__recording">
-          <span
-            className={
-              isRecording
-                ? "ts-canvas-capture-hud__record-dot ts-canvas-capture-hud__record-dot--live"
-                : "ts-canvas-capture-hud__record-dot"
-            }
-          />
-          <span>{isRecording ? "Canvas recording" : "Canvas ready"}</span>
-        </div>
-        <span className="ts-canvas-capture-hud__timer">
-          {formatRecordingDuration(elapsedSeconds)}
-        </span>
-      </div>
-
       <div className="ts-canvas-capture-hud__viewport">
         {gestureStream ? (
           <video
@@ -188,15 +172,6 @@ const CanvasCaptureHud = ({
         )}
       </div>
 
-      <div className="ts-canvas-capture-hud__footer">
-        <span className="ts-canvas-capture-hud__chip">
-          Gesture {gestureState?.cameraState ?? "idle"}
-        </span>
-        <span className="ts-canvas-capture-hud__chip">
-          {isRecording ? "Recording current tab" : recordingStatus}
-        </span>
-      </div>
-
       {recordingError ? (
         <div className="ts-canvas-capture-hud__error">{recordingError}</div>
       ) : null}
@@ -204,7 +179,27 @@ const CanvasCaptureHud = ({
   );
 };
 
+const CanvasRecordingIndicator = ({
+  isVisible,
+  elapsedSeconds,
+}: CanvasRecordingIndicatorProps) => {
+  if (!isVisible) {
+    return null;
+  }
+
+  return (
+    <div className="ts-canvas-recording-indicator" aria-live="polite">
+      <span className="ts-canvas-recording-indicator__dot" aria-hidden="true" />
+      <span className="ts-canvas-recording-indicator__label">Recording</span>
+      <span className="ts-canvas-recording-indicator__time">
+        {formatRecordingDuration(elapsedSeconds)}
+      </span>
+    </div>
+  );
+};
+
 const CustomToolbar = ({
+  isDesignMode,
   recordingStatus,
   recordingError,
   recordingSupported,
@@ -214,10 +209,20 @@ const CustomToolbar = ({
   onBackToDashboard,
   onEndSession,
 }: CustomToolbarProps) => {
-  const recordingLabel = isRecording ? "Recording" : recordingStatus;
+  const recordingLabel = isDesignMode
+    ? "Design mode"
+    : isRecording
+      ? "Recording"
+      : recordingStatus;
 
   return (
-    <div className="tldraw-custom-toolbar">
+    <div
+      className={
+        isDesignMode
+          ? "tldraw-custom-toolbar tldraw-custom-toolbar--dark"
+          : "tldraw-custom-toolbar"
+      }
+    >
       <button
         onClick={onBackToDashboard}
         className="tldraw-back-button"
@@ -253,7 +258,7 @@ const CustomToolbar = ({
         />
         <span>{recordingLabel}</span>
       </div>
-      {recordingSupported && !isRecording ? (
+      {!isDesignMode && recordingSupported && !isRecording ? (
         <button
           onClick={onStartRecording}
           type="button"
@@ -263,14 +268,16 @@ const CustomToolbar = ({
           Start Recording
         </button>
       ) : null}
-      <button
-        onClick={onEndSession}
-        type="button"
-        disabled={isBusy}
-        style={{ marginLeft: 8 }}
-      >
-        End Session
-      </button>
+      {!isDesignMode ? (
+        <button
+          onClick={onEndSession}
+          type="button"
+          disabled={isBusy}
+          style={{ marginLeft: 8 }}
+        >
+          End Session
+        </button>
+      ) : null}
       {recordingError ? (
         <div
           style={{
@@ -2148,6 +2155,9 @@ export const SessionCanvas: React.FC = () => {
     };
   }, [app]);
 
+  const notchConnectionState = testConnState ?? ws.connectionState;
+  const notchTalkingState = testTalkState ?? ws.talkingState;
+
   if (!sessionId) {
     return <div>Session not found</div>;
   }
@@ -2182,12 +2192,13 @@ export const SessionCanvas: React.FC = () => {
             </Tldraw>
             <AgentSubtitleOverlay subtitle={ws.agentSubtitle} />
             <FlashcardPanel state={flashcardState} />
+            <CanvasRecordingIndicator
+              isVisible={isRecording}
+              elapsedSeconds={elapsedSeconds}
+            />
             <CanvasCaptureHud
               gestureState={gestureState}
-              isRecording={isRecording}
-              recordingStatus={recordingStatus}
               recordingError={sessionActionError || recordingError}
-              elapsedSeconds={elapsedSeconds}
             />
           </div>
           {/* ChatPanel replaced by live agent sidebar */}
@@ -2214,11 +2225,28 @@ export const SessionCanvas: React.FC = () => {
             onClearLog={ws.clearLog}
             onClearGestureLogs={handleClearGestureLogs}
             onToggleGestures={handleToggleGestures}
+            onTestNotchConnect={() => {
+              setTestConnState("connected");
+              setTestTalkState("none");
+            }}
+            onTestNotchDisconnect={() => {
+              setTestConnState("idle");
+              setTestTalkState("none");
+            }}
+            onTestNotchThinking={() => {
+              setTestConnState("connected");
+              setTestTalkState("thinking");
+            }}
+            onTestNotchSpeaking={() => {
+              setTestConnState("connected");
+              setTestTalkState("agent");
+            }}
           />
         </div>
       </TldrawUiToastsProvider>
 
       <CustomToolbar
+        isDesignMode={false}
         recordingStatus={recordingStatus}
         recordingError={sessionActionError || recordingError}
         recordingSupported={isRecordingSupported}
@@ -2234,8 +2262,8 @@ export const SessionCanvas: React.FC = () => {
 
       {/* Dynamic Island for AI Voice Agent */}
       <DynamicIsland
-        connectionState={ws.connectionState}
-        talkingState={ws.talkingState}
+        connectionState={notchConnectionState}
+        talkingState={notchTalkingState}
         status={canvasJobToast ?? interpreterToast}
       />
     </>

@@ -279,6 +279,7 @@ export const Dashboard: React.FC = () => {
   const attachInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleNewSession = () => setIsNewSessionModalOpen(true);
+  const handleOpenCanvas = () => setIsNewSessionModalOpen(true);
   const handleSessionPreviewOpen = () => {
     setSessionActionError(null);
     setIsPromptPopoverOpen(false);
@@ -512,7 +513,41 @@ export const Dashboard: React.FC = () => {
         <section className="ts-home-session-preview" aria-live="polite">
           <div className="ts-home-session-preview-shell">
             <SessionPreviewLoader />
-            <p className="ts-home-session-preview-text">{currentSessionPreviewStep.label}</p>
+            <div className="ts-home-session-preview-copy">
+              <p className="ts-home-session-preview-kicker">Preparing your session</p>
+              <div
+                key={currentSessionPreviewStep.label}
+                className="ts-home-session-preview-copy-body"
+              >
+                <div className="ts-home-session-preview-text-row">
+                  <p className="ts-home-session-preview-text">
+                    {currentSessionPreviewStep.label}
+                  </p>
+                  <span
+                    className="ts-home-session-preview-text-trail"
+                    aria-hidden="true"
+                  />
+                </div>
+                <p className="ts-home-session-preview-description">
+                  {currentSessionPreviewStep.description}
+                </p>
+              </div>
+            </div>
+            <div
+              className="ts-home-session-preview-steps"
+              aria-label="Session preparation progress"
+            >
+              {SESSION_CREATION_PREVIEW_STEPS.map((step, index) => (
+                <span
+                  key={step.label}
+                  className={
+                    index === sessionPreviewStepIndex
+                      ? "ts-home-session-preview-step ts-home-session-preview-step--active"
+                      : "ts-home-session-preview-step"
+                  }
+                />
+              ))}
+            </div>
           </div>
         </section>
       ) : (
@@ -532,6 +567,9 @@ export const Dashboard: React.FC = () => {
               </button>
               <button type="button" onClick={() => scrollToSection("thinkspace-library")}>
                 Library
+              </button>
+              <button type="button" onClick={handleOpenCanvas}>
+                New Session
               </button>
             </nav>
             <div className="ts-home-landing-nav-actions">
@@ -652,6 +690,9 @@ export const Dashboard: React.FC = () => {
                   Start your first session, ask questions out loud, and come back to replay the
                   recording with notes and key moments.
                 </p>
+                <button className="ts-home-landing-prompt-btn" onClick={handleOpenCanvas} type="button">
+                  Start Canvas Session
+                </button>
                 <button className="ts-home-landing-prompt-btn" onClick={handleNewSession} type="button">
                   Start First Session
                 </button>
