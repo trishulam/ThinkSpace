@@ -190,8 +190,8 @@ async def _run_canvas_widget_job(
                 "placement": {
                     "x": artifact_payload["x"],
                     "y": artifact_payload["y"],
-                    "w": artifact_payload["w"],
-                    "h": artifact_payload["h"],
+                    "w": artifact_payload.get("w"),
+                    "h": artifact_payload.get("h"),
                 },
                 "planner_trace": artifact_payload.get("planner_trace"),
             },
@@ -211,8 +211,8 @@ async def _run_canvas_widget_job(
             "placement": {
                 "x": artifact_payload["x"],
                 "y": artifact_payload["y"],
-                "w": artifact_payload["w"],
-                "h": artifact_payload["h"],
+                "w": artifact_payload.get("w"),
+                "h": artifact_payload.get("h"),
             },
             "frontend_payload_summary": {
                 "title": artifact_payload["title"],

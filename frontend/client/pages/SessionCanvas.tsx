@@ -1,4 +1,6 @@
 import React from "react";
+import ReactDOM from "react-dom/client";
+import { flushSync } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // import { useSession } from '../context/SessionContext'
@@ -75,6 +77,10 @@ import type {
   TalkingState,
 } from "../types/agent-live";
 import { thinkspaceShapeUtils } from "../components/widgets/ThinkspaceWidgetShapeUtil";
+import {
+  NotationCardContent,
+  notationCardRootStyle,
+} from "../components/widgets/NotationWidget";
 
 // Customize tldraw's styles to play to the agent's strengths
 DefaultSizeStyle.setDefaultValue("s");
@@ -224,8 +230,8 @@ type CanvasInsertWidgetPayload = {
   spec: GraphWidgetSpec | NotationWidgetSpec;
   x: number;
   y: number;
-  w: number;
-  h: number;
+  w?: number;
+  h?: number;
 };
 
 type CanvasDelegatePayload = {
@@ -343,9 +349,7 @@ function normalizeCanvasInsertWidgetPayload(
     (widgetKind !== "graph" && widgetKind !== "notation") ||
     typeof title !== "string" ||
     typeof x !== "number" ||
-    typeof y !== "number" ||
-    typeof w !== "number" ||
-    typeof h !== "number"
+    typeof y !== "number"
   ) {
     return null;
   }
@@ -364,8 +368,129 @@ function normalizeCanvasInsertWidgetPayload(
     spec: spec as GraphWidgetSpec | NotationWidgetSpec,
     x,
     y,
-    w,
-    h,
+    w: typeof w === "number" ? w : undefined,
+    h: typeof h === "number" ? h : undefined,
+  };
+}
+
+function measureNotationWidgetSize(spec: NotationWidgetSpec): { w: number; h: number } {
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "-10000px";
+  host.style.pointerEvents = "none";
+  host.style.visibility = "hidden";
+  host.style.zIndex = "-1";
+  host.style.width = "max-content";
+  host.style.maxWidth = "none";
+  document.body.appendChild(host);
+
+  const root = ReactDOM.createRoot(host);
+
+  try {
+    flushSync(() => {
+      root.render(
+        <div
+          style={{
+            ...notationCardRootStyle,
+            width: "max-content",
+            maxWidth: "none",
+          }}
+        >
+          <NotationCardContent spec={spec} />
+        </div>,
+      );
+    });
+
+    const element = host.firstElementChild as HTMLElement | null;
+    const rect = element?.getBoundingClientRect();
+    const measuredWidth = element
+      ? Math.max(rect?.width ?? 0, element.scrollWidth)
+      : 0;
+    const measuredHeight = element
+      ? Math.max(rect?.height ?? 0, element.scrollHeight)
+      : 0;
+
+    return {
+      w: Math.max(220, Math.ceil(measuredWidth || 420)),
+      h: Math.max(180, Math.ceil(measuredHeight || 220)),
+    };
+  } finally {
+    root.unmount();
+    document.body.removeChild(host);
+  }
+}
+
+function waitForNextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+async function measureNotationWidgetSizeAsync(
+  spec: NotationWidgetSpec,
+): Promise<{ w: number; h: number }> {
+  const initialSize = measureNotationWidgetSize(spec);
+  const fontSet = (document as Document & { fonts?: FontFaceSet }).fonts;
+  if (fontSet?.ready) {
+    await fontSet.ready;
+    await waitForNextPaint();
+    return measureNotationWidgetSize(spec);
+  }
+
+  return initialSize;
+}
+
+async function insertWidgetIntoCanvas(
+  editor: Editor,
+  payload: CanvasInsertWidgetPayload,
+): Promise<{
+  applied: boolean;
+  summary: string;
+  shapeId?: TLShapeId;
+  bounds?: { x: number; y: number; w: number; h: number };
+}> {
+  const shapeId = createShapeId();
+  const createdAt = new Date().toISOString();
+  const widgetMeta = buildGeneratedWidgetMeta(payload, createdAt);
+  const resolvedSize =
+    payload.widget_kind === "notation"
+      ? await measureNotationWidgetSizeAsync(payload.spec as NotationWidgetSpec)
+      : {
+          w: payload.w ?? 640,
+          h: payload.h ?? 420,
+        };
+
+  editor.createShapes([
+    {
+      id: shapeId,
+      type: "thinkspace-widget",
+      x: payload.x,
+      y: payload.y,
+      props: {
+        w: resolvedSize.w,
+        h: resolvedSize.h,
+        widgetKind: payload.widget_kind,
+        specJson: JSON.stringify(payload.spec),
+      },
+      meta: widgetMeta,
+    } as never,
+  ]);
+
+  editor.select(shapeId);
+
+  return {
+    applied: true,
+    summary: payload.title
+      ? `Title: ${payload.title}`
+      : "Widget inserted into canvas",
+    shapeId,
+    bounds: {
+      x: payload.x,
+      y: payload.y,
+      w: resolvedSize.w,
+      h: resolvedSize.h,
+    },
   };
 }
 
@@ -629,51 +754,6 @@ function insertVisualIntoCanvas(
   };
 }
 
-function insertWidgetIntoCanvas(
-  editor: Editor,
-  payload: CanvasInsertWidgetPayload,
-): {
-  applied: boolean;
-  summary: string;
-  shapeId?: TLShapeId;
-  bounds?: { x: number; y: number; w: number; h: number };
-} {
-  const shapeId = createShapeId();
-  const createdAt = new Date().toISOString();
-  const widgetMeta = buildGeneratedWidgetMeta(payload, createdAt);
-
-  editor.createShapes([
-    {
-      id: shapeId,
-      type: "thinkspace-widget",
-      x: payload.x,
-      y: payload.y,
-      props: {
-        w: payload.w,
-        h: payload.h,
-        widgetKind: payload.widget_kind,
-        specJson: JSON.stringify(payload.spec),
-      },
-      meta: widgetMeta,
-    } as never,
-  ]);
-
-  editor.select(shapeId);
-
-  return {
-    applied: true,
-    summary: payload.title
-      ? `Title: ${payload.title}`
-      : "Widget inserted into canvas",
-    shapeId,
-    bounds: {
-      x: payload.x,
-      y: payload.y,
-      w: payload.w,
-      h: payload.h,
-    },
-  };
-}
 
 function getDelegateBounds(editor: Editor, payload: CanvasDelegatePayload) {
   if (payload.target_scope === "selection") {
@@ -1442,47 +1522,71 @@ export const SessionCanvas: React.FC = () => {
             return;
           }
 
-          const result = insertWidgetIntoCanvas(editor, insertPayload);
-          if (result.applied) {
-            void (async () => {
-              if (result.bounds && result.shapeId) {
-                await sendFocusedScreenshot(
-                  captureCanvasScreenshotForBounds(
-                    editor,
-                    result.bounds,
-                    [result.shapeId],
-                  ),
-                  "Failed to capture generated widget screenshot",
+          void (async () => {
+            try {
+              const result = await insertWidgetIntoCanvas(editor, insertPayload);
+              if (result.applied) {
+                if (result.bounds && result.shapeId) {
+                  await sendFocusedScreenshot(
+                    captureCanvasScreenshotForBounds(
+                      editor,
+                      result.bounds,
+                      [result.shapeId],
+                    ),
+                    "Failed to capture generated widget screenshot",
+                  );
+                }
+                clearCanvasToast();
+                ws.sendFrontendAck({
+                  status: "applied",
+                  action_type: action.type,
+                  source_tool: action.source_tool,
+                  job_id: action.job_id,
+                  summary: result.summary,
+                });
+              } else {
+                showCanvasToast(
+                  {
+                    jobId: action.job_id,
+                    title: "Widget insertion failed",
+                    message: result.summary,
+                    severity: "error",
+                    isLoading: false,
+                  },
+                  CANVAS_ERROR_TOAST_VISIBLE_MS,
                 );
+                ws.sendFrontendAck({
+                  status: "failed",
+                  action_type: action.type,
+                  source_tool: action.source_tool,
+                  job_id: action.job_id,
+                  summary: result.summary,
+                });
               }
-              clearCanvasToast();
+            } catch (error) {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Widget insertion failed";
+              showCanvasToast(
+                {
+                  jobId: action.job_id,
+                  title: "Widget insertion failed",
+                  message,
+                  severity: "error",
+                  isLoading: false,
+                },
+                CANVAS_ERROR_TOAST_VISIBLE_MS,
+              );
               ws.sendFrontendAck({
-                status: "applied",
+                status: "failed",
                 action_type: action.type,
                 source_tool: action.source_tool,
                 job_id: action.job_id,
-                summary: result.summary,
+                summary: message,
               });
-            })();
-          } else {
-            showCanvasToast(
-              {
-                jobId: action.job_id,
-                title: "Widget insertion failed",
-                message: result.summary,
-                severity: "error",
-                isLoading: false,
-              },
-              CANVAS_ERROR_TOAST_VISIBLE_MS,
-            );
-            ws.sendFrontendAck({
-              status: "failed",
-              action_type: action.type,
-              source_tool: action.source_tool,
-              job_id: action.job_id,
-              summary: result.summary,
-            });
-          }
+            }
+          })();
           return;
         }
         case "flashcards.begin":

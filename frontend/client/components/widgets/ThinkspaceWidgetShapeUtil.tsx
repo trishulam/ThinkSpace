@@ -121,10 +121,7 @@ export class ThinkspaceWidgetShapeUtil extends ShapeUtil<any> {
           />
         ) : widgetShape.props.widgetKind === "notation" &&
           isNotationWidgetSpec(spec) ? (
-          <NotationWidget
-            spec={spec}
-            height={Math.max(220, Math.round(widgetShape.props.h - 24))}
-          />
+          <NotationWidget spec={spec} />
         ) : (
           <div
             style={{

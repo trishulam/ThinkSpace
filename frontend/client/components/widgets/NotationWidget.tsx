@@ -6,7 +6,8 @@ import type { NotationWidgetSpec } from "../../api/widgets";
 
 type NotationWidgetProps = {
   spec: NotationWidgetSpec;
-  height?: number;
+  className?: string;
+  style?: React.CSSProperties;
 };
 
 function renderBlockLatex(latex: string): string {
@@ -16,9 +17,22 @@ function renderBlockLatex(latex: string): string {
   });
 }
 
-export const NotationWidget: React.FC<NotationWidgetProps> = ({
+export const notationCardRootStyle: React.CSSProperties = {
+  border: "1px solid rgba(100, 116, 139, 0.35)",
+  borderRadius: 18,
+  background: "#ffffff",
+  padding: "20px 14px 18px",
+  boxShadow: "0 16px 36px rgba(15, 23, 42, 0.10)",
+  boxSizing: "border-box",
+  display: "inline-block",
+};
+
+type NotationCardContentProps = {
+  spec: NotationWidgetSpec;
+};
+
+export const NotationCardContent: React.FC<NotationCardContentProps> = ({
   spec,
-  height = 220,
 }) => {
   const renderedBlocks = useMemo(
     () =>
@@ -30,20 +44,11 @@ export const NotationWidget: React.FC<NotationWidgetProps> = ({
   );
 
   return (
-    <div
-      style={{
-        border: "1px solid rgba(100, 116, 139, 0.35)",
-        borderRadius: 18,
-        background: "#ffffff",
-        padding: "20px 14px 18px",
-        boxShadow: "0 16px 36px rgba(15, 23, 42, 0.10)",
-      }}
-    >
+    <>
       <div
         style={{
           display: "grid",
           gap: 14,
-          minHeight: height,
         }}
       >
         {renderedBlocks.map((block, index) => (
@@ -52,7 +57,7 @@ export const NotationWidget: React.FC<NotationWidgetProps> = ({
             style={{
               display: "grid",
               gap: block.label ? 8 : 0,
-              justifyItems: "center",
+              justifyItems: "stretch",
             }}
           >
             {block.label ? (
@@ -72,19 +77,16 @@ export const NotationWidget: React.FC<NotationWidgetProps> = ({
             <div
               style={{
                 color: "#0f172a",
-                width: "100%",
+                width: "fit-content",
+                maxWidth: "100%",
+                margin: "0 auto",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 textAlign: "center",
-                overflowX: "auto",
               }}
             >
               <div
-                style={{
-                  transform: "scale(1.06)",
-                  transformOrigin: "center center",
-                }}
                 dangerouslySetInnerHTML={{ __html: block.html }}
               />
             </div>
@@ -116,6 +118,24 @@ export const NotationWidget: React.FC<NotationWidgetProps> = ({
       >
         {spec.title}
       </p>
+    </>
+  );
+};
+
+export const NotationWidget: React.FC<NotationWidgetProps> = ({
+  spec,
+  className,
+  style,
+}) => {
+  return (
+    <div
+      className={className}
+      style={{
+        ...notationCardRootStyle,
+        ...style,
+      }}
+    >
+      <NotationCardContent spec={spec} />
     </div>
   );
 };

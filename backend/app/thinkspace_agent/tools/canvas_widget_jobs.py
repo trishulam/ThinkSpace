@@ -48,6 +48,13 @@ class CanvasWidgetPlacementPlan(BaseModel):
     h: float
 
 
+class CanvasWidgetPlacementAnchor(BaseModel):
+    """Structured output for anchor-only widget placement."""
+
+    x: float
+    y: float
+
+
 @dataclass
 class _SessionOutbox:
     subscribers: set[asyncio.Queue[dict[str, object]]] = field(default_factory=set)
@@ -213,6 +220,26 @@ def _clamp_widget_geometry_to_viewport(
     }
 
 
+def _clamp_widget_anchor_to_viewport(
+    *,
+    x: float,
+    y: float,
+    viewport_bounds: dict[str, float],
+) -> dict[str, float]:
+    viewport_x = viewport_bounds["x"]
+    viewport_y = viewport_bounds["y"]
+    viewport_w = viewport_bounds["w"]
+    viewport_h = viewport_bounds["h"]
+    min_x = viewport_x + DEFAULT_CANVAS_PADDING
+    min_y = viewport_y + DEFAULT_CANVAS_PADDING
+    max_x = viewport_x + viewport_w - DEFAULT_CANVAS_PADDING
+    max_y = viewport_y + viewport_h - DEFAULT_CANVAS_PADDING
+    return {
+        "x": round(min(max(float(x), min_x), max_x)),
+        "y": round(min(max(float(y), min_y), max_y)),
+    }
+
+
 def _build_fallback_placement(
     *,
     viewport_bounds: dict[str, float],
@@ -241,6 +268,34 @@ def _build_fallback_placement(
         plan=CanvasWidgetPlacementPlan(x=x, y=y, w=width, h=height),
         viewport_bounds=viewport_bounds,
         widget_kind=widget_kind,
+    )
+
+
+def _build_fallback_anchor(
+    *,
+    viewport_bounds: dict[str, float],
+    placement_hint: str,
+) -> dict[str, float]:
+    viewport_x = viewport_bounds["x"]
+    viewport_y = viewport_bounds["y"]
+    viewport_w = viewport_bounds["w"]
+    viewport_h = viewport_bounds["h"]
+    x = viewport_x + (viewport_w / 2)
+    y = viewport_y + (viewport_h / 2)
+
+    if placement_hint == "viewport_right":
+        x = viewport_x + viewport_w - DEFAULT_CANVAS_PADDING
+    elif placement_hint == "viewport_left":
+        x = viewport_x + DEFAULT_CANVAS_PADDING
+    elif placement_hint == "viewport_top":
+        y = viewport_y + DEFAULT_CANVAS_PADDING
+    elif placement_hint == "viewport_bottom":
+        y = viewport_y + viewport_h - DEFAULT_CANVAS_PADDING
+
+    return _clamp_widget_anchor_to_viewport(
+        x=x,
+        y=y,
+        viewport_bounds=viewport_bounds,
     )
 
 
@@ -282,22 +337,38 @@ def _build_widget_placement_planner_prompt(
     return "\n".join(
         [
             "You plan where a generated teaching widget should be inserted on a ThinkSpace canvas.",
-            "Return only the final page-space geometry for the widget.",
+            (
+                "Return only the final page-space x and y anchor for the notation widget."
+                if widget_kind == "notation"
+                else "Return only the final page-space geometry for the widget."
+            ),
             f"The widget is {widget_description}.",
             "Requirements:",
-            "- Respect the provided viewport bounds and keep the widget fully visible inside the viewport.",
+            (
+                "- Respect the provided viewport bounds and place the notation anchor inside the viewport."
+                if widget_kind == "notation"
+                else "- Respect the provided viewport bounds and keep the widget fully visible inside the viewport."
+            ),
             "- Prefer low-overlap open space relative to existing blurry shapes and selected content.",
             (
                 "- Use selected shapes and screenshot semantics to avoid covering the active teaching focus."
                 if screenshot_enabled
                 else "- Use selected shapes and structured canvas context to avoid covering the active teaching focus."
             ),
-            "- Keep the size readable for a learner at a glance.",
+            (
+                "- You do not decide width or height for notation; the frontend will size the card from the rendered content."
+                if widget_kind == "notation"
+                else "- Keep the size readable for a learner at a glance."
+            ),
             "- If placement_hint is auto, choose the clearest open area in the current viewport.",
             "- If placement_hint is directional, honor it when reasonable without causing excessive overlap.",
             f"Widget kind: {widget_kind}",
             f"Placement hint: {placement_hint}",
-            f"Suggested starting size: {suggested_w}x{suggested_h}",
+            (
+                f"Suggested starting size: {suggested_w}x{suggested_h}"
+                if widget_kind != "notation"
+                else "The frontend will compute best-fit size after rendering."
+            ),
             "Canvas context JSON:",
             json.dumps(serialized_context, ensure_ascii=True),
         ]
@@ -340,13 +411,18 @@ def _plan_canvas_widget_placement(
     if screenshot_part is not None:
         contents.append(screenshot_part)
 
+    response_schema = (
+        CanvasWidgetPlacementAnchor
+        if widget_kind == "notation"
+        else CanvasWidgetPlacementPlan
+    )
     response = client.models.generate_content(
         model=get_canvas_visual_planner_model(),
         contents=contents,
         config=genai_types.GenerateContentConfig(
             temperature=0.2,
             response_mime_type="application/json",
-            response_schema=CanvasWidgetPlacementPlan,
+            response_schema=response_schema,
         ),
     )
 
@@ -358,12 +434,20 @@ def _plan_canvas_widget_placement(
         if isinstance(response.parsed, BaseModel)
         else response.parsed
     )
-    plan = CanvasWidgetPlacementPlan.model_validate(response.parsed)
-    final_geometry = _clamp_widget_geometry_to_viewport(
-        plan=plan,
-        viewport_bounds=viewport_bounds,
-        widget_kind=widget_kind,
-    )
+    if widget_kind == "notation":
+        plan = CanvasWidgetPlacementAnchor.model_validate(response.parsed)
+        final_geometry = _clamp_widget_anchor_to_viewport(
+            x=plan.x,
+            y=plan.y,
+            viewport_bounds=viewport_bounds,
+        )
+    else:
+        plan = CanvasWidgetPlacementPlan.model_validate(response.parsed)
+        final_geometry = _clamp_widget_geometry_to_viewport(
+            plan=plan,
+            viewport_bounds=viewport_bounds,
+            widget_kind=widget_kind,
+        )
     completed_at = now_iso()
     return {
         "geometry": final_geometry,
@@ -448,10 +532,17 @@ async def generate_canvas_widget_artifact(
             "Canvas widget placement planner failed, using fallback placement: %s",
             placement_result,
         )
-        fallback_geometry = _build_fallback_placement(
-            viewport_bounds=viewport_bounds,
-            widget_kind=widget_kind,
-            placement_hint=normalized_placement_hint,
+        fallback_geometry = (
+            _build_fallback_anchor(
+                viewport_bounds=viewport_bounds,
+                placement_hint=normalized_placement_hint,
+            )
+            if widget_kind == "notation"
+            else _build_fallback_placement(
+                viewport_bounds=viewport_bounds,
+                widget_kind=widget_kind,
+                placement_hint=normalized_placement_hint,
+            )
         )
         placement_result = {
             "geometry": fallback_geometry,
@@ -481,8 +572,8 @@ async def generate_canvas_widget_artifact(
         spec=spec,
         x=geometry["x"],
         y=geometry["y"],
-        w=geometry["w"],
-        h=geometry["h"],
+        w=geometry.get("w"),
+        h=geometry.get("h"),
     )
     artifact_completed_at = now_iso()
     artifact_payload = artifact.model_dump(mode="python")

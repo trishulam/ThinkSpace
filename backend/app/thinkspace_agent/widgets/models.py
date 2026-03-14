@@ -81,5 +81,5 @@ class WidgetArtifactPayload(BaseModel):
     spec: GraphWidgetSpec | NotationWidgetSpec
     x: float
     y: float
-    w: float
-    h: float
+    w: float | None = None
+    h: float | None = None
