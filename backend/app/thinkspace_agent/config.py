@@ -7,6 +7,7 @@ import os
 DEFAULT_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_FLASHCARD_MODEL = "gemini-3-flash-preview"
 DEFAULT_KEY_MOMENT_MODEL = "gemini-3-flash-preview"
+DEFAULT_NOTES_MODEL = "gemini-3-flash-preview"
 DEFAULT_SESSION_COMPACTION_MODEL = "gemini-3-flash-preview"
 DEFAULT_CANVAS_INTERPRETER_MODEL = "gemini-3-flash-preview"
 DEFAULT_CANVAS_VISUAL_PLANNER_MODEL = "gemini-2.5-flash"
@@ -51,6 +52,12 @@ def get_key_moment_generation_model() -> str:
     """Return the model used by the session key moment generator."""
 
     return os.getenv("THINKSPACE_KEY_MOMENT_MODEL", DEFAULT_KEY_MOMENT_MODEL)
+
+
+def get_notes_generation_model() -> str:
+    """Return the model used by the session notes generator."""
+
+    return os.getenv("THINKSPACE_NOTES_MODEL", DEFAULT_NOTES_MODEL)
 
 
 def get_session_compaction_model() -> str:

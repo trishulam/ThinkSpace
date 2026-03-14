@@ -18,6 +18,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -38,8 +39,16 @@ from session_key_moments import (
     create_key_moment_store,
     generate_key_moment_response,
 )
+from session_notes import (
+    SessionNotesArtifact,
+    create_notes_store,
+    generate_session_notes_artifact,
+)
 from session_replay_status import (
+    SessionReplayStatusBatchRequest,
+    SessionReplayStatusBatchResponse,
     SessionReplayStatus,
+    compute_replay_status,
     create_replay_status_store,
     default_replay_status,
 )
@@ -1018,6 +1027,7 @@ recording_store = SessionRecordingStore(Path(__file__).parent / "data" / "sessio
 key_moment_store = create_key_moment_store(
     Path(__file__).parent / "data" / "session_key_moments"
 )
+notes_store = create_notes_store(Path(__file__).parent / "data" / "session_notes")
 replay_status_store = create_replay_status_store(
     Path(__file__).parent / "data" / "session_replay_status"
 )
@@ -1028,10 +1038,47 @@ replay_job_tasks: set[asyncio.Task[None]] = set()
 runner = Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
 
 
-def _refresh_session_replay_status(session: SessionRecord) -> SessionReplayStatus:
+def _parse_range_header(range_header: str, content_size: int) -> tuple[int, int]:
+    if not range_header.startswith("bytes="):
+        raise HTTPException(status_code=416, detail="Invalid range unit")
+
+    ranges = range_header[len("bytes=") :].split(",", maxsplit=1)
+    range_value = ranges[0].strip()
+    if "-" not in range_value:
+        raise HTTPException(status_code=416, detail="Invalid byte range")
+
+    start_str, end_str = range_value.split("-", maxsplit=1)
+    if not start_str and not end_str:
+        raise HTTPException(status_code=416, detail="Invalid byte range")
+
+    if not start_str:
+        suffix_length = int(end_str)
+        if suffix_length <= 0:
+            raise HTTPException(status_code=416, detail="Invalid byte range")
+        start = max(content_size - suffix_length, 0)
+        end = content_size - 1
+        return start, end
+
+    start = int(start_str)
+    if start < 0 or start >= content_size:
+        raise HTTPException(status_code=416, detail="Requested range not satisfiable")
+
+    if end_str:
+        end = min(int(end_str), content_size - 1)
+        if end < start:
+            raise HTTPException(status_code=416, detail="Requested range not satisfiable")
+        return start, end
+
+    return start, content_size - 1
+
+
+def _build_session_replay_status(
+    session: SessionRecord, *, persist: bool
+) -> SessionReplayStatus:
     transcript = session_store.list_turns(session.session_id)
     manifest = recording_store.get_manifest(session.session_id)
     key_moment_artifact = key_moment_store.get_artifact(session.session_id)
+    notes_artifact = notes_store.get_artifact(session.session_id)
     status = replay_status_store.get_status(session.session_id) or default_replay_status(
         session.session_id
     )
@@ -1078,10 +1125,80 @@ def _refresh_session_replay_status(session: SessionRecord) -> SessionReplayStatu
         status.key_moment_count = 0
         status.key_moments_error = None
 
-    if status.requested_at is None and session.status == "completed":
+    if notes_artifact is not None:
+        status.notes_status = "ready"
+        status.notes_error = None
+    elif session.status == "completed" and transcript:
+        if status.notes_status not in {"failed", "processing"}:
+            status.notes_status = "pending"
+            status.notes_error = None
+    elif session.status == "completed":
+        status.notes_status = "unavailable"
+        status.notes_error = None
+    else:
+        status.notes_status = "idle"
+        status.notes_error = None
+
+    if persist and status.requested_at is None and session.status == "completed":
         status.requested_at = datetime.now(timezone.utc).isoformat()
 
-    return replay_status_store.save_status(status)
+    status.replay_status = compute_replay_status(status)
+    if persist:
+        return replay_status_store.save_status(status)
+    return status
+
+
+def _refresh_session_replay_status(session: SessionRecord) -> SessionReplayStatus:
+    return _build_session_replay_status(session, persist=True)
+
+
+def _read_session_replay_status(session: SessionRecord) -> SessionReplayStatus:
+    return _build_session_replay_status(session, persist=False)
+
+
+async def _delete_session_everywhere(session: SessionRecord) -> None:
+    key_moment_store.delete_artifact(session.session_id)
+    notes_store.delete_artifact(session.session_id)
+    replay_status_store.delete_status(session.session_id)
+    recording_store.delete_session(session.session_id)
+    session_store.delete_session(session.session_id)
+    flashcard_session_store.clear(user_id=session.user_id, session_id=session.session_id)
+    await canvas_delegate_job_store.clear_session(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    await canvas_snapshot_session_bridge_store.clear_bridge(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    canvas_context_request_store.clear_session(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    await canvas_placement_context_store.clear_context(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    await interpreter_packet_store.clear_session(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    await interpreter_reasoning_store.clear_session(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    await interpreter_snapshot_job_store.clear_session(
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+    try:
+        await session_service.delete_session(
+            app_name=APP_NAME,
+            user_id=session.user_id,
+            session_id=session.session_id,
+        )
+    except Exception:
+        logger.exception("Failed to delete ADK session state for session_id=%s", session.session_id)
 
 
 def _enqueue_replay_job(
@@ -1194,6 +1311,54 @@ async def _run_key_moment_job(session_id: str) -> None:
     )
 
 
+async def _run_notes_job(session_id: str) -> None:
+    replay_status_store.merge_status(
+        session_id,
+        requested_at=datetime.now(timezone.utc).isoformat(),
+        notes_status="processing",
+        notes_error=None,
+    )
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        replay_status_store.merge_status(
+            session_id,
+            notes_status="failed",
+            notes_error="Session not found",
+        )
+        return
+
+    transcript = session_store.list_turns(session_id)
+    if not transcript:
+        replay_status_store.merge_status(
+            session_id,
+            notes_status="unavailable",
+            notes_error=None,
+        )
+        return
+
+    try:
+        artifact = await generate_session_notes_artifact(
+            session=session,
+            transcript=transcript,
+        )
+        notes_store.save_artifact(artifact)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("Notes job failed for session_id=%s", session_id)
+        replay_status_store.merge_status(
+            session_id,
+            notes_status="failed",
+            notes_error=str(exc),
+        )
+        return
+
+    replay_status_store.merge_status(
+        session_id,
+        notes_status="ready",
+        notes_error=None,
+    )
+
+
 def _trigger_session_replay_jobs(session: SessionRecord) -> SessionReplayStatus:
     transcript = session_store.list_turns(session.session_id)
     manifest = recording_store.get_manifest(session.session_id)
@@ -1208,6 +1373,8 @@ def _trigger_session_replay_jobs(session: SessionRecord) -> SessionReplayStatus:
         key_moments_status="pending" if transcript else "unavailable",
         key_moment_count=0,
         key_moments_error=None,
+        notes_status="pending" if transcript else "unavailable",
+        notes_error=None,
     )
 
     if manifest.segments:
@@ -1221,6 +1388,11 @@ def _trigger_session_replay_jobs(session: SessionRecord) -> SessionReplayStatus:
             session.session_id,
             "key-moments",
             lambda: _run_key_moment_job(session.session_id),
+        )
+        _enqueue_replay_job(
+            session.session_id,
+            "notes",
+            lambda: _run_notes_job(session.session_id),
         )
 
     return _refresh_session_replay_status(session)
@@ -1253,6 +1425,53 @@ async def create_session(request: SessionCreateRequest):
     await _load_adk_session_summary(session, ensure_exists=True)
     refreshed_session = session_store.get_session(session.session_id)
     return refreshed_session or session
+
+
+@app.get("/v1/sessions/{session_id}", response_model=SessionRecord)
+async def get_session(session_id: str):
+    """Return session metadata without replay/adk hydration."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+@app.delete("/v1/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete one session and all persisted artifacts tied to it."""
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await _delete_session_everywhere(session)
+    return {
+        "deleted": True,
+        "sessionId": session_id,
+    }
+
+
+@app.delete("/v1/sessions")
+async def delete_sessions_for_user(
+    user_id: str = Query(alias="userId"),
+    confirm: bool = Query(default=False),
+):
+    """Delete every session for a user and all persisted artifacts tied to them."""
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Pass confirm=true to delete all sessions for this user",
+        )
+
+    sessions = session_store.list_sessions(user_id)
+    for session in sessions:
+        await _delete_session_everywhere(session)
+
+    return {
+        "deleted": True,
+        "userId": user_id,
+        "deletedCount": len(sessions),
+        "sessionIds": [session.session_id for session in sessions],
+    }
 
 
 @app.get("/v1/sessions/{session_id}/resume", response_model=SessionResumeResponse)
@@ -1332,6 +1551,24 @@ async def get_session_key_moments(session_id: str):
 
 
 @app.get(
+    "/v1/sessions/{session_id}/notes",
+    response_model=SessionNotesArtifact,
+)
+async def get_session_notes(session_id: str):
+    """Return the generated session notes artifact for a session."""
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    artifact = notes_store.get_artifact(session_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Session notes not found")
+
+    return artifact
+
+
+@app.get(
     "/v1/sessions/{session_id}/replay-status",
     response_model=SessionReplayStatus,
 )
@@ -1342,7 +1579,70 @@ async def get_session_replay_status(session_id: str):
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    return _refresh_session_replay_status(session)
+    return _read_session_replay_status(session)
+
+
+@app.post(
+    "/v1/sessions/replay-status:batch",
+    response_model=SessionReplayStatusBatchResponse,
+)
+async def get_session_replay_status_batch(request: SessionReplayStatusBatchRequest):
+    """Return replay artifact readiness for multiple sessions."""
+    statuses: list[SessionReplayStatus] = []
+    seen_session_ids: set[str] = set()
+    for session_id in request.session_ids:
+        normalized_session_id = session_id.strip()
+        if not normalized_session_id or normalized_session_id in seen_session_ids:
+            continue
+        seen_session_ids.add(normalized_session_id)
+        session = session_store.get_session(normalized_session_id)
+        if session is None:
+            continue
+        statuses.append(_read_session_replay_status(session))
+    return SessionReplayStatusBatchResponse(statuses=statuses)
+
+
+@app.post(
+    "/v1/sessions/{session_id}/notes:generate",
+    response_model=SessionNotesArtifact,
+)
+async def generate_session_notes(session_id: str):
+    """Generate and persist markdown notes from the session transcript."""
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    transcript = session_store.list_turns(session_id)
+    if not transcript:
+        raise HTTPException(status_code=422, detail="Transcript not found for this session")
+
+    try:
+        artifact = await generate_session_notes_artifact(
+            session=session,
+            transcript=transcript,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "Notes generation failed for session_id=%s",
+            session_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Notes generation failed: {exc}",
+        ) from exc
+
+    notes_store.save_artifact(artifact)
+    replay_status_store.merge_status(
+        session_id,
+        transcript_status="ready",
+        transcript_turn_count=len(transcript),
+        notes_status="ready",
+        notes_error=None,
+    )
+    return artifact
 
 
 @app.post(
@@ -1474,18 +1774,56 @@ async def finalize_session_recordings(session_id: str):
 
 
 @app.get("/v1/sessions/{session_id}/recordings/final")
-async def get_session_recording_final(session_id: str):
+async def get_session_recording_final(session_id: str, request: Request):
     """Serve the merged session replay video if available."""
     session = session_store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
     manifest = recording_store.get_manifest(session_id)
-    final_bytes = recording_store.get_final_video_bytes(session_id)
-    if final_bytes is None or not manifest.final_mime_type:
+    content_size = recording_store.get_final_video_size(session_id)
+    if content_size is None or not manifest.final_mime_type:
         raise HTTPException(status_code=404, detail="Final replay video not found")
 
-    return Response(content=final_bytes, media_type=manifest.final_mime_type)
+    range_header = request.headers.get("range")
+    if range_header:
+        start, end = _parse_range_header(range_header, content_size)
+        final_bytes = recording_store.get_final_video_bytes(
+            session_id,
+            start=start,
+            end=end,
+        )
+        if final_bytes is None:
+            raise HTTPException(status_code=404, detail="Final replay video not found")
+        return Response(
+            content=final_bytes,
+            media_type=manifest.final_mime_type,
+            status_code=206,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Range": f"bytes {start}-{end}/{content_size}",
+                "Content-Length": str(len(final_bytes)),
+            },
+        )
+
+    final_path = recording_store.get_final_video_path(session_id)
+    if final_path is not None:
+        response = FileResponse(final_path, media_type=manifest.final_mime_type)
+        response.headers["Accept-Ranges"] = "bytes"
+        return response
+
+    final_bytes = recording_store.get_final_video_bytes(session_id)
+    if final_bytes is None:
+        raise HTTPException(status_code=404, detail="Final replay video not found")
+
+    return Response(
+        content=final_bytes,
+        media_type=manifest.final_mime_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(content_size),
+        },
+    )
 
 
 @app.get("/v1/sessions/{session_id}/adk-debug")

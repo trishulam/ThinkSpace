@@ -87,6 +87,111 @@ type CustomToolbarProps = {
   onEndSession: () => void;
 };
 
+function formatRecordingDuration(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, totalSeconds);
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+type CanvasCaptureHudProps = {
+  gestureState: GestureRuntimeState | null;
+  isRecording: boolean;
+  recordingStatus: string;
+  recordingError: string | null;
+  elapsedSeconds: number;
+};
+
+const CanvasCaptureHud = ({
+  gestureState,
+  isRecording,
+  recordingStatus,
+  recordingError,
+  elapsedSeconds,
+}: CanvasCaptureHudProps) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const gestureStream = gestureState?.stream ?? null;
+
+  useEffect(() => {
+    const videoElement = videoRef.current;
+    if (!videoElement) {
+      return;
+    }
+
+    if (videoElement.srcObject !== gestureStream) {
+      videoElement.srcObject = gestureStream;
+    }
+
+    if (gestureStream) {
+      void videoElement.play().catch(() => {
+        // Autoplay can be interrupted while the stream is warming up.
+      });
+    }
+  }, [gestureStream]);
+
+  return (
+    <div className="ts-canvas-capture-hud">
+      <div className="ts-canvas-capture-hud__header">
+        <div className="ts-canvas-capture-hud__recording">
+          <span
+            className={
+              isRecording
+                ? "ts-canvas-capture-hud__record-dot ts-canvas-capture-hud__record-dot--live"
+                : "ts-canvas-capture-hud__record-dot"
+            }
+          />
+          <span>{isRecording ? "Canvas recording" : "Canvas ready"}</span>
+        </div>
+        <span className="ts-canvas-capture-hud__timer">
+          {formatRecordingDuration(elapsedSeconds)}
+        </span>
+      </div>
+
+      <div className="ts-canvas-capture-hud__viewport">
+        {gestureStream ? (
+          <video
+            ref={videoRef}
+            className="ts-canvas-capture-hud__video"
+            muted
+            playsInline
+            autoPlay
+          />
+        ) : (
+          <div className="ts-canvas-capture-hud__empty">
+            <div className="ts-canvas-capture-hud__empty-title">Gesture camera</div>
+            <div className="ts-canvas-capture-hud__empty-copy">
+              {gestureState?.cameraState === "denied"
+                ? "Camera access denied"
+                : gestureState?.cameraState === "requesting"
+                  ? "Requesting camera access"
+                  : "Waiting for gesture camera"}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="ts-canvas-capture-hud__footer">
+        <span className="ts-canvas-capture-hud__chip">
+          Gesture {gestureState?.cameraState ?? "idle"}
+        </span>
+        <span className="ts-canvas-capture-hud__chip">
+          {isRecording ? "Recording current tab" : recordingStatus}
+        </span>
+      </div>
+
+      {recordingError ? (
+        <div className="ts-canvas-capture-hud__error">{recordingError}</div>
+      ) : null}
+    </div>
+  );
+};
+
 const CustomToolbar = ({
   recordingStatus,
   recordingError,
@@ -636,6 +741,7 @@ export const SessionCanvas: React.FC = () => {
     error: recordingError,
     isSupported: isRecordingSupported,
     isRecording,
+    elapsedSeconds,
     startRecording,
     stopRecording,
   } = useSessionRecording(sessionId, {
@@ -1652,6 +1758,13 @@ export const SessionCanvas: React.FC = () => {
             </Tldraw>
             <AgentSubtitleOverlay subtitle={ws.agentSubtitle} />
             <FlashcardPanel state={flashcardState} />
+            <CanvasCaptureHud
+              gestureState={gestureState}
+              isRecording={isRecording}
+              recordingStatus={recordingStatus}
+              recordingError={sessionActionError || recordingError}
+              elapsedSeconds={elapsedSeconds}
+            />
           </div>
           {/* ChatPanel replaced by live agent sidebar */}
           {/* <ErrorBoundary fallback={ChatPanelFallback}>

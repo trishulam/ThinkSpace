@@ -549,6 +549,143 @@
   background-color: var(--mindpad-bg-primary);
 }
 
+.tldraw-canvas {
+  position: relative;
+}
+
+.ts-canvas-capture-hud {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  width: 260px;
+  z-index: 40;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(180deg, rgba(12, 16, 31, 0.9), rgba(14, 18, 36, 0.82));
+  box-shadow:
+    0 24px 48px rgba(15, 23, 42, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(16px) saturate(125%);
+  -webkit-backdrop-filter: blur(16px) saturate(125%);
+  overflow: hidden;
+}
+
+.ts-canvas-capture-hud__header,
+.ts-canvas-capture-hud__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ts-canvas-capture-hud__footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: none;
+}
+
+.ts-canvas-capture-hud__recording {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: rgba(248, 250, 252, 0.94);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ts-canvas-capture-hud__record-dot {
+  width: 8px;
+  height: 8px;
+  background: #64748b;
+  box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.16);
+  flex-shrink: 0;
+}
+
+.ts-canvas-capture-hud__record-dot--live {
+  background: #ef4444;
+  box-shadow:
+    0 0 0 4px rgba(239, 68, 68, 0.16),
+    0 0 18px rgba(239, 68, 68, 0.42);
+}
+
+.ts-canvas-capture-hud__timer {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-canvas-capture-hud__viewport {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background:
+    linear-gradient(180deg, rgba(5, 8, 22, 1), rgba(15, 23, 42, 0.94));
+}
+
+.ts-canvas-capture-hud__video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  transform: scaleX(-1);
+  background: #050816;
+}
+
+.ts-canvas-capture-hud__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  text-align: center;
+}
+
+.ts-canvas-capture-hud__empty-title {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.ts-canvas-capture-hud__empty-copy {
+  margin-top: 6px;
+  color: rgba(226, 232, 240, 0.72);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ts-canvas-capture-hud__chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(226, 232, 240, 0.82);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ts-canvas-capture-hud__error {
+  padding: 10px 12px;
+  border-top: 1px solid rgba(248, 113, 113, 0.16);
+  background: rgba(127, 29, 29, 0.26);
+  color: #fecaca;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 /* Custom Toolbar Integration */
 .tldraw-custom-toolbar {
   position: fixed;
@@ -619,6 +756,12 @@
   .tldraw-back-button {
     width: 36px;
     height: 36px;
+  }
+
+  .ts-canvas-capture-hud {
+    left: 16px;
+    bottom: 16px;
+    width: 220px;
   }
 }
 
@@ -2885,6 +3028,11 @@
   color: #5b2bee;
 }
 
+.ts-home-inline-text-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .ts-home-inline-text-btn svg {
   width: 14px;
   height: 14px;
@@ -2892,6 +3040,104 @@
 
 .ts-replay-shell {
   padding-top: 22px;
+}
+
+.ts-replay-progress-strip {
+  padding: 22px 24px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.05);
+}
+
+.ts-replay-progress-strip + .ts-replay-surface {
+  margin-top: 18px;
+}
+
+.ts-replay-progress-copy h2 {
+  margin: 6px 0 0;
+  font-size: 24px;
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+
+.ts-replay-progress-text {
+  margin: 10px 0 0;
+  max-width: 760px;
+  color: #64748b;
+  line-height: 1.7;
+}
+
+.ts-replay-progress-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.ts-replay-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ts-replay-refresh-btn {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(91, 43, 238, 0.16);
+  background: rgba(91, 43, 238, 0.06);
+  color: #5b2bee;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ts-replay-refresh-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ts-replay-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.ts-replay-progress-card {
+  padding: 14px 16px;
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.ts-replay-progress-card + .ts-replay-progress-card {
+  border-left: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.ts-replay-progress-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ts-replay-progress-card strong {
+  display: block;
+  font-size: 16px;
+  line-height: 1.3;
+  color: #0f172a;
+}
+
+.ts-replay-progress-card p {
+  margin: 8px 0 0;
+  color: #64748b;
+  line-height: 1.55;
 }
 
 .ts-replay-layout {
@@ -2979,12 +3225,18 @@
   }
 
   .ts-replay-top-grid,
-  .ts-replay-bottom-grid {
+  .ts-replay-bottom-grid,
+  .ts-replay-progress-grid {
     grid-template-columns: 1fr;
   }
 
   .ts-replay-top-grid > .ts-replay-panel,
   .ts-replay-bottom-grid > .ts-replay-right-stack {
+    border-left: none;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+  }
+
+  .ts-replay-progress-card + .ts-replay-progress-card {
     border-left: none;
     border-top: 1px solid rgba(148, 163, 184, 0.12);
   }
@@ -3008,6 +3260,7 @@
 
   .ts-home-main .ts-home-section,
   .ts-home-rail-section,
+  .ts-replay-progress-strip,
   .ts-replay-video-card,
   .ts-replay-panel {
     padding: 20px 16px;
@@ -3023,6 +3276,10 @@
 
   .ts-replay-title {
     font-size: 28px;
+  }
+
+  .ts-replay-progress-meta {
+    flex-direction: column;
   }
 }
 
@@ -3401,6 +3658,50 @@
   color: #0f172a;
   line-height: 1.65;
   word-break: break-word;
+}
+
+.ts-replay-notes {
+  color: #0f172a;
+  line-height: 1.7;
+}
+
+.ts-replay-notes > :first-child {
+  margin-top: 0;
+}
+
+.ts-replay-notes > :last-child {
+  margin-bottom: 0;
+}
+
+.ts-replay-notes h1,
+.ts-replay-notes h2,
+.ts-replay-notes h3,
+.ts-replay-notes h4 {
+  margin: 1rem 0 0.45rem;
+  line-height: 1.3;
+}
+
+.ts-replay-notes p,
+.ts-replay-notes ul,
+.ts-replay-notes ol {
+  margin: 0.55rem 0;
+}
+
+.ts-replay-notes ul,
+.ts-replay-notes ol {
+  padding-left: 1.25rem;
+}
+
+.ts-replay-notes li + li {
+  margin-top: 0.3rem;
+}
+
+.ts-replay-notes code {
+  font-family: inherit;
+  font-size: 0.95em;
+  background: rgba(91, 43, 238, 0.08);
+  border-radius: 6px;
+  padding: 0.1rem 0.35rem;
 }
 
 .ts-replay-flashcards {

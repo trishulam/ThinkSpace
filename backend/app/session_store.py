@@ -153,6 +153,7 @@ class SessionStore(Protocol):
     def create_session(self, request: SessionCreateRequest) -> SessionRecord: ...
     def list_sessions(self, user_id: str | None = None) -> list[SessionRecord]: ...
     def get_session(self, session_id: str) -> SessionRecord | None: ...
+    def delete_session(self, session_id: str) -> None: ...
     def create_checkpoint(
         self, session_id: str, request: CheckpointCreateRequest
     ) -> CheckpointRecord: ...
@@ -206,6 +207,11 @@ class InMemorySessionStore:
 
     def get_session(self, session_id: str) -> SessionRecord | None:
         return self._sessions.get(session_id)
+
+    def delete_session(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
+        self._checkpoints.pop(session_id, None)
+        self._turns.pop(session_id, None)
 
     def create_checkpoint(
         self, session_id: str, request: CheckpointCreateRequest
@@ -378,6 +384,13 @@ class FirestoreSessionStore:
         if not snapshot.exists:
             return None
         return SessionRecord.model_validate(snapshot.to_dict() or {})
+
+    def delete_session(self, session_id: str) -> None:
+        session_ref = self._sessions.document(session_id)
+        for collection_name in ("checkpoints", "turns"):
+            self._delete_collection_documents(session_ref.collection(collection_name))
+        session_ref.delete()
+        self._delete_bucket_prefix(f"sessions/{session_id}/checkpoints/")
 
     def create_checkpoint(
         self, session_id: str, request: CheckpointCreateRequest
@@ -612,6 +625,16 @@ class FirestoreSessionStore:
         session.adk_event_count = summary.event_count
         session.adk_state_key_count = summary.state_key_count
         session.adk_latest_invocation_id = summary.latest_invocation_id
+
+    def _delete_collection_documents(self, collection) -> None:
+        for snapshot in collection.stream():
+            snapshot.reference.delete()
+
+    def _delete_bucket_prefix(self, prefix: str) -> None:
+        if not self._bucket:
+            return
+        for blob in self._bucket.list_blobs(prefix=prefix):
+            blob.delete()
 
 
 def create_session_store() -> SessionStore:

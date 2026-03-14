@@ -53,6 +53,7 @@ export function useSessionRecording(
   const [status, setStatus] = useState<SessionRecordingStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [segmentCount, setSegmentCount] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const displayStreamRef = useRef<MediaStream | null>(null);
@@ -135,12 +136,20 @@ export function useSessionRecording(
     chunksRef.current = [];
 
     try {
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+      const displayStreamOptions = {
         video: {
           frameRate: { ideal: 30, max: 30 },
+          displaySurface: "browser",
         },
         audio: true,
-      });
+        preferCurrentTab: true,
+        selfBrowserSurface: "include",
+        surfaceSwitching: "exclude",
+        monitorTypeSurfaces: "exclude",
+      } as DisplayMediaStreamOptions;
+
+      const displayStream =
+        await navigator.mediaDevices.getDisplayMedia(displayStreamOptions);
       const microphoneStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -188,6 +197,7 @@ export function useSessionRecording(
       recordingDestinationRef.current = destination;
       recorderRef.current = recorder;
       startedAtRef.current = new Date().toISOString();
+      setElapsedSeconds(0);
       attachExtraAudioStream(options.extraAudioStream ?? null);
 
       recorder.ondataavailable = (event) => {
@@ -224,6 +234,7 @@ export function useSessionRecording(
             setSegmentCount(manifest.segments.length);
             setStatus("idle");
             setError(null);
+            setElapsedSeconds(0);
             stopResolveRef.current?.({ uploaded: true, manifest });
           } catch (stopError) {
             const message =
@@ -232,6 +243,7 @@ export function useSessionRecording(
                 : "Failed to upload recording";
             setStatus("error");
             setError(message);
+            setElapsedSeconds(0);
             cleanupResources();
             stopRejectRef.current?.(stopError);
           } finally {
@@ -262,6 +274,7 @@ export function useSessionRecording(
           : "Recording permission was denied";
       setStatus("error");
       setError(message);
+      setElapsedSeconds(0);
     }
   }, [attachExtraAudioStream, cleanupResources, options.extraAudioStream, sessionId, status]);
 
@@ -285,6 +298,28 @@ export function useSessionRecording(
     recorder.stop();
     return stopPromiseRef.current;
   }, [cleanupResources]);
+
+  useEffect(() => {
+    if (status !== "recording" || !startedAtRef.current) {
+      return;
+    }
+
+    const updateElapsed = () => {
+      const startedAtMs = Date.parse(startedAtRef.current ?? "");
+      if (!Number.isFinite(startedAtMs)) {
+        setElapsedSeconds(0);
+        return;
+      }
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)));
+    };
+
+    updateElapsed();
+    const intervalId = window.setInterval(updateElapsed, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [status]);
 
   useEffect(() => {
     return () => {
@@ -318,6 +353,7 @@ export function useSessionRecording(
     isSupported,
     isRecording: status === "recording",
     segmentCount,
+    elapsedSeconds,
     startRecording,
     stopRecording,
   };

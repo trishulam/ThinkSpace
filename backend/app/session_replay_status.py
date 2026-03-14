@@ -42,8 +42,18 @@ class SessionReplayStatus(ApiModel):
     key_moments_status: ArtifactStatus = "idle"
     key_moment_count: int = 0
     key_moments_error: str | None = None
+    notes_status: ArtifactStatus = "idle"
+    notes_error: str | None = None
     requested_at: str | None = None
     updated_at: str
+
+
+class SessionReplayStatusBatchRequest(ApiModel):
+    session_ids: list[str]
+
+
+class SessionReplayStatusBatchResponse(ApiModel):
+    statuses: list[SessionReplayStatus]
 
 
 def default_replay_status(session_id: str) -> SessionReplayStatus:
@@ -54,25 +64,40 @@ def default_replay_status(session_id: str) -> SessionReplayStatus:
 
 
 def compute_replay_status(status: SessionReplayStatus) -> ReplayStatus:
-    if "failed" in {status.video_status, status.key_moments_status, status.transcript_status}:
+    if "failed" in {
+        status.video_status,
+        status.key_moments_status,
+        status.notes_status,
+        status.transcript_status,
+    }:
         return "failed"
 
-    if "processing" in {status.video_status, status.key_moments_status}:
+    if "processing" in {
+        status.video_status,
+        status.key_moments_status,
+        status.notes_status,
+    }:
         return "processing"
 
-    if "pending" in {status.video_status, status.key_moments_status}:
+    if "pending" in {
+        status.video_status,
+        status.key_moments_status,
+        status.notes_status,
+    }:
         return "processing"
 
     if (
         status.transcript_status == "ready"
         and status.video_status == "ready"
         and status.key_moments_status in {"ready", "unavailable"}
+        and status.notes_status in {"ready", "unavailable"}
     ):
         return "ready"
 
     if status.transcript_status == "ready" and (
         status.video_status in {"ready", "unavailable"}
         or status.key_moments_status in {"ready", "unavailable"}
+        or status.notes_status in {"ready", "unavailable"}
     ):
         return "partial"
 
@@ -85,6 +110,8 @@ class ReplayStatusStore(Protocol):
     def save_status(self, status: SessionReplayStatus) -> SessionReplayStatus: ...
 
     def merge_status(self, session_id: str, **updates: object) -> SessionReplayStatus: ...
+
+    def delete_status(self, session_id: str) -> None: ...
 
 
 class LocalFileReplayStatusStore:
@@ -117,6 +144,11 @@ class LocalFileReplayStatusStore:
             if value is not None or hasattr(status, field_name):
                 setattr(status, field_name, value)
         return self.save_status(status)
+
+    def delete_status(self, session_id: str) -> None:
+        status_path = self._status_path(session_id)
+        if status_path.exists():
+            status_path.unlink()
 
     def _status_path(self, session_id: str) -> Path:
         return self._root_dir / f"{session_id}.json"
@@ -155,6 +187,9 @@ class FirestoreReplayStatusStore:
             if value is not None or hasattr(status, field_name):
                 setattr(status, field_name, value)
         return self.save_status(status)
+
+    def delete_status(self, session_id: str) -> None:
+        self._collection.document(session_id).delete()
 
 
 def create_replay_status_store(local_root_dir: Path) -> ReplayStatusStore:

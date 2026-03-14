@@ -20,6 +20,8 @@ interface SessionCardProps {
   availability?: SessionAvailability;
   onResume: (sessionId: string) => void;
   onSummary: (sessionId: string) => void;
+  onComplete?: (sessionId: string) => void;
+  isCompleting?: boolean;
 }
 
 /* Topic emoji picker — deterministic from topic string */
@@ -111,6 +113,13 @@ const ReplayIcon: React.FC = () => (
   </svg>
 );
 
+const EndIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <circle cx="12" cy="12" r="8" />
+    <path d="M9 9h6v6H9z" />
+  </svg>
+);
+
 const getModeLabel = (mode: Session["mode"]): string => {
   switch (mode) {
     case "guided":
@@ -154,6 +163,8 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   availability,
   onResume,
   onSummary,
+  onComplete,
+  isCompleting = false,
 }) => {
   const emoji = topicEmoji(session.topic);
   const bgColor = topicBg(session.topic);
@@ -182,6 +193,11 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   const handleSummary = (e: React.MouseEvent) => {
     e.stopPropagation();
     onSummary(session.id);
+  };
+
+  const handleComplete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onComplete?.(session.id);
   };
 
   return (
@@ -246,6 +262,18 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         </div>
 
         <div className="ts-home-session-card-actions">
+          {session.status !== "completed" ? (
+            <button
+              className="ts-home-inline-text-btn"
+              onClick={handleComplete}
+              type="button"
+              title="End session"
+              disabled={isCompleting}
+            >
+              <EndIcon />
+              {isCompleting ? "Ending..." : "End Session"}
+            </button>
+          ) : null}
           <button
             className="ts-home-inline-text-btn"
             onClick={handleSummary}

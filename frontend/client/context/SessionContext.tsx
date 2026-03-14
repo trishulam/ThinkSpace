@@ -7,7 +7,11 @@ import React, {
   useState,
   ReactNode,
 } from "react";
-import { createSession as createSessionRequest, listSessions } from "../api/sessions";
+import {
+  completeSession as completeSessionRequest,
+  createSession as createSessionRequest,
+  listSessions,
+} from "../api/sessions";
 import { NewSessionData, Session } from "../types/session";
 
 interface SessionContextType {
@@ -18,6 +22,7 @@ interface SessionContextType {
   getSession: (sessionId: string) => Session | undefined;
   updateSession: (sessionId: string, updates: Partial<Session>) => void;
   createSession: (sessionData: NewSessionData) => Promise<Session>;
+  completeSession: (sessionId: string) => Promise<Session>;
 }
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
@@ -82,6 +87,20 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({ children }) =>
     }
   }, []);
 
+  const completeSession = useCallback(async (sessionId: string) => {
+    try {
+      const completedSession = await completeSessionRequest(sessionId);
+      setSessions((previous) =>
+        previous.map((session) => (session.id === sessionId ? completedSession : session))
+      );
+      setError(null);
+      return completedSession;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to complete session");
+      throw err;
+    }
+  }, []);
+
   const value = useMemo<SessionContextType>(
     () => ({
       sessions,
@@ -91,6 +110,7 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({ children }) =>
       getSession,
       updateSession,
       createSession,
+      completeSession,
     }),
     [
       sessions,
@@ -100,6 +120,7 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({ children }) =>
       getSession,
       updateSession,
       createSession,
+      completeSession,
     ]
   );
 

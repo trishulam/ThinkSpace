@@ -107,6 +107,8 @@ class KeyMomentStore(Protocol):
         self, artifact: SessionKeyMomentArtifact
     ) -> SessionKeyMomentArtifact: ...
 
+    def delete_artifact(self, session_id: str) -> None: ...
+
 
 class LocalFileKeyMomentStore:
     """Persist session key moments to local JSON files."""
@@ -131,6 +133,11 @@ class LocalFileKeyMomentStore:
             json.dumps(artifact.model_dump(mode="json", by_alias=False), indent=2)
         )
         return artifact
+
+    def delete_artifact(self, session_id: str) -> None:
+        artifact_path = self._artifact_path(session_id)
+        if artifact_path.exists():
+            artifact_path.unlink()
 
     def _artifact_path(self, session_id: str) -> Path:
         return self._root_dir / f"{session_id}.json"
@@ -162,6 +169,9 @@ class FirestoreKeyMomentStore:
             artifact.model_dump(mode="python", by_alias=False)
         )
         return artifact
+
+    def delete_artifact(self, session_id: str) -> None:
+        self._collection.document(session_id).delete()
 
 
 def create_key_moment_store(local_root_dir: Path) -> KeyMomentStore:

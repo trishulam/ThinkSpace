@@ -272,7 +272,7 @@ class SessionRecordingStore:
             return None
         return final_path
 
-    def get_final_video_bytes(self, session_id: str) -> bytes | None:
+    def get_final_video_size(self, session_id: str) -> int | None:
         manifest = self.get_manifest(session_id)
         if not manifest.final_relative_path:
             return None
@@ -281,12 +281,53 @@ class SessionRecordingStore:
             blob = self._bucket.blob(manifest.final_relative_path)
             if not blob.exists():
                 return None
-            return blob.download_as_bytes()
+            blob.reload()
+            return blob.size
 
         final_path = self._root_dir / manifest.final_relative_path
         if not final_path.exists():
             return None
-        return final_path.read_bytes()
+        return final_path.stat().st_size
+
+    def get_final_video_bytes(
+        self,
+        session_id: str,
+        *,
+        start: int | None = None,
+        end: int | None = None,
+    ) -> bytes | None:
+        manifest = self.get_manifest(session_id)
+        if not manifest.final_relative_path:
+            return None
+
+        if self._bucket:
+            blob = self._bucket.blob(manifest.final_relative_path)
+            if not blob.exists():
+                return None
+            return blob.download_as_bytes(start=start, end=end)
+
+        final_path = self._root_dir / manifest.final_relative_path
+        if not final_path.exists():
+            return None
+        if start is None and end is None:
+            return final_path.read_bytes()
+
+        with final_path.open("rb") as file_handle:
+            file_handle.seek(start or 0)
+            if end is None:
+                return file_handle.read()
+            return file_handle.read(end - (start or 0) + 1)
+
+    def delete_session(self, session_id: str) -> None:
+        if self._manifest_collection:
+            self._manifest_collection.document(session_id).delete()
+        if self._bucket:
+            prefix = f"sessions/{session_id}/recordings/"
+            for blob in self._bucket.list_blobs(prefix=prefix):
+                blob.delete()
+        session_dir = self._session_dir(session_id)
+        if session_dir.exists():
+            shutil.rmtree(session_dir)
 
     def _manifest_path(self, session_id: str) -> Path:
         return self._session_dir(session_id) / "manifest.json"

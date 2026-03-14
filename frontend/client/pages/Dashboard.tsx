@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getSessionReplayStatus } from "../api/sessions";
+import { getSessionReplayStatuses } from "../api/sessions";
 import { useSession } from "../context/SessionContext";
 import { TopNavigation } from "../components/TopNavigation";
 import { SessionCard } from "../components/SessionCard";
@@ -50,6 +50,50 @@ const EMPTY_ARTIFACT_STATE: SessionArtifactState = {
   hasFlashcards: false,
   isReplayReady: false,
   isLoading: true,
+};
+
+const INACTIVE_ARTIFACT_STATE: SessionArtifactState = {
+  ...EMPTY_ARTIFACT_STATE,
+  isLoading: false,
+};
+
+const isUnhydratedArtifactState = (state: SessionArtifactState | undefined): boolean =>
+  !state ||
+  (state.replayStatus === "idle" &&
+    state.transcriptStatus === "idle" &&
+    state.transcriptTurns === 0 &&
+    state.videoStatus === "idle" &&
+    state.recordingSegments === 0 &&
+    state.keyMomentsStatus === "idle" &&
+    !state.hasTranscript &&
+    !state.hasRecording &&
+    !state.hasFlashcards);
+
+const toArtifactState = (
+  status: Pick<
+    SessionArtifactState,
+    | "replayStatus"
+    | "transcriptStatus"
+    | "transcriptTurns"
+    | "videoStatus"
+    | "recordingSegments"
+    | "keyMomentsStatus"
+  >
+): SessionArtifactState => {
+  const hasRecording = status.videoStatus === "ready";
+  return {
+    replayStatus: status.replayStatus,
+    transcriptStatus: status.transcriptStatus,
+    hasTranscript: status.transcriptTurns > 0,
+    transcriptTurns: status.transcriptTurns,
+    videoStatus: status.videoStatus,
+    hasRecording,
+    recordingSegments: status.recordingSegments,
+    keyMomentsStatus: status.keyMomentsStatus,
+    hasFlashcards: status.keyMomentsStatus === "ready" || status.transcriptTurns > 0,
+    isReplayReady: status.replayStatus === "ready",
+    isLoading: false,
+  };
 };
 
 /* Skeleton rows shown during loading */
@@ -129,9 +173,11 @@ const getLevelLabel = (level: Session["level"]): string => {
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { sessions, createSession, isLoading, error } = useSession();
+  const { sessions, createSession, completeSession, isLoading, error } = useSession();
   const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [endingSessionId, setEndingSessionId] = useState<string | null>(null);
+  const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<DashboardFilter>("all");
   const [artifactBySessionId, setArtifactBySessionId] = useState<
@@ -142,6 +188,7 @@ export const Dashboard: React.FC = () => {
 
   const handleCreateSession = async (data: NewSessionData) => {
     setIsCreatingSession(true);
+    setSessionActionError(null);
     try {
       const newSession = await createSession(data);
       setIsNewSessionModalOpen(false);
@@ -157,6 +204,24 @@ export const Dashboard: React.FC = () => {
     navigate(`/session/${sessionId}`);
   const handleSummarySession = (sessionId: string) =>
     navigate(`/session/${sessionId}/replay`);
+  const handleCompleteSession = async (sessionId: string) => {
+    if (endingSessionId) {
+      return;
+    }
+
+    setEndingSessionId(sessionId);
+    setSessionActionError(null);
+    try {
+      await completeSession(sessionId);
+      navigate(`/session/${sessionId}/replay`);
+    } catch (completeError) {
+      setSessionActionError(
+        completeError instanceof Error ? completeError.message : "Unable to end the session"
+      );
+    } finally {
+      setEndingSessionId(null);
+    }
+  };
 
   useEffect(() => {
     if (sessions.length === 0) {
@@ -164,67 +229,78 @@ export const Dashboard: React.FC = () => {
       return;
     }
 
-    let cancelled = false;
     setArtifactBySessionId((current) => {
       const next: Record<string, SessionArtifactState> = {};
       sessions.forEach((session) => {
-        next[session.id] = current[session.id] ?? EMPTY_ARTIFACT_STATE;
+        const existingState = current[session.id];
+        if (session.status === "completed") {
+          next[session.id] = isUnhydratedArtifactState(existingState)
+            ? EMPTY_ARTIFACT_STATE
+            : (existingState ?? EMPTY_ARTIFACT_STATE);
+          return;
+        }
+
+        next[session.id] = existingState ?? INACTIVE_ARTIFACT_STATE;
       });
       return next;
     });
+  }, [sessions]);
 
-    void Promise.all(
-      sessions.map(async (session) => {
-        try {
-          const status = await getSessionReplayStatus(session.id);
-          const transcriptTurns = status.transcriptTurnCount;
-          const recordingSegments = status.videoSegmentCount;
-          const hasRecording = status.videoStatus === "ready";
+  useEffect(() => {
+    const sessionIdsToFetch = sessions
+      .filter((session) => session.status === "completed")
+      .filter((session) => artifactBySessionId[session.id]?.isLoading)
+      .map((session) => session.id);
 
-          return [
-            session.id,
-            {
-              replayStatus: status.replayStatus,
-              transcriptStatus: status.transcriptStatus,
-              hasTranscript: transcriptTurns > 0,
-              transcriptTurns,
-              videoStatus: status.videoStatus,
-              hasRecording,
-              recordingSegments,
-              keyMomentsStatus: status.keyMomentsStatus,
-              hasFlashcards: status.keyMomentsStatus === "ready" || transcriptTurns > 0,
-              isReplayReady: status.replayStatus === "ready",
-              isLoading: false,
-            },
-          ] as const;
-        } catch {
-          return [
-            session.id,
-            {
-              ...EMPTY_ARTIFACT_STATE,
-              isLoading: false,
-            },
-          ] as const;
+    if (sessionIdsToFetch.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void getSessionReplayStatuses(sessionIdsToFetch)
+      .then((statuses) => {
+        if (cancelled) {
+          return;
         }
-      })
-    ).then((results) => {
-      if (cancelled) {
-        return;
-      }
 
-      setArtifactBySessionId((current) => {
-        const next = { ...current };
-        results.forEach(([sessionId, state]) => {
-          next[sessionId] = state;
+        const statusBySessionId = new Map(statuses.map((status) => [status.sessionId, status]));
+        setArtifactBySessionId((current) => {
+          const next = { ...current };
+          sessionIdsToFetch.forEach((sessionId) => {
+            const status = statusBySessionId.get(sessionId);
+            next[sessionId] = status
+              ? toArtifactState({
+                  replayStatus: status.replayStatus,
+                  transcriptStatus: status.transcriptStatus,
+                  transcriptTurns: status.transcriptTurnCount,
+                  videoStatus: status.videoStatus,
+                  recordingSegments: status.videoSegmentCount,
+                  keyMomentsStatus: status.keyMomentsStatus,
+                })
+              : INACTIVE_ARTIFACT_STATE;
+          });
+          return next;
         });
-        return next;
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setArtifactBySessionId((current) => {
+          const next = { ...current };
+          sessionIdsToFetch.forEach((sessionId) => {
+            next[sessionId] = INACTIVE_ARTIFACT_STATE;
+          });
+          return next;
+        });
       });
-    });
 
     return () => {
       cancelled = true;
     };
-  }, [sessions]);
+  }, [artifactBySessionId, sessions]);
 
   const sortedSessions = useMemo(
     () =>
@@ -318,9 +394,9 @@ export const Dashboard: React.FC = () => {
       />
 
       <div className="ts-home-dashboard-inner">
-        {error && (
+        {(error || sessionActionError) && (
           <p className="ts-home-error-banner" role="status">
-            {error}
+            {sessionActionError || error}
           </p>
         )}
 
@@ -452,6 +528,8 @@ export const Dashboard: React.FC = () => {
                           availability={artifactBySessionId[session.id]}
                           onResume={handleResumeSession}
                           onSummary={handleSummarySession}
+                          onComplete={handleCompleteSession}
+                          isCompleting={endingSessionId === session.id}
                         />
                       ))}
                     </div>

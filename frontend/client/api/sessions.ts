@@ -127,6 +127,16 @@ export interface ApiKeyMomentGenerationResponse {
   debug?: unknown;
 }
 
+export interface ApiSessionNotesArtifact {
+  sessionId: string;
+  status: "completed";
+  notesMarkdown: string;
+  generatedAt: string;
+  model: string;
+  sourceTranscriptTurnCount: number;
+  sourceTranscriptHash: string;
+}
+
 export type ApiReplayArtifactStatus =
   | "idle"
   | "pending"
@@ -146,8 +156,14 @@ export interface ApiSessionReplayStatus {
   keyMomentsStatus: ApiReplayArtifactStatus;
   keyMomentCount: number;
   keyMomentsError: string | null;
+  notesStatus: ApiReplayArtifactStatus;
+  notesError: string | null;
   requestedAt: string | null;
   updatedAt: string;
+}
+
+export interface ApiSessionReplayStatusBatchResponse {
+  statuses: ApiSessionReplayStatus[];
 }
 
 export interface CreateSessionRequest extends NewSessionData {
@@ -263,11 +279,23 @@ export async function createSession(
   return apiSessionToSession(response);
 }
 
+export async function getSession(sessionId: string): Promise<ApiSession> {
+  return requestJson<ApiSession>(`/v1/sessions/${encodeURIComponent(sessionId)}`);
+}
+
 export async function getSessionResume(
   sessionId: string
 ): Promise<ApiSessionResumeResponse> {
   return requestJson<ApiSessionResumeResponse>(
     `/v1/sessions/${encodeURIComponent(sessionId)}/resume`
+  );
+}
+
+export async function getSessionTranscript(
+  sessionId: string
+): Promise<ApiTranscriptTurn[]> {
+  return requestJson<ApiTranscriptTurn[]>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/transcript`
   );
 }
 
@@ -287,11 +315,52 @@ export async function getSessionReplayStatus(
   );
 }
 
+export async function getSessionReplayStatuses(
+  sessionIds: string[]
+): Promise<ApiSessionReplayStatus[]> {
+  if (sessionIds.length === 0) {
+    return [];
+  }
+
+  const response = await requestJson<ApiSessionReplayStatusBatchResponse>(
+    "/v1/sessions/replay-status:batch",
+    {
+      method: "POST",
+      body: JSON.stringify({ sessionIds }),
+    }
+  );
+  return response.statuses;
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  await requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function deleteSessionsForUser(userId: string): Promise<void> {
+  const params = new URLSearchParams({
+    userId,
+    confirm: "true",
+  });
+  await requestJson(`/v1/sessions?${params.toString()}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getSessionKeyMoments(
   sessionId: string
 ): Promise<ApiSessionKeyMomentArtifact> {
   return requestJson<ApiSessionKeyMomentArtifact>(
     `/v1/sessions/${encodeURIComponent(sessionId)}/key-moments`
+  );
+}
+
+export async function getSessionNotes(
+  sessionId: string
+): Promise<ApiSessionNotesArtifact> {
+  return requestJson<ApiSessionNotesArtifact>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/notes`
   );
 }
 
