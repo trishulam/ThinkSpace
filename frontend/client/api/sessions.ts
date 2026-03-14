@@ -414,10 +414,11 @@ export async function finalizeSessionRecordings(
   );
 }
 
-export async function completeSession(sessionId: string): Promise<ApiSession> {
-  return requestJson<ApiSession>(`/v1/sessions/${encodeURIComponent(sessionId)}/complete`, {
+export async function completeSession(sessionId: string): Promise<Session> {
+  const response = await requestJson<ApiSession>(`/v1/sessions/${encodeURIComponent(sessionId)}/complete`, {
     method: "POST",
   });
+  return apiSessionToSession(response);
 }
 
 export function getSessionRecordingFinalUrl(sessionId: string): string {

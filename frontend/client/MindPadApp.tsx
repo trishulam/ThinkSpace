@@ -14,7 +14,7 @@ export const MindPadApp: React.FC = () => {
         <Routes>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/session/:sessionId" element={<SessionCanvas />} />
-          <Route path="/session/:sessionId/replay" element={<SessionReplay />} />
+          <Route path="/session/:sessionId/session-summary" element={<SessionReplay />} />
           <Route path="/dev/widgets" element={<WidgetPlayground />} />
           <Route path="/canvas" element={<App />} />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />

@@ -1156,7 +1156,7 @@ export const SessionCanvas: React.FC = () => {
         canvasActivityWindowManagerRef.current?.flush("manual");
         ws.disconnect();
         await completeSession(sessionId);
-        navigate(`/session/${sessionId}/replay`);
+        navigate(`/session/${sessionId}/session-summary`);
       } catch (error) {
         setSessionActionError(
           error instanceof Error ? error.message : "Failed to end the session cleanly",

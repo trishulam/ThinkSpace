@@ -1,10 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getSessionReplayStatuses } from "../api/sessions";
 import { useSession } from "../context/SessionContext";
-import { TopNavigation } from "../components/TopNavigation";
-import { SessionCard } from "../components/SessionCard";
-import { EmptyState } from "../components/EmptyState";
 import { NewSessionModal } from "../components/NewSessionModal";
 import { NewSessionData, Session } from "../types/session";
 
@@ -32,11 +29,30 @@ const FILTER_OPTIONS: Array<{ value: DashboardFilter; label: string }> = [
   { value: "recording", label: "Recording Ready" },
 ];
 
-const PINNED_SESSIONS = [
-  "Quantum Computing 101",
-  "Game Theory Strategy",
-  "Advanced TypeScript Patterns",
+const HERO_SUGGESTIONS = [
+  "Quantum physics deep dive",
+  "Neural networks 101",
+  "Philosophy of mind",
 ];
+
+const SESSION_CREATION_PREVIEW_STEPS = [
+  {
+    label: "Initializing session",
+    description: "Setting up a fresh canvas so your next learning flow feels focused from the first second.",
+  },
+  {
+    label: "Reading your prompt",
+    description: "Pulling in your topic and intent so ThinkSpace knows where to begin the conversation.",
+  },
+  {
+    label: "Gathering context",
+    description: "Reviewing any attached material and nearby signals before the session experience opens.",
+  },
+  {
+    label: "Preparing the canvas",
+    description: "Arranging the workspace for exploration, note-taking, and follow-up questions.",
+  },
+] as const;
 
 const EMPTY_ARTIFACT_STATE: SessionArtifactState = {
   replayStatus: "idle",
@@ -96,25 +112,35 @@ const toArtifactState = (
   };
 };
 
-/* Skeleton rows shown during loading */
-const SkeletonRows: React.FC = () => (
-  <div className="ts-home-session-list">
-    {[1, 2, 3].map((i) => (
-      <div key={i} className="ts-home-skeleton-row" style={{ position: "relative" }}>
-        <div className="ts-home-skeleton-icon" />
-        <div className="ts-home-skeleton-body">
-          <div
-            className="ts-home-skeleton-line ts-home-skeleton-line--wide"
-            style={{ animationDelay: `${i * 0.1}s` }}
-          />
-          <div
-            className="ts-home-skeleton-line ts-home-skeleton-line--narrow"
-            style={{ animationDelay: `${i * 0.15}s` }}
-          />
-        </div>
+/* Library-shaped skeleton rows shown during loading */
+const LibrarySkeletonRows: React.FC = () => (
+  <section className="ts-home-landing-section ts-home-landing-section--library-loading" id="thinkspace-library">
+    <div className="ts-home-landing-section-header ts-home-landing-section-header--library">
+      <div>
+        <p className="ts-home-landing-section-kicker">Learning Library</p>
+        <h2>Sessions</h2>
       </div>
-    ))}
-  </div>
+    </div>
+    <div className="ts-home-library-skeleton-list" aria-hidden="true">
+      {[1, 2, 3, 4].map((i) => (
+        <div key={i} className="ts-home-library-skeleton-item">
+          <div className="ts-home-library-skeleton-main">
+            <div className="ts-home-library-skeleton-icon" />
+            <div className="ts-home-library-skeleton-copy">
+              <div className="ts-home-library-skeleton-line ts-home-library-skeleton-line--date" />
+              <div className="ts-home-library-skeleton-line ts-home-library-skeleton-line--title" />
+              <div className="ts-home-library-skeleton-line ts-home-library-skeleton-line--body" />
+              <div className="ts-home-library-skeleton-line ts-home-library-skeleton-line--body-short" />
+            </div>
+          </div>
+          <div className="ts-home-library-skeleton-actions">
+            <div className="ts-home-library-skeleton-button" />
+            <div className="ts-home-library-skeleton-button ts-home-library-skeleton-button--secondary" />
+          </div>
+        </div>
+      ))}
+    </div>
+  </section>
 );
 
 const formatRelativeTime = (date: Date): string => {
@@ -171,20 +197,94 @@ const getLevelLabel = (level: Session["level"]): string => {
   }
 };
 
+const LogoGlyph: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M8 6.25C6.37 7.37 5.25 9.24 5.25 11.38c0 3.47 3 6.28 6.75 6.28s6.75-2.81 6.75-6.28c0-2.14-1.12-4.01-2.75-5.13" />
+    <path d="M9 5.5c.72-.83 1.79-1.25 3-1.25s2.28.42 3 1.25" />
+    <path d="M9.75 11.25h4.5" />
+    <path d="M12 9v4.5" />
+  </svg>
+);
+
+const SessionPreviewLoader: React.FC = () => (
+  <div className="ts-home-session-preview-loader" aria-hidden="true">
+    <span className="ts-home-session-preview-loader-ring ts-home-session-preview-loader-ring--outer" />
+    <span className="ts-home-session-preview-loader-ring ts-home-session-preview-loader-ring--inner" />
+    <span className="ts-home-session-preview-loader-core" />
+  </div>
+);
+
+const BellIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M15 17H5.5a1 1 0 0 1-.77-1.64l1.02-1.23A3 3 0 0 0 6.5 12.2V10a5.5 5.5 0 1 1 11 0v2.2a3 3 0 0 0 .75 1.93l1.02 1.23A1 1 0 0 1 18.5 17H15Z" />
+    <path d="M9.5 19a2.5 2.5 0 0 0 5 0" />
+  </svg>
+);
+
+const PromptPlusIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M12 5v14" />
+    <path d="M5 12h14" />
+  </svg>
+);
+
+const ArrowIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M5 12h12" />
+    <path d="m13 6 6 6-6 6" />
+  </svg>
+);
+
+const StopIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <circle cx="12" cy="12" r="8" />
+    <path d="M9 9h6v6H9z" />
+  </svg>
+);
+
+const getStatusLabel = (status: string): string =>
+  status === "completed" ? "Completed" : status === "processing" ? "Processing" : "In Progress";
+
+const getSessionDescriptor = (session: Session): string =>
+  session.summary ||
+  session.goal ||
+  `Return to ${session.topic} and keep building your understanding.`;
+
+const getLibraryArtifacts = (
+  availability?: SessionArtifactState
+): string[] =>
+  [
+    availability?.hasTranscript ? "Transcript" : null,
+    availability?.hasRecording ? "Recording" : null,
+    availability?.hasFlashcards ? "Flashcards" : null,
+  ].filter((value): value is string => Boolean(value));
+
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const { sessions, createSession, completeSession, isLoading, error } = useSession();
   const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [isSessionPreviewVisible, setIsSessionPreviewVisible] = useState(false);
+  const [sessionPreviewStepIndex, setSessionPreviewStepIndex] = useState(0);
   const [endingSessionId, setEndingSessionId] = useState<string | null>(null);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
+  const [isPromptPopoverOpen, setIsPromptPopoverOpen] = useState(false);
+  const [attachedFileNames, setAttachedFileNames] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<DashboardFilter>("all");
   const [artifactBySessionId, setArtifactBySessionId] = useState<
     Record<string, SessionArtifactState>
   >({});
+  const promptPopoverRef = useRef<HTMLDivElement | null>(null);
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleNewSession = () => setIsNewSessionModalOpen(true);
+  const handleSessionPreviewOpen = () => {
+    setSessionActionError(null);
+    setIsPromptPopoverOpen(false);
+    setSessionPreviewStepIndex(0);
+    setIsSessionPreviewVisible(true);
+  };
 
   const handleCreateSession = async (data: NewSessionData) => {
     setIsCreatingSession(true);
@@ -203,7 +303,7 @@ export const Dashboard: React.FC = () => {
   const handleResumeSession = (sessionId: string) =>
     navigate(`/session/${sessionId}`);
   const handleSummarySession = (sessionId: string) =>
-    navigate(`/session/${sessionId}/replay`);
+    navigate(`/session/${sessionId}/session-summary`);
   const handleCompleteSession = async (sessionId: string) => {
     if (endingSessionId) {
       return;
@@ -213,7 +313,7 @@ export const Dashboard: React.FC = () => {
     setSessionActionError(null);
     try {
       await completeSession(sessionId);
-      navigate(`/session/${sessionId}/replay`);
+      navigate(`/session/${sessionId}/session-summary`);
     } catch (completeError) {
       setSessionActionError(
         completeError instanceof Error ? completeError.message : "Unable to end the session"
@@ -302,6 +402,46 @@ export const Dashboard: React.FC = () => {
     };
   }, [artifactBySessionId, sessions]);
 
+  useEffect(() => {
+    if (!isPromptPopoverOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (promptPopoverRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setIsPromptPopoverOpen(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [isPromptPopoverOpen]);
+
+  useEffect(() => {
+    if (!isSessionPreviewVisible) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setSessionPreviewStepIndex((current) => (current + 1) % SESSION_CREATION_PREVIEW_STEPS.length);
+    }, 2400);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsSessionPreviewVisible(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isSessionPreviewVisible]);
+
   const sortedSessions = useMemo(
     () =>
       [...sessions].sort((left, right) => right.lastActive.getTime() - left.lastActive.getTime()),
@@ -336,179 +476,202 @@ export const Dashboard: React.FC = () => {
     });
   }, [activeFilter, artifactBySessionId, searchQuery, sortedSessions]);
 
-  const continueLearningSessions = useMemo(() => sortedSessions.slice(0, 2), [sortedSessions]);
-  const latestSession = sortedSessions[0];
-  const recommendationTopic = latestSession?.topic ?? "your latest concept";
-  const recommendationBody =
-    latestSession?.summary ||
-    latestSession?.goal ||
-    `Review the main idea from ${recommendationTopic} and explain it back in your own words.`;
+  const currentSessionPreviewStep = SESSION_CREATION_PREVIEW_STEPS[sessionPreviewStepIndex];
+  const scrollToSection = (sectionId: string) => {
+    const section = document.getElementById(sectionId);
+    if (!section) {
+      return;
+    }
 
-  const sidebar = (
-    <aside className="ts-home-rail">
-      <section className="ts-home-rail-section ts-home-rail-section--accent">
-        <div className="ts-home-rail-header">
-          <span className="ts-home-rail-kicker">Recommended Next</span>
-          <h3>Return to {recommendationTopic}</h3>
-        </div>
-        <p className="ts-home-rail-body">{recommendationBody}</p>
-        {latestSession ? (
-          <button
-            className="ts-home-sidebar-link"
-            onClick={() => handleSummarySession(latestSession.id)}
-            type="button"
-          >
-            Open replay
-          </button>
-        ) : (
-          <span className="ts-home-sidebar-caption">Appears once you create a session</span>
-        )}
-      </section>
+    const scrollContainer = document.querySelector(".mindpad-dashboard");
+    const nav = document.querySelector(".ts-home-landing-nav");
+    const navHeight = nav instanceof HTMLElement ? nav.offsetHeight : 0;
+    const containerTop =
+      scrollContainer instanceof HTMLElement ? scrollContainer.getBoundingClientRect().top : 0;
+    const currentScrollTop =
+      scrollContainer instanceof HTMLElement ? scrollContainer.scrollTop : window.scrollY;
+    const top = currentScrollTop + section.getBoundingClientRect().top - containerTop - navHeight - 18;
 
-      <section className="ts-home-rail-section">
-        <div className="ts-home-rail-header">
-          <span className="ts-home-rail-kicker">Pinned Sessions</span>
-          <h3>Quick access</h3>
-        </div>
-        <ul className="ts-home-pin-list">
-          {PINNED_SESSIONS.map((title) => (
-            <li key={title}>
-              <button className="ts-home-pin-row" type="button">
-                <span>{title}</span>
-                <span aria-hidden="true">›</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </aside>
-  );
+    if (scrollContainer instanceof HTMLElement) {
+      scrollContainer.scrollTo({
+        top: Math.max(top, 0),
+        behavior: "smooth",
+      });
+      return;
+    }
+
+    window.scrollTo({
+      top: Math.max(top, 0),
+      behavior: "smooth",
+    });
+  };
 
   return (
-    <div className="mindpad-dashboard ts-home-dashboard">
-      <TopNavigation
-        onPrimaryAction={handleNewSession}
-        primaryActionLabel="New Session"
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-      />
-
-      <div className="ts-home-dashboard-inner">
-        {(error || sessionActionError) && (
-          <p className="ts-home-error-banner" role="status">
-            {sessionActionError || error}
-          </p>
-        )}
-
-        <section className="ts-home-banner">
-          <div className="ts-home-banner-copy">
-            <p className="ts-home-eyebrow">Learning Dashboard</p>
-            <h1>Welcome back.</h1>
-            <p className="ts-home-hero-text">
-              Your place to learn concepts deeply, revisit session replays, and master topics
-              with AI-guided study sessions.
-            </p>
-            <div className="ts-home-hero-actions">
-              <button className="ts-home-primary-btn" onClick={handleNewSession} type="button">
-                Start New Session
-              </button>
-              <button
-                className="ts-home-secondary-btn"
-                onClick={() => latestSession && handleResumeSession(latestSession.id)}
-                type="button"
-                disabled={!latestSession}
-              >
-                Continue Last Session
-              </button>
-            </div>
+    <div className="mindpad-dashboard ts-home-dashboard ts-home-dashboard--landing">
+      {isSessionPreviewVisible ? (
+        <section className="ts-home-session-preview" aria-live="polite">
+          <div className="ts-home-session-preview-shell">
+            <SessionPreviewLoader />
+            <p className="ts-home-session-preview-text">{currentSessionPreviewStep.label}</p>
           </div>
         </section>
+      ) : (
+        <>
+          <header className="ts-home-landing-nav">
+            <div className="ts-home-landing-brand">
+              <button className="ts-home-landing-logo" onClick={() => navigate("/dashboard")} type="button">
+                <span className="ts-home-landing-logo-mark">
+                  <LogoGlyph />
+                </span>
+                <span>ThinkSpace</span>
+              </button>
+            </div>
+            <nav className="ts-home-landing-nav-links" aria-label="Primary">
+              <button type="button" onClick={() => scrollToSection("thinkspace-hero")}>
+                Explore
+              </button>
+              <button type="button" onClick={() => scrollToSection("thinkspace-library")}>
+                Library
+              </button>
+            </nav>
+            <div className="ts-home-landing-nav-actions">
+              <button className="ts-home-landing-icon-btn" type="button" aria-label="Notifications">
+                <BellIcon />
+              </button>
+              <button className="ts-home-landing-avatar" type="button" aria-label="Open profile" />
+            </div>
+          </header>
+          <div className="ts-home-dashboard-inner">
+            {(error || sessionActionError) && (
+              <p className="ts-home-error-banner" role="status">
+                {sessionActionError || error}
+              </p>
+            )}
 
-        <div className="ts-home-workspace">
-          <div className="ts-home-main">
-            {isLoading ? (
-              <section className="ts-home-section">
-                <div className="ts-home-section-header">
-                  <div>
-                    <p className="ts-home-section-kicker">Loading</p>
-                    <h2>Fetching your sessions</h2>
+            <section className="ts-home-landing-hero" id="thinkspace-hero">
+              <div className="ts-home-landing-hero-core">
+                <h1>ThinkSpace</h1>
+                <div className="ts-home-landing-prompt-shell">
+                  <div className="ts-home-landing-prompt-tools" ref={promptPopoverRef}>
+                    <button
+                      className="ts-home-landing-prompt-icon-btn"
+                      type="button"
+                      aria-label="Open prompt tools"
+                      aria-expanded={isPromptPopoverOpen ? "true" : "false"}
+                      onClick={() => setIsPromptPopoverOpen((current) => !current)}
+                    >
+                      <PromptPlusIcon />
+                    </button>
+                    {isPromptPopoverOpen ? (
+                      <div className="ts-home-landing-prompt-popover">
+                        <button
+                          className="ts-home-landing-prompt-popover-action"
+                          type="button"
+                          onClick={() => attachInputRef.current?.click()}
+                        >
+                          Attach files
+                        </button>
+                        <p className="ts-home-landing-prompt-popover-note">
+                          Add supporting files before starting a new session.
+                        </p>
+                        {attachedFileNames.length > 0 ? (
+                          <div className="ts-home-landing-prompt-file-list">
+                            {attachedFileNames.map((fileName) => (
+                              <span key={fileName} className="ts-home-landing-prompt-file-pill">
+                                {fileName}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <input
+                      ref={attachInputRef}
+                      type="file"
+                      className="ts-home-landing-file-input"
+                      multiple
+                      onChange={(event) => {
+                        const nextFiles = Array.from(event.target.files ?? []).map((file) => file.name);
+                        setAttachedFileNames(nextFiles);
+                        setIsPromptPopoverOpen(false);
+                      }}
+                    />
+                  </div>
+                  <input
+                    className="ts-home-landing-prompt-input"
+                    type="search"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="What would you like to master today?"
+                    aria-label="Search or describe what you want to learn"
+                  />
+                  <button
+                    className="ts-home-landing-prompt-btn"
+                    onClick={handleSessionPreviewOpen}
+                    type="button"
+                  >
+                    Ask ThinkSpace
+                  </button>
+                </div>
+                <div className="ts-home-landing-suggestions">
+                  <span className="ts-home-landing-suggestions-label">Suggested for you</span>
+                  <div className="ts-home-landing-suggestion-row">
+                    {HERO_SUGGESTIONS.map((topic) => (
+                      <button
+                        key={topic}
+                        className="ts-home-landing-suggestion-chip"
+                        onClick={() => setSearchQuery(topic)}
+                        type="button"
+                      >
+                        <span className="ts-home-landing-suggestion-dot" aria-hidden="true" />
+                        {topic}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <SkeletonRows />
-              </section>
+                <button
+                  className="ts-home-landing-scroll"
+                  type="button"
+                  onClick={() => scrollToSection("thinkspace-library")}
+                >
+                  Scroll to sessions
+                  <span className="ts-home-landing-scroll-indicator" aria-hidden="true">
+                    <span />
+                  </span>
+                </button>
+              </div>
+            </section>
+
+            {isLoading && sessions.length === 0 ? (
+              <LibrarySkeletonRows />
             ) : sessions.length === 0 ? (
-              <section className="ts-home-section">
-                <div className="ts-home-section-header">
-                  <div>
-                    <p className="ts-home-section-kicker">Get started</p>
-                    <h2>Build your learning library</h2>
-                  </div>
-                </div>
-                <EmptyState onCreateSession={handleNewSession} />
+              <section className="ts-home-landing-empty">
+                <p className="ts-home-landing-kicker">Get started</p>
+                <h2>Build your ThinkSpace library</h2>
+                <p>
+                  Start your first session, ask questions out loud, and come back to replay the
+                  recording with notes and key moments.
+                </p>
+                <button className="ts-home-landing-prompt-btn" onClick={handleNewSession} type="button">
+                  Start First Session
+                </button>
               </section>
             ) : (
               <>
-                <section className="ts-home-section">
-                  <div className="ts-home-section-header">
+                <section className="ts-home-landing-section" id="thinkspace-library">
+                  <div className="ts-home-landing-section-header ts-home-landing-section-header--library">
                     <div>
-                      <p className="ts-home-section-kicker">Continue Learning</p>
-                      <h2>Pick up where you left off</h2>
+                      <p className="ts-home-landing-section-kicker">Learning Library</p>
+                      <h2>Sessions</h2>
                     </div>
-                    <button
-                      className="ts-home-link-btn"
-                      onClick={() => {
-                        setSearchQuery("");
-                        setActiveFilter("all");
-                      }}
-                      type="button"
-                    >
-                      View all history
-                    </button>
-                  </div>
-
-                  <div className="ts-home-feature-surface">
-                    {continueLearningSessions.map((session) => {
-                      return (
-                        <article key={session.id} className="ts-home-feature-slab">
-                          <div className="ts-home-feature-meta">
-                            <span className="ts-home-feature-badge">{getModeLabel(session.mode)}</span>
-                            <span>{formatRelativeTime(session.lastActive)}</span>
-                          </div>
-                          <h3>{session.topic}</h3>
-                          <p>
-                            {session.summary ||
-                              session.goal ||
-                              "Return to this topic and keep building your understanding."}
-                          </p>
-                          <div className="ts-home-feature-footer">
-                            <button
-                              className="ts-home-inline-action"
-                              onClick={() => handleResumeSession(session.id)}
-                              type="button"
-                            >
-                              Continue
-                            </button>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
-
-                <section className="ts-home-section">
-                  <div className="ts-home-section-header ts-home-section-header--stacked">
-                    <div>
-                      <p className="ts-home-section-kicker">Recent Sessions</p>
-                      <h2>Recent learning objects</h2>
-                    </div>
-                    <div className="ts-home-filter-row">
+                    <div className="ts-home-landing-library-controls">
                       {FILTER_OPTIONS.map((option) => (
                         <button
                           key={option.value}
                           className={
                             option.value === activeFilter
-                              ? "ts-home-filter-chip ts-home-filter-chip--active"
-                              : "ts-home-filter-chip"
+                              ? "ts-home-landing-filter ts-home-landing-filter--active"
+                              : "ts-home-landing-filter"
                           }
                           onClick={() => setActiveFilter(option.value)}
                           type="button"
@@ -518,38 +681,99 @@ export const Dashboard: React.FC = () => {
                       ))}
                     </div>
                   </div>
-
                   {filteredSessions.length > 0 ? (
-                    <div className="ts-home-session-surface">
-                      {filteredSessions.map((session) => (
-                        <SessionCard
-                          key={session.id}
-                          session={session}
-                          availability={artifactBySessionId[session.id]}
-                          onResume={handleResumeSession}
-                          onSummary={handleSummarySession}
-                          onComplete={handleCompleteSession}
-                          isCompleting={endingSessionId === session.id}
-                        />
-                      ))}
+                    <div className="ts-home-library-list">
+                      {filteredSessions.map((session) => {
+                        const availability = artifactBySessionId[session.id];
+                        const artifacts = getLibraryArtifacts(availability);
+                        const summaryText = getSessionDescriptor(session);
+                        const isCompleted = session.status === "completed";
+
+                        return (
+                          <article key={session.id} className="ts-home-library-item">
+                            <div className="ts-home-library-item-main">
+                              <div className="ts-home-library-item-icon">
+                                {session.topic.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="ts-home-library-item-copy">
+                                <div className="ts-home-library-item-eyebrow">
+                                  <span className="ts-home-library-item-date">
+                                    {formatCalendarDate(session.lastActive)}
+                                  </span>
+                                </div>
+                                <h3>{session.topic}</h3>
+                                <p>{summaryText}</p>
+                                {artifacts.length > 0 ? (
+                                  <div className="ts-home-library-item-meta">
+                                    {artifacts.map((artifact) => (
+                                      <span key={artifact} className="ts-home-library-artifact">
+                                        {artifact}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="ts-home-library-item-actions">
+                              {isCompleted ? (
+                                <button
+                                  className="ts-home-library-summary-btn"
+                                  type="button"
+                                  onClick={() => handleSummarySession(session.id)}
+                                >
+                                  <span>Session summary</span>
+                                  <ArrowIcon />
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    className="ts-home-library-action"
+                                    type="button"
+                                    onClick={() => handleResumeSession(session.id)}
+                                  >
+                                    Continue
+                                  </button>
+                                  <button
+                                    className="ts-home-library-action ts-home-library-action--muted"
+                                    type="button"
+                                    onClick={() => handleCompleteSession(session.id)}
+                                    disabled={endingSessionId === session.id}
+                                  >
+                                    {endingSessionId === session.id ? "Ending..." : "End session"}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
                     </div>
                   ) : (
-                    <div className="ts-home-zero-state">
+                    <div className="ts-home-landing-zero">
                       <h3>No sessions match your current filters</h3>
-                      <p>
-                        Try a different search term or switch filters to see more of your learning
-                        history.
-                      </p>
+                      <p>Try a different prompt, search phrase, or status filter to surface the right sessions.</p>
                     </div>
                   )}
                 </section>
+
+                <footer className="ts-home-landing-footer">
+                  <div className="ts-home-landing-footer-brand">
+                    <span className="ts-home-landing-footer-mark">
+                      <LogoGlyph />
+                    </span>
+                    <span>&copy; 2026 ThinkSpace</span>
+                  </div>
+                  <div className="ts-home-landing-footer-links">
+                    <button type="button">Privacy Policy</button>
+                    <button type="button">Terms of Service</button>
+                    <button type="button">Support</button>
+                  </div>
+                </footer>
               </>
             )}
           </div>
-
-          {sidebar}
-        </div>
-      </div>
+        </>
+      )}
 
       <NewSessionModal
         isOpen={isNewSessionModalOpen}

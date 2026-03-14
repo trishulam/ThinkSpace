@@ -18,8 +18,6 @@ import {
   type ApiTranscriptEntry,
   type ApiTranscriptTurn,
 } from "../api/sessions";
-import { TopNavigation } from "../components/TopNavigation";
-
 type SessionFlashcard = {
   id: string;
   prompt: string;
@@ -31,6 +29,81 @@ type TimelineKeyMoment = ApiSessionKeyMoment & {
   progressPercent: number;
   resolvedTimestampLabel: string;
 };
+
+type TranscriptPreviewItem = {
+  id: string;
+  timeSeconds: number;
+  timestampLabel: string;
+  speakerLabel: "User" | "Agent";
+  speakerType: "user" | "agent";
+  content: string;
+};
+
+const LogoGlyph: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M8 6.25C6.37 7.37 5.25 9.24 5.25 11.38c0 3.47 3 6.28 6.75 6.28s6.75-2.81 6.75-6.28c0-2.14-1.12-4.01-2.75-5.13" />
+    <path d="M9 5.5c.72-.83 1.79-1.25 3-1.25s2.28.42 3 1.25" />
+    <path d="M9.75 11.25h4.5" />
+    <path d="M12 9v4.5" />
+  </svg>
+);
+
+const BellIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M15 17H5.5a1 1 0 0 1-.77-1.64l1.02-1.23A3 3 0 0 0 6.5 12.2V10a5.5 5.5 0 1 1 11 0v2.2a3 3 0 0 0 .75 1.93l1.02 1.23A1 1 0 0 1 18.5 17H15Z" />
+    <path d="M9.5 19a2.5 2.5 0 0 0 5 0" />
+  </svg>
+);
+
+const ClockIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 7.8v4.7l3.1 2" />
+  </svg>
+);
+
+const PlayIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor">
+    <path d="M9 7.5v9l7-4.5-7-4.5Z" />
+  </svg>
+);
+
+const ChevronLeftIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+    <path d="m14.5 6-6 6 6 6" />
+  </svg>
+);
+
+const ChevronRightIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+    <path d="m9.5 6 6 6-6 6" />
+  </svg>
+);
+
+const NoteIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+    <path d="M8 5.5h8.2a1.8 1.8 0 0 1 1.8 1.8v9.4L14 20.5H8A1.8 1.8 0 0 1 6.2 18.7V7.3A1.8 1.8 0 0 1 8 5.5Z" />
+    <path d="M13.8 20.3v-3.1a1.4 1.4 0 0 1 1.4-1.4h3.1" />
+    <path d="M9.2 10h5.8" />
+    <path d="M9.2 13.2h4.6" />
+  </svg>
+);
+
+const TranscriptIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+    <path d="M6.5 6.5h11a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H11l-3.5 3v-3H6.5A1.5 1.5 0 0 1 5 16V8a1.5 1.5 0 0 1 1.5-1.5Z" />
+    <path d="M9 10h6" />
+    <path d="M9 13h4.5" />
+  </svg>
+);
+
+const DownloadIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+    <path d="M12 5.5v8.5" />
+    <path d="m8.5 10.8 3.5 3.7 3.5-3.7" />
+    <path d="M6.5 18.5h11" />
+  </svg>
+);
 
 function extractPlainText(turn: ApiTranscriptTurn): string {
   const finalAgentText =
@@ -246,6 +319,23 @@ function getReplayTranscriptEntries(turn: ApiTranscriptTurn): ApiTranscriptEntry
   );
 }
 
+function getTranscriptSpeaker(entry: ApiTranscriptEntry): {
+  speakerLabel: "User" | "Agent";
+  speakerType: "user" | "agent";
+} {
+  if (entry.type.startsWith("user")) {
+    return {
+      speakerLabel: "User",
+      speakerType: "user",
+    };
+  }
+
+  return {
+    speakerLabel: "Agent",
+    speakerType: "agent",
+  };
+}
+
 export const SessionReplay: React.FC = () => {
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -261,11 +351,11 @@ export const SessionReplay: React.FC = () => {
   const [transcript, setTranscript] = useState<ApiTranscriptTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
-  const [expandedMomentIds, setExpandedMomentIds] = useState<Record<string, boolean>>({});
+  const [flashcardPage, setFlashcardPage] = useState(0);
+  const [revealedFlashcards, setRevealedFlashcards] = useState<Record<string, boolean>>({});
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const applyReplayStatusData = useCallback((payload: ReplayDataPayload) => {
@@ -367,25 +457,6 @@ export const SessionReplay: React.FC = () => {
     sessionId,
   ]);
 
-  const refreshReplayStatus = useCallback(async () => {
-    if (!sessionId) {
-      return;
-    }
-
-    setIsRefreshing(true);
-    setError(null);
-    try {
-      const payload = await fetchReplayStatusData(sessionId);
-      applyReplayStatusData(payload);
-    } catch (refreshError) {
-      setError(
-        refreshError instanceof Error ? refreshError.message : "Unable to refresh replay status"
-      );
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [applyReplayStatusData, sessionId]);
-
   const finalVideoUrl =
     replayArtifactStatus?.videoStatus === "ready" && manifest?.finalRelativePath
     ? getSessionRecordingFinalUrl(sessionId ?? "")
@@ -426,25 +497,15 @@ export const SessionReplay: React.FC = () => {
     () => buildFlashcards(sessionData, transcript),
     [sessionData, transcript]
   );
+  const flashcardsPerPage = 2;
+  const flashcardPageCount = Math.max(Math.ceil(flashcards.length / flashcardsPerPage), 1);
   const notesMarkdown = notesArtifact?.notesMarkdown.trim() ?? "";
   const sessionTitle = sessionData?.topic ?? "Session Summary";
+  const sessionSubtitle =
+    sessionData?.summary?.trim() ??
+    sessionData?.goal?.trim() ??
+    "Review the session recording, transcript, key moments, and generated study materials.";
   const sessionLifecycleStatus = sessionData?.status ?? "active";
-  const replayStatus = toDisplayStatus(
-    replayArtifactStatus?.replayStatus ??
-      (manifest?.finalRelativePath ? "ready" : manifest?.status ?? "idle")
-  );
-  const requestedAtLabel = formatStatusTimestamp(replayArtifactStatus?.requestedAt);
-  const updatedAtLabel = formatStatusTimestamp(replayArtifactStatus?.updatedAt);
-  const replayProgressHint =
-    sessionLifecycleStatus !== "completed"
-      ? "Replay generation starts after you end the session from the canvas."
-      : replayArtifactStatus?.replayStatus === "processing"
-        ? "Replay artifacts are still being generated. This page auto-refreshes every few seconds."
-        : replayArtifactStatus?.replayStatus === "failed"
-          ? "One or more replay jobs failed. The backend error is shown below in the affected section."
-          : replayArtifactStatus?.replayStatus === "ready"
-            ? "Replay artifacts are ready."
-            : "Replay artifacts are queued or only partially available.";
   const videoAvailabilityMessage =
     sessionLifecycleStatus !== "completed"
       ? "This session is still active. End the session to start replay video generation."
@@ -479,6 +540,109 @@ export const SessionReplay: React.FC = () => {
         : replayArtifactStatus?.notesStatus === "failed"
           ? replayArtifactStatus.notesError || "Session notes could not be generated for this session."
           : "Session notes are not available for this session yet.";
+  const recommendedNext = {
+    title: "Quantum Cryptography",
+    description: "Next in series",
+    duration: "32 min",
+  };
+  const transcriptPreviewItems = useMemo<TranscriptPreviewItem[]>(() => {
+    const denominator = Math.max(transcript.length - 1, 1);
+    const previewItems = transcript.flatMap((turn, index) => {
+      const replayEntries = getReplayTranscriptEntries(turn)
+        .map((entry, entryIndex) => {
+          const content = entry.content.trim();
+          if (!content) {
+            return null;
+          }
+
+          const fallbackSeconds = index * 45 + entryIndex * 8;
+          const timeSeconds =
+            videoDuration > 0 && transcript.length > 1
+              ? (index / denominator) * videoDuration
+              : fallbackSeconds;
+          const { speakerLabel, speakerType } = getTranscriptSpeaker(entry);
+
+          return {
+            id: `${turn.turnId}-${entry.type}-${entryIndex}`,
+            timeSeconds,
+            timestampLabel: formatVideoTime(timeSeconds),
+            speakerLabel,
+            speakerType,
+            content,
+          };
+        })
+        .filter((item): item is TranscriptPreviewItem => item !== null);
+
+      if (replayEntries.length > 0) {
+        return replayEntries;
+      }
+
+      const fallbackContent = extractPlainText(turn);
+      if (!fallbackContent) {
+        return [];
+      }
+
+      const fallbackSeconds =
+        videoDuration > 0 && transcript.length > 1 ? (index / denominator) * videoDuration : index * 45;
+      return [
+        {
+          id: `${turn.turnId}-fallback`,
+          timeSeconds: fallbackSeconds,
+          timestampLabel: formatVideoTime(fallbackSeconds),
+          speakerLabel: "Agent" as const,
+          speakerType: "agent" as const,
+          content: fallbackContent,
+        },
+      ];
+    });
+
+    return previewItems.slice(0, 5);
+  }, [transcript, videoDuration]);
+  const activeTranscriptItemId = useMemo(() => {
+    if (transcriptPreviewItems.length === 0) {
+      return null;
+    }
+
+    if (videoDuration > 0) {
+      return transcriptPreviewItems.reduce((closest, current) =>
+        Math.abs(current.timeSeconds - videoCurrentTime) <
+        Math.abs(closest.timeSeconds - videoCurrentTime)
+          ? current
+          : closest
+      ).id;
+    }
+
+    return transcriptPreviewItems[Math.min(2, transcriptPreviewItems.length - 1)]?.id ?? null;
+  }, [transcriptPreviewItems, videoCurrentTime, videoDuration]);
+  const activeKeyMomentId = useMemo(() => {
+    if (timelineKeyMoments.length === 0) {
+      return null;
+    }
+
+    if (videoDuration > 0) {
+      return timelineKeyMoments.reduce((closest, current) =>
+        Math.abs(current.timeSeconds - videoCurrentTime) <
+        Math.abs(closest.timeSeconds - videoCurrentTime)
+          ? current
+          : closest
+      ).id;
+    }
+
+    return timelineKeyMoments[Math.min(1, timelineKeyMoments.length - 1)]?.id ?? null;
+  }, [timelineKeyMoments, videoCurrentTime, videoDuration]);
+  const visibleFlashcards = useMemo(() => {
+    const pageStart = flashcardPage * flashcardsPerPage;
+    return flashcards.slice(pageStart, pageStart + flashcardsPerPage);
+  }, [flashcardPage, flashcards]);
+
+  useEffect(() => {
+    setFlashcardPage(0);
+    setRevealedFlashcards({});
+  }, [sessionId]);
+
+  useEffect(() => {
+    setFlashcardPage((current) => Math.min(current, flashcardPageCount - 1));
+  }, [flashcardPageCount]);
 
   if (!sessionId) {
     return <div>Session not found</div>;
@@ -505,332 +669,214 @@ export const SessionReplay: React.FC = () => {
     videoRef.current.pause();
   };
 
-  const toggleMomentExpanded = (momentId: string) => {
-    setExpandedMomentIds((current) => ({
-      ...current,
-      [momentId]: !current[momentId],
-    }));
+  const downloadTranscript = () => {
+    if (transcript.length === 0) {
+      return;
+    }
+
+    const transcriptText = transcript
+      .map((turn) => {
+        const content = getReplayTranscriptEntries(turn)
+          .map((entry) => {
+            const text = entry.content.trim();
+            if (!text) {
+              return null;
+            }
+            const { speakerLabel } = getTranscriptSpeaker(entry);
+            return `${speakerLabel}: ${text}`;
+          })
+          .filter((entry): entry is string => Boolean(entry))
+          .join("\n");
+
+        if (content) {
+          return `[${turn.sequence}]\n${content}`;
+        }
+
+        const fallbackText = extractPlainText(turn);
+        return fallbackText ? `[${turn.sequence}]\nAgent: ${fallbackText}` : null;
+      })
+      .filter((entry): entry is string => Boolean(entry))
+      .join("\n\n");
+
+    const blob = new Blob([transcriptText], { type: "text/plain;charset=utf-8" });
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = `${sessionTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "session"}-transcript.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(downloadUrl);
   };
 
   return (
-    <div className="mindpad-dashboard ts-home-dashboard">
-      <TopNavigation
-        onPrimaryAction={() => navigate("/dashboard")}
-        primaryActionLabel="Back to Dashboard"
-        pageTitle="Replay"
-        pageSubtitle="Review video, transcript, and study materials."
-        showSearch={false}
-      />
+    <div className="mindpad-dashboard ts-home-dashboard ts-home-dashboard--landing">
+      <header className="ts-home-landing-nav">
+        <div className="ts-home-landing-brand">
+          <button className="ts-home-landing-logo" onClick={() => navigate("/dashboard")} type="button">
+            <span className="ts-home-landing-logo-mark">
+              <LogoGlyph />
+            </span>
+            <span>ThinkSpace</span>
+          </button>
+        </div>
+        <nav className="ts-home-landing-nav-links" aria-label="Primary">
+          <button type="button" onClick={() => navigate("/dashboard")}>
+            Dashboard
+          </button>
+        </nav>
+        <div className="ts-home-landing-nav-actions">
+          <button className="ts-home-landing-icon-btn" type="button" aria-label="Notifications">
+            <BellIcon />
+          </button>
+          <button className="ts-home-landing-avatar" type="button" aria-label="Open profile" />
+        </div>
+      </header>
 
-      <div className="ts-replay-shell">
+      <div className="ts-home-dashboard-inner ts-home-dashboard-inner--summary">
+        <div className="ts-replay-shell">
         {isLoading ? (
-          <section className="ts-home-empty-state">
-            <h3 className="ts-home-empty-state-title">Loading replay</h3>
-            <p className="ts-home-empty-state-sub">
+          <section className="ts-home-landing-empty">
+            <p className="ts-home-landing-section-kicker">Session Summary</p>
+            <h2>Loading session summary</h2>
+            <p>
               Pulling together the session video, transcript, and generated study materials.
             </p>
           </section>
         ) : error ? (
-          <section className="ts-home-empty-state">
-            <h3 className="ts-home-empty-state-title">Replay unavailable</h3>
-            <p className="ts-home-empty-state-sub">{error}</p>
+          <section className="ts-home-landing-empty">
+            <p className="ts-home-landing-section-kicker">Session Summary</p>
+            <h2>Session summary unavailable</h2>
+            <p>{error}</p>
           </section>
         ) : (
           <div className="ts-replay-layout">
-            <section className="ts-replay-progress-strip">
-              <div className="ts-replay-progress-copy">
-                <p className="ts-replay-section-kicker">Replay Progress</p>
-                <h2>Track video, notes, and key moments</h2>
-                <p className="ts-replay-progress-text">{replayProgressHint}</p>
+            <section className="ts-replay-summary-grid">
+              <div className="ts-replay-summary-copy">
+                <h1 className="ts-replay-title">{sessionTitle}</h1>
+                <p className="ts-replay-hero-subtitle">{sessionSubtitle}</p>
               </div>
-              <div className="ts-replay-progress-meta">
-                <div className="ts-replay-chip-group">
-                  <span className="ts-replay-chip">Session {toDisplayStatus(sessionLifecycleStatus)}</span>
-                  <span className="ts-replay-chip">Replay {replayStatus}</span>
-                  {requestedAtLabel ? (
-                    <span className="ts-replay-chip">Started {requestedAtLabel}</span>
-                  ) : null}
-                  {updatedAtLabel ? <span className="ts-replay-chip">Updated {updatedAtLabel}</span> : null}
-                </div>
-                <button
-                  type="button"
-                  className="ts-replay-refresh-btn"
-                  onClick={() => {
-                    void refreshReplayStatus();
-                  }}
-                  disabled={isRefreshing}
-                >
-                  {isRefreshing ? "Refreshing..." : "Refresh Status"}
-                </button>
-              </div>
-              <div className="ts-replay-progress-grid">
-                <article className="ts-replay-progress-card">
-                  <span className="ts-replay-progress-label">Video</span>
-                  <strong>{toDisplayStatus(replayArtifactStatus?.videoStatus ?? manifest?.status ?? "idle")}</strong>
-                  <p>
-                    {manifest?.segments?.length
-                      ? `${manifest.segments.length} recorded segment${manifest.segments.length === 1 ? "" : "s"}`
-                      : "No recorded segments yet"}
-                  </p>
-                </article>
-                <article className="ts-replay-progress-card">
-                  <span className="ts-replay-progress-label">Notes</span>
-                  <strong>{toDisplayStatus(replayArtifactStatus?.notesStatus ?? "idle")}</strong>
-                  <p>{notesArtifact ? "Notes artifact saved" : "Waiting for generated notes"}</p>
-                </article>
-                <article className="ts-replay-progress-card">
-                  <span className="ts-replay-progress-label">Key Moments</span>
-                  <strong>{toDisplayStatus(replayArtifactStatus?.keyMomentsStatus ?? "idle")}</strong>
-                  <p>
-                    {keyMoments.length > 0
-                      ? `${keyMoments.length} important segment${keyMoments.length === 1 ? "" : "s"}`
-                      : "Waiting for generated moments"}
-                  </p>
-                </article>
-                <article className="ts-replay-progress-card">
-                  <span className="ts-replay-progress-label">Transcript</span>
-                  <strong>{toDisplayStatus(replayArtifactStatus?.transcriptStatus ?? "idle")}</strong>
-                  <p>
-                    {transcript.length > 0
-                      ? `${transcript.length} turn${transcript.length === 1 ? "" : "s"} captured`
-                      : "Transcript not available yet"}
-                  </p>
-                </article>
-              </div>
-            </section>
-            <section className="ts-replay-surface">
-              <div className="ts-replay-top-grid">
-              <section className="ts-replay-video-card">
-                <div className="ts-replay-card-header">
-                  <div>
-                    <p className="ts-replay-section-kicker">Replay Video</p>
-                    <h1 className="ts-replay-title">{sessionTitle}</h1>
+
+              <aside className="ts-replay-side-card--recommended">
+                <p className="ts-replay-section-kicker">Recommended Next</p>
+                <div className="ts-replay-recommendation-card">
+                  <div className="ts-replay-recommendation-thumb" aria-hidden="true">
+                    <span className="ts-replay-recommendation-thumb-glow" />
                   </div>
-                  <span className="ts-replay-status">{replayStatus}</span>
+                  <div className="ts-replay-recommendation-copy">
+                    <h2>{recommendedNext.title}</h2>
+                    <p className="ts-replay-side-card-copy">
+                      {recommendedNext.description} · {recommendedNext.duration}
+                    </p>
+                  </div>
                 </div>
-                {finalVideoUrl ? (
-                  <div className="ts-replay-video-shell">
-                    <video
-                      ref={videoRef}
-                      src={finalVideoUrl}
-                      className="ts-replay-video"
-                      onLoadedMetadata={(event) => {
-                        setVideoDuration(event.currentTarget.duration || 0);
-                      }}
-                      onTimeUpdate={(event) => {
-                        setVideoCurrentTime(event.currentTarget.currentTime || 0);
-                      }}
-                      onPlay={() => setIsVideoPlaying(true)}
-                      onPause={() => setIsVideoPlaying(false)}
-                      onEnded={() => setIsVideoPlaying(false)}
-                      onClick={togglePlayback}
-                    />
-                    <div className="ts-replay-player-controls">
-                      <button
-                        type="button"
-                        className="ts-replay-play-toggle"
-                        onClick={togglePlayback}
-                      >
-                        {isVideoPlaying ? "Pause" : "Play"}
-                      </button>
-                      <span className="ts-replay-player-time">
-                        {formatVideoTime(videoCurrentTime)} / {formatVideoTime(videoDuration)}
-                      </span>
-                      <div className="ts-replay-timeline">
-                        <input
-                          type="range"
-                          min={0}
-                          max={videoDuration || 0}
-                          step={0.1}
-                          value={Math.min(videoCurrentTime, videoDuration || 0)}
-                          className="ts-replay-timeline-slider"
-                          style={
-                            {
-                              "--slider-progress":
-                                videoDuration > 0 ? (videoCurrentTime / videoDuration) * 100 : 0,
-                            } as React.CSSProperties
-                          }
-                          onChange={(event) => {
-                            const nextTime = Number(event.currentTarget.value);
-                            seekToMoment(nextTime);
+              </aside>
+            </section>
+
+            <div className="ts-replay-content-grid">
+              <div className="ts-replay-main-stack">
+                <section className="ts-replay-video-card">
+                  {finalVideoUrl ? (
+                    <div className="ts-replay-video-shell">
+                      <div className="ts-replay-video-frame">
+                        <video
+                          ref={videoRef}
+                          src={finalVideoUrl}
+                          className="ts-replay-video"
+                          onLoadedMetadata={(event) => {
+                            setVideoDuration(event.currentTarget.duration || 0);
                           }}
-                          aria-label="Replay timeline"
+                          onTimeUpdate={(event) => {
+                            setVideoCurrentTime(event.currentTarget.currentTime || 0);
+                          }}
+                          onPlay={() => setIsVideoPlaying(true)}
+                          onPause={() => setIsVideoPlaying(false)}
+                          onEnded={() => setIsVideoPlaying(false)}
+                          onClick={togglePlayback}
                         />
-                        <div className="ts-replay-timeline-markers">
-                          {timelineKeyMoments.map((moment) => (
-                            <button
-                              key={moment.id}
-                              type="button"
-                              className="ts-replay-timeline-marker"
-                              style={{ left: `${moment.progressPercent}%` }}
-                              onClick={() => seekToMoment(moment.timeSeconds)}
-                              title={`${moment.title} - ${moment.resolvedTimestampLabel}`}
-                            >
-                              <span className="ts-replay-timeline-tooltip">
-                                {moment.title} · {moment.resolvedTimestampLabel}
-                              </span>
-                            </button>
-                          ))}
+                        {!isVideoPlaying ? (
+                          <button
+                            type="button"
+                            className="ts-replay-video-overlay"
+                            onClick={togglePlayback}
+                            aria-label="Play session recording"
+                          >
+                            <PlayIcon />
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="ts-replay-player-controls">
+                        <button
+                          type="button"
+                          className="ts-replay-play-toggle"
+                          onClick={togglePlayback}
+                        >
+                          {isVideoPlaying ? "Pause" : "Play"}
+                        </button>
+                        <span className="ts-replay-player-time">
+                          {formatVideoTime(videoCurrentTime)} / {formatVideoTime(videoDuration)}
+                        </span>
+                        <div className="ts-replay-timeline">
+                          <input
+                            type="range"
+                            min={0}
+                            max={videoDuration || 0}
+                            step={0.1}
+                            value={Math.min(videoCurrentTime, videoDuration || 0)}
+                            className="ts-replay-timeline-slider"
+                            style={
+                              {
+                                "--slider-progress":
+                                  videoDuration > 0 ? (videoCurrentTime / videoDuration) * 100 : 0,
+                              } as React.CSSProperties
+                            }
+                            onChange={(event) => {
+                              const nextTime = Number(event.currentTarget.value);
+                              seekToMoment(nextTime);
+                            }}
+                            aria-label="Replay timeline"
+                          />
+                          <div className="ts-replay-timeline-markers">
+                            {timelineKeyMoments.map((moment) => (
+                              <button
+                                key={moment.id}
+                                type="button"
+                                className="ts-replay-timeline-marker"
+                                style={{ left: `${moment.progressPercent}%` }}
+                                onClick={() => seekToMoment(moment.timeSeconds)}
+                                title={`${moment.title} - ${moment.resolvedTimestampLabel}`}
+                              >
+                                <span className="ts-replay-timeline-tooltip">
+                                  {moment.title} · {moment.resolvedTimestampLabel}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="ts-replay-empty">
-                    <h3>Replay video not available yet</h3>
-                    <p>{videoAvailabilityMessage}</p>
-                    <p>
-                      Status: {toDisplayStatus(replayArtifactStatus?.videoStatus ?? manifest?.status ?? "idle")}
-                    </p>
-                  </div>
-                )}
-              </section>
+                  ) : (
+                    <div className="ts-replay-empty">
+                      <h3>Session recording not available yet</h3>
+                      <p>{videoAvailabilityMessage}</p>
+                      <p>
+                        Status: {toDisplayStatus(replayArtifactStatus?.videoStatus ?? manifest?.status ?? "idle")}
+                      </p>
+                    </div>
+                  )}
+                </section>
 
-              <section className="ts-replay-panel ts-replay-panel--moments">
-                <div className="ts-replay-card-header">
-                  <div>
-                    <p className="ts-replay-section-kicker">Key Moments</p>
-                    <h2>Important segments</h2>
-                  </div>
-                </div>
-                {replayArtifactStatus?.keyMomentsStatus === "processing" ||
-                replayArtifactStatus?.keyMomentsStatus === "pending" ? (
-                  <div className="ts-replay-empty">
-                    <p>{keyMomentsMessage}</p>
-                  </div>
-                ) : keyMoments.length === 0 ? (
-                  <div className="ts-replay-empty">
-                    <p>{keyMomentsMessage}</p>
-                  </div>
-                ) : (
-                  <div className="ts-replay-moments">
-                    {keyMoments.map((moment) => (
-                      <article
-                        key={moment.id}
-                        className="ts-replay-moment"
-                        role={timelineKeyMoments.length > 0 ? "button" : undefined}
-                        tabIndex={timelineKeyMoments.length > 0 ? 0 : -1}
-                        onClick={() => {
-                          const resolvedMoment = timelineKeyMoments.find(
-                            (timelineMoment) => timelineMoment.id === moment.id
-                          );
-                          if (resolvedMoment) {
-                            seekToMoment(resolvedMoment.timeSeconds);
-                          }
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" && event.key !== " ") {
-                            return;
-                          }
-                          const resolvedMoment = timelineKeyMoments.find(
-                            (timelineMoment) => timelineMoment.id === moment.id
-                          );
-                          if (resolvedMoment) {
-                            event.preventDefault();
-                            seekToMoment(resolvedMoment.timeSeconds);
-                          }
-                        }}
-                      >
-                        <div className="ts-replay-moment-dot" />
-                        <div className="ts-replay-moment-body">
-                          <div className="ts-replay-moment-meta">
-                            {timelineKeyMoments.find(
-                              (timelineMoment) => timelineMoment.id === moment.id
-                            )?.resolvedTimestampLabel ?? `Turn ${moment.startTurnSequence}`}
-                          </div>
-                          <h3 className="ts-replay-moment-title">{moment.title}</h3>
-                          <p
-                            className={
-                              expandedMomentIds[moment.id]
-                                ? "ts-replay-moment-description ts-replay-moment-description--expanded"
-                                : "ts-replay-moment-description"
-                            }
-                          >
-                            {moment.summary}
-                          </p>
-                          {moment.summary.trim().length > 140 ? (
-                            <button
-                              className="ts-replay-moment-expand"
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleMomentExpanded(moment.id);
-                              }}
-                              aria-expanded={expandedMomentIds[moment.id] ? "true" : "false"}
-                            >
-                              {expandedMomentIds[moment.id] ? "Collapse ▴" : "Expand ▾"}
-                            </button>
-                          ) : null}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
-              </div>
-            </section>
-
-            <section className="ts-replay-surface">
-              <div className="ts-replay-bottom-grid">
-              <section className="ts-replay-panel ts-replay-panel--transcript">
-                <div className="ts-replay-card-header">
-                  <div>
-                    <p className="ts-replay-section-kicker">Transcript</p>
-                    <h2>Conversation timeline</h2>
-                  </div>
-                </div>
-                {transcript.length === 0 ? (
-                  <div className="ts-replay-empty">
-                    <p>No transcript saved for this session.</p>
-                  </div>
-                ) : (
-                  <div className="ts-replay-transcript">
-                    {transcript.map((turn) => {
-                      const replayEntries = getReplayTranscriptEntries(turn);
-
-                      return (
-                        <article key={turn.turnId} className="ts-replay-transcript-turn">
-                          <div className="ts-replay-transcript-turn-header">
-                            <span>Turn {turn.sequence}</span>
-                            <span>{toDisplayStatus(turn.status)}</span>
-                          </div>
-                          <div className="ts-replay-transcript-entries">
-                            {replayEntries.length > 0 ? (
-                              replayEntries.map((entry, index) => (
-                                <div
-                                  key={`${turn.turnId}-${index}`}
-                                  className="ts-replay-transcript-entry"
-                                >
-                                  <div className="ts-replay-transcript-entry-type">
-                                    {toDisplayStatus(entry.type)}
-                                  </div>
-                                  <div className="ts-replay-transcript-entry-content">
-                                    {entry.content}
-                                  </div>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="ts-replay-transcript-entry ts-replay-transcript-entry--empty">
-                                <div className="ts-replay-transcript-entry-type">Replay view</div>
-                                <div className="ts-replay-transcript-entry-content">
-                                  No transcript excerpt was captured for this turn.
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-
-              <div className="ts-replay-right-stack">
                 <section className="ts-replay-panel">
-                  <div className="ts-replay-card-header">
-                    <div>
-                      <p className="ts-replay-section-kicker">Session Notes</p>
-                      <h2>Generated markdown notes</h2>
+                  <div className="ts-replay-card-header ts-replay-card-header--notes">
+                    <div className="ts-replay-panel-heading">
+                      <span className="ts-replay-inline-icon" aria-hidden="true">
+                        <NoteIcon />
+                      </span>
+                      <h2>Notes</h2>
+                    </div>
+                    <div className="ts-replay-panel-actions">
+                      <span className="ts-replay-panel-tag">AI-generated</span>
+                      <span className="ts-replay-panel-link">Edit Notes</span>
                     </div>
                   </div>
                   {replayArtifactStatus?.notesStatus === "processing" ||
@@ -852,27 +898,240 @@ export const SessionReplay: React.FC = () => {
                 <section className="ts-replay-panel">
                   <div className="ts-replay-card-header">
                     <div>
-                      <p className="ts-replay-section-kicker">Flashcards</p>
-                      <h2>Review prompts</h2>
+                      <h2>Session Flashcards</h2>
                     </div>
+                    {flashcardPageCount > 1 ? (
+                      <div className="ts-replay-carousel-controls">
+                        <button
+                          type="button"
+                          className="ts-replay-carousel-btn"
+                          onClick={() => setFlashcardPage((current) => Math.max(current - 1, 0))}
+                          disabled={flashcardPage === 0}
+                          aria-label="Show previous flashcards"
+                        >
+                          <ChevronLeftIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="ts-replay-carousel-btn"
+                          onClick={() =>
+                            setFlashcardPage((current) => Math.min(current + 1, flashcardPageCount - 1))
+                          }
+                          disabled={flashcardPage >= flashcardPageCount - 1}
+                          aria-label="Show next flashcards"
+                        >
+                          <ChevronRightIcon />
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="ts-replay-flashcards">
-                    {flashcards.map((card) => (
-                      <article key={card.id} className="ts-replay-flashcard">
-                        <p className="ts-replay-flashcard-label">Prompt</p>
-                        <p className="ts-replay-flashcard-question">{card.prompt}</p>
-                        <p className="ts-replay-flashcard-label">Answer</p>
-                        <p className="ts-replay-flashcard-answer">{card.answer}</p>
-                      </article>
-                    ))}
+                    {visibleFlashcards.map((card, index) => {
+                      const isRevealed = revealedFlashcards[card.id] ?? false;
+                      const flashcardIndex = flashcardPage * flashcardsPerPage + index;
+                      const flashcardLabel = flashcardIndex === 0
+                        ? "Definition"
+                        : flashcardIndex === 1
+                          ? "Concept"
+                          : "Review";
+
+                      return (
+                        <article
+                          key={card.id}
+                          className={
+                            isRevealed ? "ts-replay-flashcard ts-replay-flashcard--revealed" : "ts-replay-flashcard"
+                          }
+                          role="button"
+                          tabIndex={0}
+                          aria-pressed={isRevealed}
+                          onClick={() =>
+                            setRevealedFlashcards((current) => ({
+                              ...current,
+                              [card.id]: !isRevealed,
+                            }))
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setRevealedFlashcards((current) => ({
+                                ...current,
+                                [card.id]: !isRevealed,
+                              }));
+                            }
+                          }}
+                        >
+                          <p className="ts-replay-flashcard-label">{flashcardLabel}</p>
+                          <p className="ts-replay-flashcard-question">{card.prompt}</p>
+                          <p className="ts-replay-flashcard-answer">
+                            {isRevealed ? card.answer : "Click to reveal answer"}
+                          </p>
+                        </article>
+                      );
+                    })}
                   </div>
                 </section>
+              </div>
 
-              </div>
-              </div>
-            </section>
+              <aside className="ts-replay-side-stack">
+                <section className="ts-replay-panel ts-replay-panel--moments">
+                  <div className="ts-replay-card-header ts-replay-card-header--feature">
+                    <div className="ts-replay-feature-title">
+                      <span className="ts-replay-feature-icon" aria-hidden="true">
+                        <ClockIcon />
+                      </span>
+                      <h2>Key Moments</h2>
+                    </div>
+                  </div>
+                  {replayArtifactStatus?.keyMomentsStatus === "processing" ||
+                  replayArtifactStatus?.keyMomentsStatus === "pending" ? (
+                    <div className="ts-replay-empty">
+                      <p>{keyMomentsMessage}</p>
+                    </div>
+                  ) : keyMoments.length === 0 ? (
+                    <div className="ts-replay-empty">
+                      <p>{keyMomentsMessage}</p>
+                    </div>
+                  ) : (
+                    <div className="ts-replay-moments">
+                      {keyMoments.map((moment) => (
+                        <article
+                          key={moment.id}
+                          className={
+                            moment.id === activeKeyMomentId
+                              ? "ts-replay-moment ts-replay-moment--active"
+                              : "ts-replay-moment"
+                          }
+                          role={timelineKeyMoments.length > 0 ? "button" : undefined}
+                          tabIndex={timelineKeyMoments.length > 0 ? 0 : -1}
+                          onClick={() => {
+                            const resolvedMoment = timelineKeyMoments.find(
+                              (timelineMoment) => timelineMoment.id === moment.id
+                            );
+                            if (resolvedMoment) {
+                              seekToMoment(resolvedMoment.timeSeconds);
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") {
+                              return;
+                            }
+                            const resolvedMoment = timelineKeyMoments.find(
+                              (timelineMoment) => timelineMoment.id === moment.id
+                            );
+                            if (resolvedMoment) {
+                              event.preventDefault();
+                              seekToMoment(resolvedMoment.timeSeconds);
+                            }
+                          }}
+                        >
+                          <div className="ts-replay-moment-dot" />
+                          <div className="ts-replay-moment-body">
+                            <div className="ts-replay-moment-meta">
+                              {timelineKeyMoments.find(
+                                (timelineMoment) => timelineMoment.id === moment.id
+                              )?.resolvedTimestampLabel ?? `Turn ${moment.startTurnSequence}`}
+                            </div>
+                            <h3 className="ts-replay-moment-title">{moment.title}</h3>
+                            <p className="ts-replay-moment-description">{moment.summary}</p>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                <section className="ts-replay-panel ts-replay-panel--transcript">
+                  <div className="ts-replay-card-header ts-replay-card-header--feature">
+                    <div className="ts-replay-feature-title">
+                      <span className="ts-replay-feature-icon" aria-hidden="true">
+                        <TranscriptIcon />
+                      </span>
+                      <h2>Transcript</h2>
+                    </div>
+                    {transcript.length > 0 ? (
+                      <button
+                        type="button"
+                        className="ts-replay-transcript-download-icon"
+                        aria-label="Download transcript"
+                        onClick={downloadTranscript}
+                      >
+                        <DownloadIcon />
+                      </button>
+                    ) : null}
+                  </div>
+                  {transcript.length === 0 ? (
+                    <div className="ts-replay-empty">
+                      <p>No transcript saved for this session.</p>
+                    </div>
+                  ) : (
+                    <div className="ts-replay-transcript">
+                      {transcriptPreviewItems.map((item) => (
+                        <article
+                          key={item.id}
+                          className={
+                            item.id === activeTranscriptItemId
+                              ? "ts-replay-transcript-turn ts-replay-transcript-turn--active"
+                              : "ts-replay-transcript-turn"
+                          }
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => seekToMoment(item.timeSeconds)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              seekToMoment(item.timeSeconds);
+                            }
+                          }}
+                        >
+                          <div className="ts-replay-transcript-turn-header">
+                            <span>{item.timestampLabel}</span>
+                            <span
+                              className={
+                                item.speakerType === "user"
+                                  ? "ts-replay-transcript-speaker ts-replay-transcript-speaker--user"
+                                  : "ts-replay-transcript-speaker ts-replay-transcript-speaker--agent"
+                              }
+                            >
+                              {item.speakerLabel}
+                            </span>
+                          </div>
+                          <div className="ts-replay-transcript-entries">
+                            <div className="ts-replay-transcript-entry">
+                              <div
+                                className={
+                                  item.id === activeTranscriptItemId
+                                    ? "ts-replay-transcript-entry-content ts-replay-transcript-highlight"
+                                    : "ts-replay-transcript-entry-content"
+                                }
+                              >
+                                {item.content}
+                              </div>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </aside>
+            </div>
           </div>
         )}
+        </div>
+
+        <footer className="ts-home-landing-footer">
+          <div className="ts-home-landing-footer-brand">
+            <span className="ts-home-landing-footer-mark">
+              <LogoGlyph />
+            </span>
+            <span>&copy; 2026 ThinkSpace</span>
+          </div>
+          <div className="ts-home-landing-footer-links">
+            <button type="button">Privacy Policy</button>
+            <button type="button">Terms of Service</button>
+            <button type="button">Support</button>
+          </div>
+        </footer>
       </div>
     </div>
   );
