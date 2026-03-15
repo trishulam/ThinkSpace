@@ -1145,6 +1145,10 @@ export const SessionCanvas: React.FC = () => {
     onStopPlayback: stopPlayback,
     initialEventLog: persistedEventLog,
   });
+  const wsConnectionState = ws.connectionState;
+  const connectAgent = ws.connect;
+  const disconnectAgent = ws.disconnect;
+  const sendSessionStartup = ws.sendSessionStartup;
   const {
     status: recordingStatus,
     error: recordingError,
@@ -2233,7 +2237,7 @@ export const SessionCanvas: React.FC = () => {
       isRestoringSession ||
       !!resumeError ||
       isSessionActionPending ||
-      ws.connectionState !== "idle" ||
+      wsConnectionState !== "idle" ||
       autoConnectAttemptedRef.current
     ) {
       return;
@@ -2243,14 +2247,14 @@ export const SessionCanvas: React.FC = () => {
       if (
         autoConnectAttemptedRef.current ||
         !isAudioActive ||
-        ws.connectionState !== "idle" ||
+        wsConnectionState !== "idle" ||
         isSessionActionPending
       ) {
         return;
       }
 
       autoConnectAttemptedRef.current = true;
-      ws.connect();
+      connectAgent();
     }, suppressRestoreOverlay ? AUTO_CONNECT_SETTLE_MS : AUTO_CONNECT_SETTLE_MS);
 
     return () => {
@@ -2266,7 +2270,8 @@ export const SessionCanvas: React.FC = () => {
     resumeError,
     sessionId,
     suppressRestoreOverlay,
-    ws,
+    wsConnectionState,
+    connectAgent,
   ]);
 
   useEffect(() => {
@@ -2274,7 +2279,7 @@ export const SessionCanvas: React.FC = () => {
       !sessionId ||
       recordingStatus !== "recording" ||
       !isAudioActive ||
-      ws.connectionState !== "connected" ||
+      wsConnectionState !== "connected" ||
       startupGreetingSentRef.current
     ) {
       return;
@@ -2283,14 +2288,14 @@ export const SessionCanvas: React.FC = () => {
     const timeoutId = window.setTimeout(() => {
       if (
         startupGreetingSentRef.current ||
-        ws.connectionState !== "connected" ||
+        wsConnectionState !== "connected" ||
         recordingStatus !== "recording" ||
         !isAudioActive
       ) {
         return;
       }
 
-      const didSend = ws.sendSessionStartup(liveEntryIdRef.current);
+      const didSend = sendSessionStartup(liveEntryIdRef.current);
       if (didSend) {
         startupGreetingSentRef.current = true;
       }
@@ -2303,7 +2308,8 @@ export const SessionCanvas: React.FC = () => {
     isAudioActive,
     recordingStatus,
     sessionId,
-    ws,
+    wsConnectionState,
+    sendSessionStartup,
   ]);
 
   useEffect(() => {
@@ -2330,12 +2336,19 @@ export const SessionCanvas: React.FC = () => {
       stopAudio();
     }
     if (
-      ws.connectionState === "connected" ||
-      ws.connectionState === "connecting"
+      wsConnectionState === "connected" ||
+      wsConnectionState === "connecting"
     ) {
-      ws.disconnect();
+      disconnectAgent();
     }
-  }, [isAudioActive, isSessionActionPending, recordingStatus, stopAudio, ws]);
+  }, [
+    isAudioActive,
+    isSessionActionPending,
+    recordingStatus,
+    stopAudio,
+    wsConnectionState,
+    disconnectAgent,
+  ]);
 
   useEffect(() => {
     if (
