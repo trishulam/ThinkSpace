@@ -559,9 +559,9 @@
 
 .tldraw-agent-container--dark {
   background:
-    radial-gradient(circle at top right, rgba(111, 76, 255, 0.16), transparent 24%),
-    radial-gradient(circle at left center, rgba(45, 83, 255, 0.08), transparent 28%),
-    linear-gradient(180deg, #060914 0%, #0a1020 38%, #090d19 100%);
+    radial-gradient(circle at top right, rgba(244, 214, 255, 0.52), transparent 28%),
+    radial-gradient(circle at left center, rgba(226, 232, 255, 0.5), transparent 34%),
+    linear-gradient(180deg, #fcf8ff 0%, #f8f2ff 44%, #f6f0fb 100%);
 }
 
 .tldraw-canvas {
@@ -576,8 +576,9 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at top right, rgba(129, 92, 255, 0.12), transparent 28%),
-    linear-gradient(180deg, rgba(7, 11, 25, 0.62), rgba(10, 16, 32, 0.38));
+    radial-gradient(circle at top right, rgba(255, 235, 247, 0.5), transparent 32%),
+    radial-gradient(circle at center top, rgba(237, 229, 255, 0.46), transparent 42%),
+    linear-gradient(180deg, rgba(250, 241, 255, 0.9), rgba(244, 239, 249, 0.66));
   pointer-events: none;
   z-index: 0;
 }
@@ -587,11 +588,11 @@
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.07) 1px, transparent 1px);
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
   background-size: 24px 24px;
   background-position: 0 0;
-  opacity: 0.58;
+  opacity: 0.42;
   pointer-events: none;
   z-index: 0;
 }
@@ -605,6 +606,45 @@
 .tldraw-agent-container--dark .tl-container,
 .tldraw-agent-container--dark .tl-background {
   background: transparent !important;
+}
+
+.tldraw-agent-container--dark .tlui-toolbar,
+.tldraw-agent-container--dark .tlui-style-panel,
+.tldraw-agent-container--dark .tlui-navigation-panel,
+.tldraw-agent-container--dark .tlui-menu,
+.tldraw-agent-container--dark .tlui-popover,
+.tldraw-agent-container--dark .tlui-dialog,
+.tldraw-agent-container--dark .tlui-help-menu,
+.tldraw-agent-container--dark .tlui-actions-menu,
+.tldraw-agent-container--dark .tlui-context-menu {
+  background: rgba(255, 255, 255, 0.94) !important;
+  color: #111827 !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+  box-shadow:
+    0 18px 40px rgba(15, 23, 42, 0.16),
+    0 1px 0 rgba(255, 255, 255, 0.75) inset !important;
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+}
+
+.tldraw-agent-container--dark .tlui-button,
+.tldraw-agent-container--dark .tlui-menu__item,
+.tldraw-agent-container--dark .tlui-toolbar__button,
+.tldraw-agent-container--dark .tlui-style-panel__button {
+  color: #111827 !important;
+}
+
+.tldraw-agent-container--dark .tlui-button:hover,
+.tldraw-agent-container--dark .tlui-menu__item:hover,
+.tldraw-agent-container--dark .tlui-toolbar__button:hover,
+.tldraw-agent-container--dark .tlui-style-panel__button:hover {
+  background: rgba(99, 102, 241, 0.08) !important;
+}
+
+.tldraw-agent-container--dark .tlui-toolbar__button[data-state="selected"],
+.tldraw-agent-container--dark .tlui-button[data-state="selected"] {
+  background: rgba(99, 102, 241, 0.16) !important;
+  color: #312e81 !important;
 }
 
 .ts-canvas-capture-hud {
@@ -3802,6 +3842,17 @@
   padding: 24px;
   overflow: hidden;
   background: linear-gradient(180deg, #05060d 0%, #090b16 46%, #05060c 100%);
+}
+
+.ts-home-session-preview--canvas-exit {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  min-height: auto;
+  background:
+    linear-gradient(180deg, rgba(5, 6, 13, 0.94) 0%, rgba(9, 11, 22, 0.96) 46%, rgba(5, 6, 12, 0.96) 100%);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .ts-home-session-preview::before {

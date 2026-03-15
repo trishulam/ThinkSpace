@@ -659,9 +659,15 @@ export const Dashboard: React.FC = () => {
                   </div>
                   <input
                     className="ts-home-landing-prompt-input"
-                    type="search"
+                    type="text"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void handleSessionPreviewOpen();
+                      }
+                    }}
                     placeholder="What would you like to master today?"
                     aria-label="Search or describe what you want to learn"
                   />

@@ -112,6 +112,15 @@ function formatRecordingDuration(totalSeconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+async function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<void> {
+  await Promise.race([
+    promise.then(() => undefined).catch(() => undefined),
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, timeoutMs);
+    }),
+  ]);
+}
+
 type CanvasCaptureHudProps = {
   gestureState: GestureRuntimeState | null;
   recordingError: string | null;
@@ -121,6 +130,8 @@ type CanvasRecordingIndicatorProps = {
   isVisible: boolean;
   elapsedSeconds: number;
 };
+
+type CanvasExitAction = "back" | "end";
 
 const CanvasCaptureHud = ({
   gestureState,
@@ -194,6 +205,39 @@ const CanvasRecordingIndicator = ({
         {formatRecordingDuration(elapsedSeconds)}
       </span>
     </div>
+  );
+};
+
+const CanvasExitOverlay = ({ action }: { action: CanvasExitAction }) => {
+  const title = action === "end" ? "Finishing session" : "Leaving session";
+  const description =
+    action === "end"
+      ? "Wrapping up your recording and preparing your summary."
+      : "Saving your progress and returning to the dashboard.";
+
+  return (
+    <section className="ts-home-session-preview ts-home-session-preview--canvas-exit">
+      <div className="ts-home-session-preview-shell">
+        <div className="ts-home-session-preview-loader" aria-hidden="true">
+          <span className="ts-home-session-preview-loader-ring ts-home-session-preview-loader-ring--outer" />
+          <span className="ts-home-session-preview-loader-ring ts-home-session-preview-loader-ring--inner" />
+          <span className="ts-home-session-preview-loader-core" />
+        </div>
+        <div className="ts-home-session-preview-copy">
+          <p className="ts-home-session-preview-kicker">Please wait</p>
+          <div className="ts-home-session-preview-copy-body">
+            <div className="ts-home-session-preview-text-row">
+              <p className="ts-home-session-preview-text">{title}</p>
+              <span
+                className="ts-home-session-preview-text-trail"
+                aria-hidden="true"
+              />
+            </div>
+            <p className="ts-home-session-preview-description">{description}</p>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 };
 
@@ -958,12 +1002,16 @@ export const SessionCanvas: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
+  const suppressRestoreOverlay =
+    ((location.state as { skipRestoreOverlay?: boolean } | null)
+      ?.skipRestoreOverlay ?? false) === true;
   const [app, setApp] = useState<TldrawAgentApp | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const [isSessionActionPending, setIsSessionActionPending] = useState(false);
+  const [exitAction, setExitAction] = useState<CanvasExitAction | null>(null);
   const [gestureEnabled, setGestureEnabled] = useState(false);
   const [gestureState, setGestureState] = useState<GestureRuntimeState | null>(
     null,
@@ -987,6 +1035,7 @@ export const SessionCanvas: React.FC = () => {
     useState<CanvasJobToastState | null>(null);
   const flashcardStateRef = useRef<FlashcardState>(EMPTY_FLASHCARD_STATE);
   const autoRecordingAttemptedRef = useRef(false);
+  const autoGestureAttemptedRef = useRef(false);
   const flashcardActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -1004,6 +1053,24 @@ export const SessionCanvas: React.FC = () => {
   const handleUnmount = useCallback(() => {
     setApp(null);
   }, []);
+
+  const navigateWithFallback = useCallback((path: string) => {
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    flushSync(() => {
+      navigate(normalizedPath, { replace: true });
+    });
+
+    window.setTimeout(() => {
+      const canvasStillMounted = document.querySelector(".tldraw-agent-container");
+      if (!canvasStillMounted) {
+        return;
+      }
+
+      window.location.replace(
+        `${window.location.origin}${window.location.pathname}?ts-nav=${Date.now()}#${normalizedPath}`,
+      );
+    }, 180);
+  }, [navigate]);
 
   const setCanvasActivityWindowHold = useCallback((active: boolean) => {
     canvasActivityWindowManagerRef.current?.setExternalHold(active);
@@ -1242,53 +1309,69 @@ export const SessionCanvas: React.FC = () => {
       return;
     }
 
+    setExitAction("back");
     setIsSessionActionPending(true);
     setSessionActionError(null);
 
     void (async () => {
+      let didTriggerNavigation = false;
       try {
-        await saveCheckpoint("disconnect", "frontend_manual");
-        await stopRecordingIfNeeded();
+        const checkpointPromise = saveCheckpoint("disconnect", "frontend_manual");
+        const recordingPromise = stopRecordingIfNeeded();
         canvasActivityWindowManagerRef.current?.flush("manual");
         ws.disconnect();
-        navigate("/dashboard");
+        await Promise.all([
+          settleWithin(checkpointPromise, 1200),
+          settleWithin(recordingPromise, 2500),
+        ]);
+        didTriggerNavigation = true;
+        navigateWithFallback("/dashboard");
       } catch (error) {
+        setExitAction(null);
         setSessionActionError(
           error instanceof Error ? error.message : "Failed to store the session recording",
         );
       } finally {
-        setIsSessionActionPending(false);
+        if (!didTriggerNavigation) {
+          setIsSessionActionPending(false);
+        }
       }
     })();
-  }, [isSessionActionPending, navigate, saveCheckpoint, stopRecordingIfNeeded, ws]);
+  }, [isSessionActionPending, navigateWithFallback, saveCheckpoint, stopRecordingIfNeeded, ws]);
 
   const handleEndSession = useCallback(() => {
     if (!sessionId || isSessionActionPending) {
       return;
     }
 
+    setExitAction("end");
     setIsSessionActionPending(true);
     setSessionActionError(null);
 
     void (async () => {
+      let didTriggerNavigation = false;
       try {
         await saveCheckpoint("complete", "frontend_manual");
         await stopRecordingIfNeeded();
         canvasActivityWindowManagerRef.current?.flush("manual");
         ws.disconnect();
         await completeSession(sessionId);
-        navigate(`/session/${sessionId}/session-summary`);
+        didTriggerNavigation = true;
+        navigateWithFallback(`/session/${sessionId}/session-summary`);
       } catch (error) {
+        setExitAction(null);
         setSessionActionError(
           error instanceof Error ? error.message : "Failed to end the session cleanly",
         );
       } finally {
-        setIsSessionActionPending(false);
+        if (!didTriggerNavigation) {
+          setIsSessionActionPending(false);
+        }
       }
     })();
   }, [
     isSessionActionPending,
-    navigate,
+    navigateWithFallback,
     saveCheckpoint,
     sessionId,
     stopRecordingIfNeeded,
@@ -1945,6 +2028,7 @@ export const SessionCanvas: React.FC = () => {
   useEffect(() => {
     hasLoadedRemoteSnapshotRef.current = false;
     autoRecordingAttemptedRef.current = false;
+    autoGestureAttemptedRef.current = false;
     setResumeError(null);
     setSessionActionError(null);
     setResolvedUserId("demo-user");
@@ -2027,21 +2111,51 @@ export const SessionCanvas: React.FC = () => {
   useEffect(() => {
     if (
       !sessionId ||
+      !editor ||
       !isRecordingSupported ||
+      isRestoringSession ||
+      !!resumeError ||
       autoRecordingAttemptedRef.current
     ) {
       return;
     }
 
     const timeoutId = window.setTimeout(() => {
+      if (autoRecordingAttemptedRef.current) {
+        return;
+      }
+
       autoRecordingAttemptedRef.current = true;
       void startRecording();
+    }, suppressRestoreOverlay ? 180 : 420);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    editor,
+    isRecordingSupported,
+    isRestoringSession,
+    resumeError,
+    sessionId,
+    startRecording,
+    suppressRestoreOverlay,
+  ]);
+
+  useEffect(() => {
+    if (!sessionId || autoGestureAttemptedRef.current) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      autoGestureAttemptedRef.current = true;
+      setGestureEnabled(true);
     }, 0);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [isRecordingSupported, sessionId, startRecording]);
+  }, [sessionId]);
 
   useEffect(() => {
     const latestEvent = ws.eventLog[ws.eventLog.length - 1];
@@ -2191,16 +2305,15 @@ export const SessionCanvas: React.FC = () => {
 
   const notchConnectionState = testConnState ?? ws.connectionState;
   const notchTalkingState = testTalkState ?? ws.talkingState;
-  const suppressRestoreOverlay =
-    ((location.state as { skipRestoreOverlay?: boolean } | null)
-      ?.skipRestoreOverlay ?? false) === true;
-
   if (!sessionId) {
     return <div>Session not found</div>;
   }
 
   return (
     <>
+      {isSessionActionPending && exitAction ? (
+        <CanvasExitOverlay action={exitAction} />
+      ) : null}
       <TldrawUiToastsProvider>
         <div className="tldraw-agent-container tldraw-agent-container--dark">
           <SessionRestoreOverlay
@@ -2211,7 +2324,7 @@ export const SessionCanvas: React.FC = () => {
             <Tldraw
               persistenceKey={`session-${sessionId}`}
               onMount={setEditor}
-              inferDarkMode
+              inferDarkMode={false}
               licenseKey="tldraw-2026-06-18/WyJIUVlKamNRTCIsWyIqIl0sMTYsIjIwMjYtMDYtMTgiXQ.quVBu6P7tCMq3MRg6LyYhHKOvgiHA4PJpP1CiA3D2qPpLTuOPTHjvNNZjrkyFKtNsrvtiKocSV+PLk44uh6j2Q"
               tools={tools}
               shapeUtils={[...defaultShapeUtils, ...thinkspaceShapeUtils]}

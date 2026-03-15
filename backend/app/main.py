@@ -478,6 +478,16 @@ async def _load_adk_session_summary(
     return summary
 
 
+async def _warm_adk_session_summary(session_record: SessionRecord) -> None:
+    try:
+        await _load_adk_session_summary(session_record, ensure_exists=True)
+    except Exception:  # pylint: disable=broad-except
+        logger.exception(
+            "Failed to warm ADK session summary for session_id=%s",
+            session_record.session_id,
+        )
+
+
 def _is_record(value: object) -> bool:
     return isinstance(value, dict)
 
@@ -1513,9 +1523,8 @@ async def create_session(request: SessionCreateRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    await _load_adk_session_summary(session, ensure_exists=True)
-    refreshed_session = session_store.get_session(session.session_id)
-    return refreshed_session or session
+    asyncio.create_task(_warm_adk_session_summary(session))
+    return session
 
 
 @app.get("/v1/sessions/{session_id}", response_model=SessionRecord)

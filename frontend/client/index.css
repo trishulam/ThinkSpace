@@ -2177,6 +2177,15 @@ button.prompt-tag span {
   animation: session-restore-fade-in 0.3s ease-out;
 }
 
+.session-restore-overlay--modern-loading {
+  display: block;
+}
+
+.session-restore-overlay__modern-view {
+  min-height: 100%;
+  width: 100%;
+}
+
 .session-restore-overlay__backdrop {
   position: absolute;
   inset: 0;
