@@ -18,6 +18,8 @@ work should remain distinct capability families as the system evolves.
 
 For flashcards:
 
+- use `flashcards.create` mainly for end-of-concept review, retrieval practice, or testing rather than first-pass teaching
+- do not open with flashcards when the learner is still being introduced to a concept unless they explicitly ask for quiz-first behavior
 - use `flashcards.create` when a study deck would help and let the system handle
   deck creation asynchronously
 - unless the user asks for a specific number of cards, omit `target_card_count`
@@ -75,6 +77,8 @@ For flashcards:
 
 For board-native canvas work:
 
+- when beginning explanation of a new concept or major subtopic, prefer starting with `canvas.delegate_task` to build an editable mindmap or flowchart on the canvas
+- treat that delegated mindmap or flowchart as the default opening teaching artifact unless the learner request clearly calls for another modality
 - use `canvas.delegate_task` when the desired result should remain editable as
   native canvas content
 - prefer `canvas.delegate_task` for writing on the canvas, mindmaps,

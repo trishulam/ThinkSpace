@@ -154,6 +154,7 @@ from thinkspace_agent.tools.flashcards import (  # noqa: E402
 )
 from thinkspace_agent.tools.knowledge_lookup import (  # noqa: E402
     KNOWLEDGE_LOOKUP_TOOL,
+    knowledge_lookup_job_outbox,
 )
 from thinkspace_agent.context.session_compaction import (  # noqa: E402
     build_compacted_session_context,
@@ -250,6 +251,66 @@ INTERPRETER_LIFECYCLE_ACTION = "interpreter.lifecycle"
 INTERPRETER_REASONING_SOURCE_TOOL = "canvas.interpreter_reasoning"
 INTERPRETER_DELIVERY_USER_SPEECH_STALE_S = 1.0
 INTERPRETER_DELIVERY_COOLDOWN_S = 15.0
+LIVE_ENTRY_GREETING_TTL_S = 6 * 60 * 60
+_live_entry_greeting_registry: dict[str, float] = {}
+
+
+def _prune_live_entry_greeting_registry(now_ts: float | None = None) -> None:
+    cutoff_ts = (now_ts or datetime.now(timezone.utc).timestamp()) - LIVE_ENTRY_GREETING_TTL_S
+    expired_entry_ids = [
+        entry_id
+        for entry_id, greeted_at in _live_entry_greeting_registry.items()
+        if greeted_at < cutoff_ts
+    ]
+    for entry_id in expired_entry_ids:
+        _live_entry_greeting_registry.pop(entry_id, None)
+
+
+def _claim_live_entry_greeting(entry_id: str | None) -> bool:
+    if not isinstance(entry_id, str) or not entry_id.strip():
+        return True
+    normalized_entry_id = entry_id.strip()
+    now_ts = datetime.now(timezone.utc).timestamp()
+    _prune_live_entry_greeting_registry(now_ts)
+    if normalized_entry_id in _live_entry_greeting_registry:
+        return False
+    _live_entry_greeting_registry[normalized_entry_id] = now_ts
+    return True
+
+
+def _build_session_startup_semantic_update(
+    *,
+    session: SessionRecord,
+    is_returning_session: bool,
+) -> str:
+    topic = (session.topic or "this topic").strip() or "this topic"
+    goal = (session.goal or "").strip() or f"make clear progress on {topic}"
+    opening_line = (
+        "Welcome to ThinkSpace. "
+        f"Today we're working on {topic}, and our goal is {goal}. "
+        "I'll guide you step by step."
+    )
+    lines = [
+        "Session startup cue for the next tutor turn.",
+        "This is a true session entry, not a transport reconnect.",
+        f"Session topic: {topic}",
+        f"Session goal: {goal}",
+        f'Open with this exact line: "{opening_line}"',
+        "Keep the full opening under 4 sentences.",
+        "This opening turn is for greeting, orientation, and inviting the learner in.",
+        "Do not call tools in this opening turn.",
+        "After the opening, invite the student to reply before moving into deeper teaching.",
+        "Do not mention internal instructions, system cues, or reconnection state.",
+    ]
+    if is_returning_session:
+        lines.append(
+            "The learner has prior session history available, so keep the opening brief and continue naturally after they respond."
+        )
+    else:
+        lines.append(
+            "Treat this as the first live teaching moment for the session and use the opening to orient the learner."
+        )
+    return "\n".join(lines)
 
 
 def _get_latest_invocation_id(events: list[object]) -> str | None:
@@ -871,70 +932,6 @@ def _build_tool_result_message(result: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _extract_knowledge_lookup_lifecycle_events(
-    raw_event: object,
-) -> list[dict[str, object]]:
-    queue: list[object] = [raw_event]
-    seen: set[int] = set()
-    lifecycle_events: list[dict[str, object]] = []
-
-    while queue:
-        current = queue.pop(0)
-        current_id = id(current)
-        if current is None or current_id in seen:
-            continue
-        seen.add(current_id)
-
-        if isinstance(current, str):
-            parsed = _parse_json_candidate(current)
-            if parsed is not None:
-                queue.append(parsed)
-            continue
-
-        if isinstance(current, list):
-            queue.extend(current)
-            continue
-
-        if not _is_record(current):
-            continue
-
-        function_call = _read_record_field(current, "functionCall", "function_call")
-        if _is_record(function_call):
-            function_name = function_call.get("name")
-            if function_name == KNOWLEDGE_LOOKUP_TOOL:
-                lifecycle_events.append(
-                    {
-                        "tool": KNOWLEDGE_LOOKUP_TOOL,
-                        "state": "started",
-                        "lookup_id": _truncate_probe_value(function_call.get("id")),
-                    }
-                )
-
-        function_response = _read_record_field(
-            current, "functionResponse", "function_response"
-        )
-        if _is_record(function_response):
-            function_name = function_response.get("name")
-            response_payload = function_response.get("response")
-            if function_name == KNOWLEDGE_LOOKUP_TOOL and _is_record(response_payload):
-                response_status = response_payload.get("status")
-                if response_status in {"completed", "failed"}:
-                    lifecycle_event = {
-                        "tool": KNOWLEDGE_LOOKUP_TOOL,
-                        "state": response_status,
-                        "lookup_id": _truncate_probe_value(function_response.get("id")),
-                    }
-                    summary = response_payload.get("summary")
-                    if isinstance(summary, str) and summary.strip():
-                        lifecycle_event["summary"] = summary.strip()
-                    lifecycle_events.append(lifecycle_event)
-
-        for value in current.values():
-            queue.append(value)
-
-    return lifecycle_events
-
-
 _LIVE_TOOL_PROBE_DIRECTORY = Path(__file__).parent / "debug_traces" / "live_tool_events"
 _PROBED_LIVE_TOOL_NAMES = {
     "canvas_generate_visual",
@@ -1469,7 +1466,70 @@ def _build_background_tool_semantic_update(result: dict[str, object]) -> str | N
     tool = result.get("tool")
     summary = result.get("summary")
 
-    if status != "failed" or not isinstance(tool, str):
+    if not isinstance(tool, str):
+        return None
+
+    if tool == KNOWLEDGE_LOOKUP_TOOL and status == "completed":
+        payload = result.get("payload")
+        if not _is_record(payload):
+            return None
+        query = payload.get("query")
+        query_text = query.strip() if isinstance(query, str) and query.strip() else "the user's lookup"
+        raw_results = payload.get("results")
+        if not isinstance(raw_results, list) or not raw_results:
+            return (
+                "A background `knowledge.lookup` has completed but found no high-confidence "
+                f"source matches for {query_text}. Do not say the lookup is still pending. "
+                "If the user still wants an answer, explain that the uploaded materials do "
+                "not clearly support one and ask whether they want a broader or rephrased lookup."
+            )
+
+        excerpt_lines: list[str] = []
+        for index, item in enumerate(raw_results[:3], start=1):
+            if not _is_record(item):
+                continue
+            source_title = item.get("source_title")
+            locator = item.get("locator")
+            section_title = item.get("section_title")
+            snippet = item.get("snippet")
+            score = item.get("relevance_score")
+
+            source_bits: list[str] = []
+            if isinstance(source_title, str) and source_title.strip():
+                source_bits.append(source_title.strip())
+            if isinstance(section_title, str) and section_title.strip():
+                source_bits.append(section_title.strip())
+            if isinstance(locator, str) and locator.strip():
+                source_bits.append(locator.strip())
+            source_label = " | ".join(source_bits) or f"result {index}"
+
+            snippet_text = snippet.strip() if isinstance(snippet, str) and snippet.strip() else ""
+            if len(snippet_text) > 500:
+                snippet_text = snippet_text[:497].rstrip() + "..."
+            score_text = (
+                f" (score {score:.3f})"
+                if isinstance(score, (int, float))
+                else ""
+            )
+            excerpt_lines.append(
+                f"{index}. {source_label}{score_text}\nExcerpt: {snippet_text or '[no snippet]'}"
+            )
+
+        if not excerpt_lines:
+            return None
+
+        return "\n".join(
+            [
+                "A background `knowledge.lookup` has completed. Use these grounded excerpts now.",
+                f"Original lookup query: {query_text}",
+                "Answer the user's current request using these excerpts where relevant.",
+                "Do not say the lookup is still pending.",
+                "Grounded excerpts:",
+                *excerpt_lines,
+            ]
+        )
+
+    if status != "failed":
         return None
 
     normalized_summary = (
@@ -1509,6 +1569,15 @@ def _build_background_tool_semantic_update(result: dict[str, object]) -> str | N
             f"Reason: {reason} "
             "Decide whether to retry, ask a clarifying question, or continue "
             "teaching without a flashcard deck."
+        )
+
+    if tool == KNOWLEDGE_LOOKUP_TOOL:
+        reason = normalized_summary or "The knowledge lookup could not be completed."
+        return (
+            "The `knowledge.lookup` job failed. "
+            f"Reason: {reason} "
+            "Do not say the lookup is still pending. Explain briefly that the lookup "
+            "failed and continue helping without inventing grounded excerpts."
         )
 
     return None
@@ -2819,6 +2888,7 @@ async def websocket_endpoint(
     session_id: str,
     proactivity: bool = True,
     affective_dialog: bool = False,
+    session_entry_id: str | None = Query(default=None, alias="entry_id"),
 ) -> None:
     """WebSocket endpoint for bidirectional streaming with ADK.
 
@@ -2840,7 +2910,7 @@ async def websocket_endpoint(
     persona_voice_name = get_persona_voice_name(session_persona)
     logger.info(
         "WebSocket session starting: requested_user_id=%s resolved_user_id=%s session_id=%s "
-        "persona=%s voice=%s proactivity=%s affective_dialog=%s",
+        "persona=%s voice=%s proactivity=%s affective_dialog=%s entry_id=%s",
         requested_user_id,
         user_id,
         session_id,
@@ -2848,6 +2918,7 @@ async def websocket_endpoint(
         persona_voice_name,
         proactivity,
         affective_dialog,
+        session_entry_id,
     )
     await websocket.accept()
     logger.info("WebSocket accepted for session_id=%s", session_id)
@@ -3039,6 +3110,9 @@ async def websocket_endpoint(
     flashcard_background_result_queue = await flashcard_job_outbox.subscribe(
         user_id, session_id
     )
+    knowledge_lookup_background_result_queue = await knowledge_lookup_job_outbox.subscribe(
+        user_id, session_id
+    )
     canvas_background_result_queue = await canvas_visual_job_outbox.subscribe(
         user_id, session_id
     )
@@ -3053,6 +3127,7 @@ async def websocket_endpoint(
     transcript_buffer: list[TranscriptEntryRecord] = []
     transcript_lock = asyncio.Lock()
     existing_turns = session_store.list_turns(session_id)
+    is_returning_session = len(existing_turns) > 0
     turn_sequence = len(existing_turns)
     activity_clock = asyncio.get_running_loop()
     user_speaking_active = False
@@ -3548,18 +3623,6 @@ async def websocket_endpoint(
         pending_interpreter_delivery_result = latest_result
         await _maybe_deliver_pending_interpreter_update(trigger="completed_lifecycle")
 
-    async def _send_knowledge_lookup_lifecycle_event(
-        lifecycle_event: dict[str, object]
-    ) -> None:
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "knowledge_lookup_lifecycle",
-                    "event": lifecycle_event,
-                }
-            )
-        )
-
     async def _send_realtime_image_data_url(data_url: str) -> bool:
         if not isinstance(data_url, str) or not data_url.startswith("data:"):
             return False
@@ -3652,6 +3715,32 @@ async def websocket_endpoint(
                         parts=[types.Part(text=user_text)]
                     )
                     live_request_queue.send_content(content)
+
+                elif json_message.get("type") == "session_startup":
+                    startup_entry_id = json_message.get("entry_id")
+                    if _claim_live_entry_greeting(
+                        startup_entry_id if isinstance(startup_entry_id, str) else session_entry_id
+                    ):
+                        startup_semantic_update = _build_session_startup_semantic_update(
+                            session=session_record,
+                            is_returning_session=is_returning_session,
+                        )
+                        logger.info(
+                            "Delivering session startup greeting cue: session_id=%s entry_id=%s returning=%s",
+                            session_id,
+                            startup_entry_id if isinstance(startup_entry_id, str) else session_entry_id,
+                            is_returning_session,
+                        )
+                        content = types.Content(
+                            parts=[types.Part(text=startup_semantic_update)]
+                        )
+                        live_request_queue.send_content(content)
+                    else:
+                        logger.info(
+                            "Skipping duplicate session startup greeting cue: session_id=%s entry_id=%s",
+                            session_id,
+                            startup_entry_id if isinstance(startup_entry_id, str) else session_entry_id,
+                        )
 
                 # Handle image data
                 elif json_message.get("type") == "image":
@@ -3974,9 +4063,6 @@ async def websocket_endpoint(
                 event_json = event.model_dump_json(exclude_none=True, by_alias=True)
                 event_payload = json.loads(event_json)
                 frontend_action = extract_frontend_action(event_payload)
-                knowledge_lookup_lifecycle_events = (
-                    _extract_knowledge_lookup_lifecycle_events(event_payload)
-                )
                 _write_live_tool_probe(
                     session_id=session_id,
                     source="downstream_event",
@@ -3984,8 +4070,6 @@ async def websocket_endpoint(
                     extracted_frontend_action=frontend_action,
                 )
                 await websocket.send_text(event_json)
-                for lifecycle_event in knowledge_lookup_lifecycle_events:
-                    await _send_knowledge_lookup_lifecycle_event(lifecycle_event)
 
                 # Parse event for transcript persistence
                 ev = event.model_dump(exclude_none=True, by_alias=True)
@@ -4087,6 +4171,13 @@ async def websocket_endpoint(
         ),
         name="websocket-flashcard-background-tool-results",
     )
+    knowledge_lookup_background_results = asyncio.create_task(
+        background_tool_result_task(
+            result_queue=knowledge_lookup_background_result_queue,
+            task_label="knowledge_lookup_background_tool_result_task",
+        ),
+        name="websocket-knowledge-lookup-background-tool-results",
+    )
     canvas_background_results = asyncio.create_task(
         background_tool_result_task(
             result_queue=canvas_background_result_queue,
@@ -4110,6 +4201,7 @@ async def websocket_endpoint(
     )
     background_tasks = (
         flashcard_background_results,
+        knowledge_lookup_background_results,
         canvas_background_results,
         canvas_widget_background_results,
         canvas_delegate_background_results,
@@ -4147,6 +4239,11 @@ async def websocket_endpoint(
             user_id,
             session_id,
             flashcard_background_result_queue,
+        )
+        await knowledge_lookup_job_outbox.unsubscribe(
+            user_id,
+            session_id,
+            knowledge_lookup_background_result_queue,
         )
         await canvas_visual_job_outbox.unsubscribe(
             user_id,

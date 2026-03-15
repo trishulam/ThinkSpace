@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 function convertFloat32ToPCM(inputData: Float32Array): ArrayBuffer {
 	const pcm16 = new Int16Array(inputData.length)
@@ -39,64 +39,82 @@ export function useAudioWorklets() {
 		setIsMicMuted(nextValue)
 	}, [])
 
-	const startAudio = useCallback(async (onAudioChunk: (data: ArrayBuffer) => void) => {
-		// --- Player setup (24kHz output) ---
-		const playerContext = new AudioContext({ sampleRate: 24000 })
-		await playerContext.audioWorklet.addModule('/worklets/pcm-player-processor.js')
-		const playerNode = new AudioWorkletNode(playerContext, 'pcm-player-processor')
-		playerNode.connect(playerContext.destination)
-		const playerCaptureDestination = playerContext.createMediaStreamDestination()
-		playerNode.connect(playerCaptureDestination)
-		playerContextRef.current = playerContext
-		playerNodeRef.current = playerNode
-		playerCaptureDestinationRef.current = playerCaptureDestination
-		setPlaybackCaptureStream(playerCaptureDestination.stream)
-
-		// --- Recorder setup (16kHz input) ---
-		const recorderContext = new AudioContext({ sampleRate: 16000 })
-		await recorderContext.audioWorklet.addModule('/worklets/pcm-recorder-processor.js')
-		const micStream = await navigator.mediaDevices.getUserMedia({
-			audio: { channelCount: 1 },
-		})
-		const source = recorderContext.createMediaStreamSource(micStream)
-		const recorderNode = new AudioWorkletNode(recorderContext, 'pcm-recorder-processor')
-		source.connect(recorderNode)
-
-		recorderNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
-			if (isMicMutedRef.current) {
-				return
-			}
-			const pcmData = convertFloat32ToPCM(event.data)
-			onAudioChunk(pcmData)
-		}
-
-		recorderContextRef.current = recorderContext
-		recorderNodeRef.current = recorderNode
-		micStreamRef.current = micStream
-		updateMicMuted(false)
-		setIsAudioActive(true)
-	}, [updateMicMuted])
-
-	const stopAudio = useCallback(() => {
+	const cleanupAudio = useCallback(() => {
 		if (micStreamRef.current) {
 			micStreamRef.current.getTracks().forEach((track) => track.stop())
 			micStreamRef.current = null
 		}
 		if (recorderContextRef.current) {
-			recorderContextRef.current.close()
+			void recorderContextRef.current.close()
 			recorderContextRef.current = null
-			recorderNodeRef.current = null
 		}
+		recorderNodeRef.current = null
 		if (playerContextRef.current) {
-			playerContextRef.current.close()
+			void playerContextRef.current.close()
 			playerContextRef.current = null
-			playerNodeRef.current = null
 		}
+		playerNodeRef.current = null
 		playerCaptureDestinationRef.current = null
 		setPlaybackCaptureStream(null)
 		updateMicMuted(false)
 		setIsAudioActive(false)
 	}, [updateMicMuted])
+
+	const startAudio = useCallback(async (onAudioChunk: (data: ArrayBuffer) => void) => {
+		if (
+			playerContextRef.current ||
+			recorderContextRef.current ||
+			micStreamRef.current ||
+			isAudioActive
+		) {
+			return
+		}
+
+		// --- Player setup (24kHz output) ---
+		try {
+			const playerContext = new AudioContext({ sampleRate: 24000 })
+			await playerContext.audioWorklet.addModule('/worklets/pcm-player-processor.js')
+			const playerNode = new AudioWorkletNode(playerContext, 'pcm-player-processor')
+			playerNode.connect(playerContext.destination)
+			const playerCaptureDestination = playerContext.createMediaStreamDestination()
+			playerNode.connect(playerCaptureDestination)
+			playerContextRef.current = playerContext
+			playerNodeRef.current = playerNode
+			playerCaptureDestinationRef.current = playerCaptureDestination
+			setPlaybackCaptureStream(playerCaptureDestination.stream)
+
+			// --- Recorder setup (16kHz input) ---
+			const recorderContext = new AudioContext({ sampleRate: 16000 })
+			await recorderContext.audioWorklet.addModule('/worklets/pcm-recorder-processor.js')
+			const micStream = await navigator.mediaDevices.getUserMedia({
+				audio: { channelCount: 1 },
+			})
+			const source = recorderContext.createMediaStreamSource(micStream)
+			const recorderNode = new AudioWorkletNode(recorderContext, 'pcm-recorder-processor')
+			source.connect(recorderNode)
+
+			recorderNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
+				if (isMicMutedRef.current) {
+					return
+				}
+				const pcmData = convertFloat32ToPCM(event.data)
+				onAudioChunk(pcmData)
+			}
+
+			recorderContextRef.current = recorderContext
+			recorderNodeRef.current = recorderNode
+			micStreamRef.current = micStream
+			updateMicMuted(false)
+			setIsAudioActive(true)
+		} catch (error) {
+			cleanupAudio()
+			throw error
+		}
+	}, [cleanupAudio, isAudioActive, updateMicMuted])
+
+	const stopAudio = useCallback(() => {
+		cleanupAudio()
+	}, [cleanupAudio])
 
 	const setMicMuted = useCallback(
 		(nextValue: boolean) => {
@@ -121,6 +139,12 @@ export function useAudioWorklets() {
 			playerNodeRef.current.port.postMessage({ command: 'endOfAudio' })
 		}
 	}, [])
+
+	useEffect(() => {
+		return () => {
+			cleanupAudio()
+		}
+	}, [cleanupAudio])
 
 	return {
 		isAudioActive,
