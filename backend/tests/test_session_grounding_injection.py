@@ -66,6 +66,7 @@ def _write_ready_grounding(tmp_path: Path, session_id: str = "session-1"):
                         topic="Cell respiration",
                         why_it_matters="It powers ATP production",
                         success_signals=["Can explain electron transport chain"],
+                        recommended_modalities=["explain", "generate_visual"],
                     )
                 ],
                 likely_misconceptions=["Mitochondria create energy from nothing"],
@@ -118,6 +119,10 @@ def test_load_runtime_grounding_bundle_returns_compact_ready_bundle(tmp_path: Pa
     assert bundle.source_material_hash == "hash-123"
     assert "Session goal: Understand mitochondria" in bundle.orchestrator_study_plan_text
     assert bundle.interpreter_grounding.topic_sequence == ["Cell respiration"]
+    assert bundle.interpreter_grounding.topic_modality_hints == [
+        "Cell respiration: explain, generate_visual"
+    ]
+    assert "Topic modality guidance:" in bundle.orchestrator_study_plan_text
     assert "Source overview:" in bundle.interpreter_grounding.runtime_context_digest
 
 
@@ -160,7 +165,12 @@ def test_load_runtime_grounding_bundle_supports_prompt_only_sessions(tmp_path: P
                 session_goal="Understand derivatives",
                 learner_intent="Learn the intuition behind slopes",
                 target_outcomes=["Explain derivative as rate of change"],
-                topic_sequence=[StudyPlanTopic(topic="Slope intuition")],
+                topic_sequence=[
+                    StudyPlanTopic(
+                        topic="Slope intuition",
+                        recommended_modalities=["generate_graph", "explain"],
+                    )
+                ],
                 likely_misconceptions=["Derivative is only a formula trick"],
                 recommended_interventions=["Use graph-based intuition first"],
             ),
@@ -181,9 +191,13 @@ def test_load_runtime_grounding_bundle_supports_prompt_only_sessions(tmp_path: P
         bundle.interpreter_grounding.source_overview
         == "No uploaded source materials were attached for this session."
     )
+    assert bundle.interpreter_grounding.topic_modality_hints == [
+        "Slope intuition: generate_graph, explain"
+    ]
     assert "No uploaded source materials were attached for this session." in (
         bundle.interpreter_grounding.runtime_context_digest
     )
+    assert "Topic modality guidance:" in bundle.interpreter_grounding.runtime_context_digest
 
 
 def test_instruction_assembly_includes_grounding_and_memory() -> None:

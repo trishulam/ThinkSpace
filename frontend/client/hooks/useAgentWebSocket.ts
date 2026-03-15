@@ -10,6 +10,7 @@ import type {
 	FrontendAck,
 	FrontendAction,
 	FrontendActionMessage,
+	KnowledgeLookupLifecycleMessage,
 	ToolResultMessage,
 	TalkingState,
 } from '../types/agent-live'
@@ -100,6 +101,20 @@ function isToolResultMessage(value: unknown): value is ToolResultMessage {
 	return true
 }
 
+function isKnowledgeLookupLifecycleMessage(
+	value: unknown
+): value is KnowledgeLookupLifecycleMessage {
+	if (!isRecord(value) || value.type !== 'knowledge_lookup_lifecycle') return false
+	const event = value.event
+	if (!isRecord(event)) return false
+	if (event.tool !== 'knowledge.lookup') return false
+	return (
+		event.state === 'started' ||
+		event.state === 'completed' ||
+		event.state === 'failed'
+	)
+}
+
 function formatToolResultContent(message: ToolResultMessage): string {
 	const summary = message.result.summary || message.result.tool
 	if (
@@ -142,6 +157,7 @@ export function useAgentWebSocket({
 	const [eventLog, setEventLog] = useState<AgentLogEntry[]>([])
 	const [agentSubtitle, setAgentSubtitle] = useState<AgentSubtitleState>(EMPTY_SUBTITLE)
 	const [frontendActions, setFrontendActions] = useState<FrontendAction[]>([])
+	const [isKnowledgeLookupActive, setIsKnowledgeLookupActive] = useState(false)
 
 	const wsRef = useRef<WebSocket | null>(null)
 	const intentionalDisconnectRef = useRef(false)
@@ -186,6 +202,10 @@ export function useAgentWebSocket({
 
 	const clearFrontendActions = useCallback(() => {
 		setFrontendActions([])
+	}, [])
+
+	const clearKnowledgeLookupActive = useCallback(() => {
+		setIsKnowledgeLookupActive(false)
 	}, [])
 
 	const shiftFrontendAction = useCallback(() => {
@@ -383,6 +403,7 @@ export function useAgentWebSocket({
 
 		intentionalDisconnectRef.current = false
 		setConnectionState('connecting')
+		clearKnowledgeLookupActive()
 		resetSubtitle()
 
 		// Connect directly to the backend. The Cloudflare Vite plugin intercepts
@@ -398,6 +419,7 @@ export function useAgentWebSocket({
 			setConnectionState('connected')
 			setTalkingState('none')
 			setFrontendActions([])
+			setIsKnowledgeLookupActive(false)
 			addLogEntry('system', 'Connected to agent', { userId, sessionId, url: wsUrl })
 		}
 
@@ -424,11 +446,23 @@ export function useAgentWebSocket({
 				return
 			}
 
+			if (isKnowledgeLookupLifecycleMessage(parsedMessage)) {
+				const nextState = parsedMessage.event.state
+				setIsKnowledgeLookupActive(nextState === 'started')
+				addLogEntry(
+					'system',
+					`Knowledge lookup ${nextState}`,
+					parsedMessage
+				)
+				return
+			}
+
 			const adkEvent = parsedMessage
 
 			// --- turnComplete ---
 			if (adkEvent.turnComplete === true) {
 				setTalkingState('none')
+				clearKnowledgeLookupActive()
 				if (
 					subtitleReceivedTextRef.current &&
 					subtitleRevealedLengthRef.current < subtitleReceivedTextRef.current.length
@@ -451,6 +485,7 @@ export function useAgentWebSocket({
 			// --- interrupted ---
 			if (adkEvent.interrupted === true) {
 				setTalkingState('none')
+				clearKnowledgeLookupActive()
 				onStopPlaybackRef.current?.()
 				pendingTurnCompleteRef.current = false
 				scheduleSubtitleClear(
@@ -557,6 +592,7 @@ export function useAgentWebSocket({
 			setConnectionState('idle')
 			setTalkingState('none')
 			setFrontendActions([])
+			setIsKnowledgeLookupActive(false)
 			resetSubtitle()
 
 			if (!intentionalDisconnectRef.current) {
@@ -570,12 +606,15 @@ export function useAgentWebSocket({
 		}
 
 		ws.onerror = () => {
+			clearKnowledgeLookupActive()
 			addLogEntry('system', 'WebSocket error')
 		}
 	}, [
 		userId,
 		sessionId,
 		addLogEntry,
+		clearKnowledgeLookupActive,
+		clearKnowledgeLookupActive,
 		resetSubtitle,
 		scheduleSubtitleClear,
 		updateTargetRevealCps,
@@ -592,8 +631,9 @@ export function useAgentWebSocket({
 			setConnectionState('disconnecting')
 			wsRef.current.close()
 		}
+		clearKnowledgeLookupActive()
 		resetSubtitle()
-	}, [resetSubtitle])
+	}, [clearKnowledgeLookupActive, resetSubtitle])
 
 	const sendText = useCallback((message: string) => {
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -694,6 +734,7 @@ export function useAgentWebSocket({
 	return {
 		connectionState,
 		talkingState,
+		isKnowledgeLookupActive,
 		eventLog,
 		agentSubtitle,
 		frontendActions,

@@ -87,6 +87,18 @@ export interface ToolResultMessage {
 	result: ToolResultEnvelope
 }
 
+export interface KnowledgeLookupLifecycleEvent {
+	tool: 'knowledge.lookup'
+	state: 'started' | 'completed' | 'failed'
+	lookup_id?: string
+	summary?: string
+}
+
+export interface KnowledgeLookupLifecycleMessage {
+	type: 'knowledge_lookup_lifecycle'
+	event: KnowledgeLookupLifecycleEvent
+}
+
 export type FrontendAckStatus = 'applied' | 'failed'
 
 export interface FrontendAck {

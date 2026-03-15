@@ -2368,7 +2368,8 @@ export const SessionCanvas: React.FC = () => {
   }, [app]);
 
   const notchConnectionState = testConnState ?? ws.connectionState;
-  const notchTalkingState = testTalkState ?? ws.talkingState;
+  const notchTalkingState =
+    testTalkState ?? (ws.isKnowledgeLookupActive ? "thinking" : ws.talkingState);
   if (!sessionId) {
     return <div>Session not found</div>;
   }

@@ -152,6 +152,9 @@ from thinkspace_agent.tools.flashcard_jobs import (  # noqa: E402
 from thinkspace_agent.tools.flashcards import (  # noqa: E402
     FLASHCARDS_CREATE_TOOL,
 )
+from thinkspace_agent.tools.knowledge_lookup import (  # noqa: E402
+    KNOWLEDGE_LOOKUP_TOOL,
+)
 from thinkspace_agent.context.session_compaction import (  # noqa: E402
     build_compacted_session_context,
 )
@@ -866,6 +869,70 @@ def _build_tool_result_message(result: dict[str, object]) -> dict[str, object]:
         "type": "tool_result",
         "result": result,
     }
+
+
+def _extract_knowledge_lookup_lifecycle_events(
+    raw_event: object,
+) -> list[dict[str, object]]:
+    queue: list[object] = [raw_event]
+    seen: set[int] = set()
+    lifecycle_events: list[dict[str, object]] = []
+
+    while queue:
+        current = queue.pop(0)
+        current_id = id(current)
+        if current is None or current_id in seen:
+            continue
+        seen.add(current_id)
+
+        if isinstance(current, str):
+            parsed = _parse_json_candidate(current)
+            if parsed is not None:
+                queue.append(parsed)
+            continue
+
+        if isinstance(current, list):
+            queue.extend(current)
+            continue
+
+        if not _is_record(current):
+            continue
+
+        function_call = _read_record_field(current, "functionCall", "function_call")
+        if _is_record(function_call):
+            function_name = function_call.get("name")
+            if function_name == KNOWLEDGE_LOOKUP_TOOL:
+                lifecycle_events.append(
+                    {
+                        "tool": KNOWLEDGE_LOOKUP_TOOL,
+                        "state": "started",
+                        "lookup_id": _truncate_probe_value(function_call.get("id")),
+                    }
+                )
+
+        function_response = _read_record_field(
+            current, "functionResponse", "function_response"
+        )
+        if _is_record(function_response):
+            function_name = function_response.get("name")
+            response_payload = function_response.get("response")
+            if function_name == KNOWLEDGE_LOOKUP_TOOL and _is_record(response_payload):
+                response_status = response_payload.get("status")
+                if response_status in {"completed", "failed"}:
+                    lifecycle_event = {
+                        "tool": KNOWLEDGE_LOOKUP_TOOL,
+                        "state": response_status,
+                        "lookup_id": _truncate_probe_value(function_response.get("id")),
+                    }
+                    summary = response_payload.get("summary")
+                    if isinstance(summary, str) and summary.strip():
+                        lifecycle_event["summary"] = summary.strip()
+                    lifecycle_events.append(lifecycle_event)
+
+        for value in current.values():
+            queue.append(value)
+
+    return lifecycle_events
 
 
 _LIVE_TOOL_PROBE_DIRECTORY = Path(__file__).parent / "debug_traces" / "live_tool_events"
@@ -3112,6 +3179,7 @@ async def websocket_endpoint(
                 ),
                 "recommended_goal": steering.get("recommended_goal"),
                 "recommended_question": steering.get("recommended_question"),
+                "suggested_modality": steering.get("suggested_modality"),
             },
             sort_keys=True,
             ensure_ascii=True,
@@ -3133,6 +3201,9 @@ async def websocket_endpoint(
         recommended_question = steering.get("recommended_question")
         if isinstance(recommended_question, str) and recommended_question.strip():
             lines.append(f"Recommended question: {recommended_question.strip()}")
+        suggested_modality = steering.get("suggested_modality")
+        if isinstance(suggested_modality, str) and suggested_modality.strip():
+            lines.append(f"Suggested modality: {suggested_modality.strip()}")
         lines.append(
             "Treat this as pedagogical guidance only. Decide whether to speak now, wait, or ignore it."
         )
@@ -3476,6 +3547,18 @@ async def websocket_endpoint(
             )
         pending_interpreter_delivery_result = latest_result
         await _maybe_deliver_pending_interpreter_update(trigger="completed_lifecycle")
+
+    async def _send_knowledge_lookup_lifecycle_event(
+        lifecycle_event: dict[str, object]
+    ) -> None:
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "knowledge_lookup_lifecycle",
+                    "event": lifecycle_event,
+                }
+            )
+        )
 
     async def _send_realtime_image_data_url(data_url: str) -> bool:
         if not isinstance(data_url, str) or not data_url.startswith("data:"):
@@ -3891,6 +3974,9 @@ async def websocket_endpoint(
                 event_json = event.model_dump_json(exclude_none=True, by_alias=True)
                 event_payload = json.loads(event_json)
                 frontend_action = extract_frontend_action(event_payload)
+                knowledge_lookup_lifecycle_events = (
+                    _extract_knowledge_lookup_lifecycle_events(event_payload)
+                )
                 _write_live_tool_probe(
                     session_id=session_id,
                     source="downstream_event",
@@ -3898,6 +3984,8 @@ async def websocket_endpoint(
                     extracted_frontend_action=frontend_action,
                 )
                 await websocket.send_text(event_json)
+                for lifecycle_event in knowledge_lookup_lifecycle_events:
+                    await _send_knowledge_lookup_lifecycle_event(lifecycle_event)
 
                 # Parse event for transcript persistence
                 ev = event.model_dump(exclude_none=True, by_alias=True)

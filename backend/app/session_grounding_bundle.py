@@ -27,6 +27,7 @@ class InterpreterGroundingBundle(ApiModel):
     learner_intent: str
     target_outcomes: list[str] = Field(default_factory=list)
     topic_sequence: list[str] = Field(default_factory=list)
+    topic_modality_hints: list[str] = Field(default_factory=list)
     likely_misconceptions: list[str] = Field(default_factory=list)
     recommended_interventions: list[str] = Field(default_factory=list)
     source_overview: str
@@ -78,6 +79,11 @@ def load_runtime_grounding_bundle(
     )
 
     topic_sequence = [topic.topic.strip() for topic in study_plan.topic_sequence if topic.topic.strip()]
+    topic_modality_hints = [
+        _format_topic_modality_hint(topic.topic.strip(), topic.recommended_modalities)
+        for topic in study_plan.topic_sequence
+        if topic.topic.strip()
+    ]
     core_concepts = [
         f"{concept.name.strip()}: {concept.summary.strip()}"
         for concept in (source_summary.core_concepts if source_summary is not None else [])
@@ -139,6 +145,7 @@ def load_runtime_grounding_bundle(
         learner_intent=study_plan.learner_intent.strip(),
         target_outcomes=target_outcomes,
         topic_sequence=topic_sequence,
+        topic_modality_hints=topic_modality_hints,
         likely_misconceptions=likely_misconceptions,
         recommended_interventions=recommended_interventions,
         source_overview=source_overview,
@@ -152,6 +159,7 @@ def load_runtime_grounding_bundle(
             session_goal=study_plan.session_goal.strip(),
             learner_intent=study_plan.learner_intent.strip(),
             topic_sequence=topic_sequence,
+            topic_modality_hints=topic_modality_hints,
             source_overview=source_overview,
             likely_misconceptions=likely_misconceptions,
         ),
@@ -164,6 +172,7 @@ def load_runtime_grounding_bundle(
             learner_intent=study_plan.learner_intent.strip(),
             target_outcomes=target_outcomes,
             topic_sequence=topic_sequence,
+            topic_modality_hints=topic_modality_hints,
             likely_misconceptions=likely_misconceptions,
             recommended_interventions=recommended_interventions,
         ),
@@ -193,6 +202,7 @@ def _build_orchestrator_study_plan_text(
     learner_intent: str,
     target_outcomes: list[str],
     topic_sequence: list[str],
+    topic_modality_hints: list[str],
     likely_misconceptions: list[str],
     recommended_interventions: list[str],
 ) -> str:
@@ -206,6 +216,9 @@ def _build_orchestrator_study_plan_text(
     if topic_sequence:
         lines.append("Preferred topic sequence:")
         lines.extend(f"- {item}" for item in topic_sequence)
+    if topic_modality_hints:
+        lines.append("Topic modality guidance:")
+        lines.extend(f"- {item}" for item in topic_modality_hints)
     if likely_misconceptions:
         lines.append("Likely misconceptions to watch for:")
         lines.extend(f"- {item}" for item in likely_misconceptions)
@@ -220,6 +233,7 @@ def _build_runtime_context_digest(
     session_goal: str,
     learner_intent: str,
     topic_sequence: list[str],
+    topic_modality_hints: list[str],
     source_overview: str,
     likely_misconceptions: list[str],
 ) -> str:
@@ -231,7 +245,17 @@ def _build_runtime_context_digest(
     if topic_sequence:
         lines.append("Planned topic flow:")
         lines.extend(f"- {item}" for item in topic_sequence[:5])
+    if topic_modality_hints:
+        lines.append("Topic modality guidance:")
+        lines.extend(f"- {item}" for item in topic_modality_hints[:5])
     if likely_misconceptions:
         lines.append("Misconceptions to monitor:")
         lines.extend(f"- {item}" for item in likely_misconceptions[:5])
     return "\n".join(lines).strip()
+
+
+def _format_topic_modality_hint(topic: str, recommended_modalities: list[str]) -> str:
+    modalities = [item.strip() for item in recommended_modalities if item.strip()]
+    if not modalities:
+        return f"{topic}: explain"
+    return f"{topic}: {', '.join(modalities)}"

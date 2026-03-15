@@ -79,6 +79,14 @@ class InterpreterSteering(ApiModel):
     recommended_goal: str | None = None
     recommended_canvas_focus: str | None = None
     recommended_question: str | None = None
+    suggested_modality: Literal[
+        "explain",
+        "flashcards",
+        "generate_visual",
+        "generate_graph",
+        "generate_notation",
+        "delegate_canvas",
+    ] | None = None
 
 
 class InterpreterConfidence(ApiModel):
@@ -181,6 +189,7 @@ def _empty_reasoning_output(
             recommended_goal=None,
             recommended_canvas_focus=None,
             recommended_question=None,
+            suggested_modality=None,
         ),
         confidence=InterpreterConfidence(
             overall="low",
@@ -242,6 +251,9 @@ def _build_reasoning_prompt(packet: InterpreterInputPacket) -> str:
             "- Infer likely learner understanding, confusion, and omissions conservatively.",
             "- Decide whether this is a proactive candidate for the tutor.",
             "- Recommend exactly one best next tutor move and steering direction.",
+            "- When pedagogically useful, suggest exactly one best teaching modality for the next move.",
+            "- Prefer aligning that modality with the study-plan topic modality guidance when it fits the current moment.",
+            "- Treat modality suggestions as advice to the main tutor, not mandatory tool calls.",
             "- If the context is weak, lower confidence and use safety flags.",
             "- Do not invent details that are not grounded in the packet or screenshot.",
             "",
