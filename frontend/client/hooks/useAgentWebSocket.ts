@@ -10,7 +10,6 @@ import type {
 	FrontendAck,
 	FrontendAction,
 	FrontendActionMessage,
-	KnowledgeLookupLifecycleMessage,
 	ToolResultMessage,
 	TalkingState,
 } from '../types/agent-live'
@@ -29,6 +28,7 @@ function base64AudioByteLength(base64: string): number {
 interface UseAgentWebSocketOptions {
 	userId: string
 	sessionId: string
+	sessionEntryId?: string
 	onPlayAudio?: (base64Data: string) => void
 	onStopPlayback?: () => void
 	/** Persisted transcript entries to restore on mount (e.g. from session resume). */
@@ -101,20 +101,6 @@ function isToolResultMessage(value: unknown): value is ToolResultMessage {
 	return true
 }
 
-function isKnowledgeLookupLifecycleMessage(
-	value: unknown
-): value is KnowledgeLookupLifecycleMessage {
-	if (!isRecord(value) || value.type !== 'knowledge_lookup_lifecycle') return false
-	const event = value.event
-	if (!isRecord(event)) return false
-	if (event.tool !== 'knowledge.lookup') return false
-	return (
-		event.state === 'started' ||
-		event.state === 'completed' ||
-		event.state === 'failed'
-	)
-}
-
 function formatToolResultContent(message: ToolResultMessage): string {
 	const summary = message.result.summary || message.result.tool
 	if (
@@ -148,6 +134,7 @@ function formatToolResultContent(message: ToolResultMessage): string {
 export function useAgentWebSocket({
 	userId,
 	sessionId,
+	sessionEntryId,
 	onPlayAudio,
 	onStopPlayback,
 	initialEventLog,
@@ -173,6 +160,7 @@ export function useAgentWebSocket({
 	const targetRevealCpsRef = useRef(BASE_REVEAL_CPS)
 	const hasFinalSubtitleRef = useRef(false)
 	const pendingTurnCompleteRef = useRef(false)
+	const activeKnowledgeLookupJobIdsRef = useRef<Set<string>>(new Set())
 
 	// Stable refs for callbacks so the WS handler always sees the latest
 	const onPlayAudioRef = useRef(onPlayAudio)
@@ -205,8 +193,37 @@ export function useAgentWebSocket({
 	}, [])
 
 	const clearKnowledgeLookupActive = useCallback(() => {
+		activeKnowledgeLookupJobIdsRef.current.clear()
 		setIsKnowledgeLookupActive(false)
 	}, [])
+
+	const updateKnowledgeLookupActive = useCallback(
+		(result: ToolResultMessage['result']) => {
+			if (result.tool !== 'knowledge.lookup') return
+
+			const jobId =
+				typeof result.job?.id === 'string' && result.job.id.trim()
+					? result.job.id.trim()
+					: null
+
+			if (jobId) {
+				if (result.status === 'accepted') {
+					activeKnowledgeLookupJobIdsRef.current.add(jobId)
+				} else if (result.status === 'completed' || result.status === 'failed') {
+					activeKnowledgeLookupJobIdsRef.current.delete(jobId)
+				}
+				setIsKnowledgeLookupActive(activeKnowledgeLookupJobIdsRef.current.size > 0)
+				return
+			}
+
+			if (result.status === 'accepted') {
+				setIsKnowledgeLookupActive(true)
+			} else if (result.status === 'completed' || result.status === 'failed') {
+				clearKnowledgeLookupActive()
+			}
+		},
+		[clearKnowledgeLookupActive]
+	)
 
 	const shiftFrontendAction = useCallback(() => {
 		setFrontendActions((prev) => (prev.length > 0 ? prev.slice(1) : prev))
@@ -223,6 +240,12 @@ export function useAgentWebSocket({
 			setEventLog(initialEventLog)
 		}
 	}, [initialEventLog])
+
+	useEffect(() => {
+		hasAppliedInitialLogRef.current = false
+		setEventLog([])
+		setFrontendActions([])
+	}, [sessionId])
 
 	const clearSubtitleTimer = useCallback(() => {
 		if (subtitleTimerRef.current) {
@@ -390,16 +413,26 @@ export function useAgentWebSocket({
 
 	useEffect(() => {
 		return () => {
+			intentionalDisconnectRef.current = true
 			clearSubtitleTimer()
 			clearRevealLoop()
 			if (reconnectTimerRef.current) {
 				clearTimeout(reconnectTimerRef.current)
 			}
+			if (wsRef.current) {
+				wsRef.current.close()
+				wsRef.current = null
+			}
 		}
 	}, [clearRevealLoop, clearSubtitleTimer])
 
 	const connect = useCallback(() => {
-		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
+		if (
+			wsRef.current &&
+			(wsRef.current.readyState === WebSocket.OPEN ||
+				wsRef.current.readyState === WebSocket.CONNECTING)
+		)
+			return
 
 		intentionalDisconnectRef.current = false
 		setConnectionState('connecting')
@@ -410,7 +443,11 @@ export function useAgentWebSocket({
 		// upgrade requests before the Vite proxy can forward them, so we bypass
 		// the proxy and connect to the FastAPI backend directly.
 		const backendHost = getAgentWebSocketBaseUrl()
-		const wsUrl = `${backendHost}/ws/${userId}/${sessionId}`
+		const params = new URLSearchParams()
+		if (sessionEntryId) {
+			params.set('entry_id', sessionEntryId)
+		}
+		const wsUrl = `${backendHost}/ws/${userId}/${sessionId}${params.size > 0 ? `?${params.toString()}` : ''}`
 
 		const ws = new WebSocket(wsUrl)
 		wsRef.current = ws
@@ -419,7 +456,7 @@ export function useAgentWebSocket({
 			setConnectionState('connected')
 			setTalkingState('none')
 			setFrontendActions([])
-			setIsKnowledgeLookupActive(false)
+			clearKnowledgeLookupActive()
 			addLogEntry('system', 'Connected to agent', { userId, sessionId, url: wsUrl })
 		}
 
@@ -438,20 +475,10 @@ export function useAgentWebSocket({
 			}
 
 			if (isToolResultMessage(parsedMessage)) {
+				updateKnowledgeLookupActive(parsedMessage.result)
 				addLogEntry(
 					'tool-result',
 					formatToolResultContent(parsedMessage),
-					parsedMessage
-				)
-				return
-			}
-
-			if (isKnowledgeLookupLifecycleMessage(parsedMessage)) {
-				const nextState = parsedMessage.event.state
-				setIsKnowledgeLookupActive(nextState === 'started')
-				addLogEntry(
-					'system',
-					`Knowledge lookup ${nextState}`,
 					parsedMessage
 				)
 				return
@@ -462,7 +489,6 @@ export function useAgentWebSocket({
 			// --- turnComplete ---
 			if (adkEvent.turnComplete === true) {
 				setTalkingState('none')
-				clearKnowledgeLookupActive()
 				if (
 					subtitleReceivedTextRef.current &&
 					subtitleRevealedLengthRef.current < subtitleReceivedTextRef.current.length
@@ -485,7 +511,6 @@ export function useAgentWebSocket({
 			// --- interrupted ---
 			if (adkEvent.interrupted === true) {
 				setTalkingState('none')
-				clearKnowledgeLookupActive()
 				onStopPlaybackRef.current?.()
 				pendingTurnCompleteRef.current = false
 				scheduleSubtitleClear(
@@ -592,7 +617,7 @@ export function useAgentWebSocket({
 			setConnectionState('idle')
 			setTalkingState('none')
 			setFrontendActions([])
-			setIsKnowledgeLookupActive(false)
+			clearKnowledgeLookupActive()
 			resetSubtitle()
 
 			if (!intentionalDisconnectRef.current) {
@@ -606,17 +631,17 @@ export function useAgentWebSocket({
 		}
 
 		ws.onerror = () => {
-			clearKnowledgeLookupActive()
 			addLogEntry('system', 'WebSocket error')
 		}
 	}, [
 		userId,
 		sessionId,
+		sessionEntryId,
 		addLogEntry,
-		clearKnowledgeLookupActive,
 		clearKnowledgeLookupActive,
 		resetSubtitle,
 		scheduleSubtitleClear,
+		updateKnowledgeLookupActive,
 		updateTargetRevealCps,
 		updateSubtitleFromOutput,
 	])
@@ -641,6 +666,23 @@ export function useAgentWebSocket({
 			wsRef.current.send(payload)
 			addLogEntry('user-text', message)
 		}
+	}, [addLogEntry])
+
+	const sendSessionStartup = useCallback((entryId?: string): boolean => {
+		if (wsRef.current?.readyState !== WebSocket.OPEN) {
+			return false
+		}
+		const payload = JSON.stringify({
+			type: 'session_startup',
+			entry_id: entryId,
+		})
+		wsRef.current.send(payload)
+		addLogEntry(
+			'system',
+			'Sent session startup signal',
+			payload
+		)
+		return true
 	}, [addLogEntry])
 
 	const sendImage = useCallback((base64: string, mimeType: string) => {
@@ -741,6 +783,7 @@ export function useAgentWebSocket({
 		connect,
 		disconnect,
 		sendText,
+		sendSessionStartup,
 		sendImage,
 		sendCanvasContext,
 		sendCanvasContextResponse,

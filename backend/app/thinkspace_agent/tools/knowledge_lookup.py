@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import uuid4
 
-from google.adk.tools import FunctionTool, ToolContext  # pylint: disable=no-name-in-module,import-error
+from google.adk.tools import LongRunningFunctionTool, ToolContext  # pylint: disable=no-name-in-module,import-error
 
 from session_grounding_status import create_grounding_status_store
 from session_vertex_rag import lookup_session_rag_corpus_sync
@@ -20,11 +23,83 @@ _DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
 grounding_status_store = create_grounding_status_store(_DATA_ROOT / "session_grounding_status")
 
 
+@dataclass
+class _SessionOutbox:
+    subscribers: set[asyncio.Queue[dict[str, object]]] = field(default_factory=set)
+    pending_results: list[dict[str, object]] = field(default_factory=list)
+
+
+class KnowledgeLookupJobOutbox:
+    """Per-session async tool-result outbox for knowledge lookups."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._sessions: dict[tuple[str, str], _SessionOutbox] = {}
+
+    async def subscribe(
+        self, user_id: str, session_id: str
+    ) -> asyncio.Queue[dict[str, object]]:
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        key = (user_id, session_id)
+
+        async with self._lock:
+            outbox = self._sessions.setdefault(key, _SessionOutbox())
+            outbox.subscribers.add(queue)
+            pending_results = list(outbox.pending_results)
+            outbox.pending_results.clear()
+
+        for result in pending_results:
+            queue.put_nowait(result)
+
+        return queue
+
+    async def unsubscribe(
+        self, user_id: str, session_id: str, queue: asyncio.Queue[dict[str, object]]
+    ) -> None:
+        key = (user_id, session_id)
+        async with self._lock:
+            outbox = self._sessions.get(key)
+            if outbox is None:
+                return
+            outbox.subscribers.discard(queue)
+            if not outbox.subscribers and not outbox.pending_results:
+                self._sessions.pop(key, None)
+
+    async def publish_result(
+        self, user_id: str, session_id: str, result: dict[str, object]
+    ) -> None:
+        key = (user_id, session_id)
+        async with self._lock:
+            outbox = self._sessions.setdefault(key, _SessionOutbox())
+            subscribers = list(outbox.subscribers)
+            if not subscribers:
+                outbox.pending_results.append(result)
+                return
+
+        for queue in subscribers:
+            queue.put_nowait(result)
+
+
+knowledge_lookup_job_outbox = KnowledgeLookupJobOutbox()
+
+
+async def publish_knowledge_lookup_job_result(
+    *,
+    user_id: str,
+    session_id: str,
+    result: dict[str, object],
+) -> None:
+    """Publish a knowledge lookup result to the owning websocket session."""
+
+    await knowledge_lookup_job_outbox.publish_result(user_id, session_id, result)
+
+
 def _build_tool_result(
     *,
     status: str,
     summary: str,
     payload: object | None = None,
+    job_id: str | None = None,
 ) -> dict[str, object]:
     result: dict[str, object] = {
         "status": status,
@@ -33,6 +108,8 @@ def _build_tool_result(
     }
     if payload is not None:
         result["payload"] = payload
+    if job_id is not None:
+        result["job"] = {"id": job_id}
     return result
 
 
@@ -65,6 +142,96 @@ def _build_lookup_query(
     return normalized_query
 
 
+def _run_lookup_sync(
+    *,
+    session_id: str,
+    original_query: str,
+    lookup_query: str,
+    topic_hint: str | None,
+    normalized_max_results: int,
+) -> dict[str, object]:
+    status = grounding_status_store.get_status(session_id)
+    if status is None or status.knowledge_index_status != "ready" or not status.rag_corpus_id:
+        return _build_tool_result(
+            status="failed",
+            summary="Knowledge lookup is unavailable because session grounding is not ready",
+        )
+
+    result = lookup_session_rag_corpus_sync(
+        rag_corpus_id=status.rag_corpus_id,
+        query=lookup_query,
+        max_results=normalized_max_results,
+    )
+
+    if not result.results:
+        return _build_tool_result(
+            status="completed",
+            summary="No high-confidence source matches found",
+            payload={
+                "query": original_query,
+                "results": [],
+            },
+        )
+
+    result_count = len(result.results)
+    summary_topic = (
+        topic_hint.strip()
+        if isinstance(topic_hint, str) and topic_hint.strip()
+        else original_query
+    )
+    return _build_tool_result(
+        status="completed",
+        summary=(
+            f"Retrieved {result_count} source-grounded excerpt"
+            f"{'s' if result_count != 1 else ''} for {summary_topic}"
+        ),
+        payload={
+            "query": original_query,
+            "results": [item.model_dump(mode="json") for item in result.results],
+        },
+    )
+
+
+async def _run_knowledge_lookup_job(
+    *,
+    user_id: str,
+    session_id: str,
+    job_id: str,
+    accepted_result: dict[str, object],
+    original_query: str,
+    lookup_query: str,
+    topic_hint: str | None,
+    normalized_max_results: int,
+) -> None:
+    await publish_knowledge_lookup_job_result(
+        user_id=user_id,
+        session_id=session_id,
+        result=accepted_result,
+    )
+    try:
+        result = await asyncio.to_thread(
+            _run_lookup_sync,
+            session_id=session_id,
+            original_query=original_query,
+            lookup_query=lookup_query,
+            topic_hint=topic_hint,
+            normalized_max_results=normalized_max_results,
+        )
+    except Exception as exc:  # pragma: no cover - defensive runtime boundary
+        logger.exception("knowledge.lookup failed for session_id=%s", session_id)
+        result = _build_tool_result(
+            status="failed",
+            summary=f"Knowledge lookup failed: {exc}",
+        )
+
+    result["job"] = {"id": job_id}
+    await publish_knowledge_lookup_job_result(
+        user_id=user_id,
+        session_id=session_id,
+        result=result,
+    )
+
+
 def knowledge_lookup(
     query: str,
     intent: str | None = None,
@@ -74,11 +241,13 @@ def knowledge_lookup(
 ) -> dict[str, object]:
     """Retrieve exact source-grounded snippets from uploaded session materials."""
 
-    _, session_id = _get_session_identity(tool_context)
-    if not session_id:
+    user_id, session_id = _get_session_identity(tool_context)
+    job_id = f"knowledge-lookup-{uuid4()}"
+    if not user_id or not session_id:
         return _build_tool_result(
             status="failed",
             summary="Knowledge lookup requires an active session context",
+            job_id=job_id,
         )
 
     try:
@@ -91,60 +260,42 @@ def knowledge_lookup(
         return _build_tool_result(
             status="failed",
             summary=str(exc),
+            job_id=job_id,
         )
 
-    status = grounding_status_store.get_status(session_id)
-    if status is None or status.knowledge_index_status != "ready" or not status.rag_corpus_id:
-        return _build_tool_result(
-            status="failed",
-            summary="Knowledge lookup is unavailable because session grounding is not ready",
-        )
-
-    try:
-        result = lookup_session_rag_corpus_sync(
-            rag_corpus_id=status.rag_corpus_id,
-            query=lookup_query,
-            max_results=_normalize_max_results(max_results),
-        )
-    except Exception as exc:  # pragma: no cover - defensive runtime boundary
-        logger.exception("knowledge.lookup failed for session_id=%s", session_id)
-        return _build_tool_result(
-            status="failed",
-            summary=f"Knowledge lookup failed: {exc}",
-        )
-
-    if not result.results:
-        return _build_tool_result(
-            status="completed",
-            summary="No high-confidence source matches found",
-            payload={
-                "query": query.strip(),
-                "results": [],
-            },
-        )
-
-    result_count = len(result.results)
-    summary_topic = (
-        topic_hint.strip()
-        if isinstance(topic_hint, str) and topic_hint.strip()
-        else query.strip()
-    )
-    return _build_tool_result(
-        status="completed",
-        summary=(
-            f"Retrieved {result_count} source-grounded excerpt"
-            f"{'s' if result_count != 1 else ''} for {summary_topic}"
-        ),
+    normalized_max_results = _normalize_max_results(max_results)
+    accepted_result = _build_tool_result(
+        status="accepted",
+        summary="Started knowledge lookup. Wait for the grounded excerpts before answering.",
         payload={
             "query": query.strip(),
-            "results": [item.model_dump(mode="json") for item in result.results],
+            "max_results": normalized_max_results,
+            "topic_hint": topic_hint.strip()
+            if isinstance(topic_hint, str) and topic_hint.strip()
+            else None,
         },
+        job_id=job_id,
     )
 
+    asyncio.get_running_loop().create_task(
+        _run_knowledge_lookup_job(
+            user_id=user_id,
+            session_id=session_id,
+            job_id=job_id,
+            accepted_result=accepted_result,
+            original_query=query.strip(),
+            lookup_query=lookup_query,
+            topic_hint=topic_hint,
+            normalized_max_results=normalized_max_results,
+        ),
+        name=f"knowledge-lookup-{job_id}",
+    )
+    return accepted_result
 
-def get_knowledge_lookup_tools() -> list[FunctionTool]:
+
+def get_knowledge_lookup_tools() -> list[LongRunningFunctionTool]:
     """Return the knowledge lookup tools registered for ThinkSpace."""
 
     knowledge_lookup.__name__ = KNOWLEDGE_LOOKUP_TOOL
     knowledge_lookup.__qualname__ = KNOWLEDGE_LOOKUP_TOOL
-    return [FunctionTool(knowledge_lookup)]
+    return [LongRunningFunctionTool(knowledge_lookup)]

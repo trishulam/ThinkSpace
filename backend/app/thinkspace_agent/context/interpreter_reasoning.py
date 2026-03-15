@@ -253,6 +253,8 @@ def _build_reasoning_prompt(packet: InterpreterInputPacket) -> str:
             "- Recommend exactly one best next tutor move and steering direction.",
             "- When pedagogically useful, suggest exactly one best teaching modality for the next move.",
             "- Prefer aligning that modality with the study-plan topic modality guidance when it fits the current moment.",
+            "- When a concept is still being introduced or organized, prefer `delegate_canvas` for a mindmap or flowchart before flashcards.",
+            "- Reserve `flashcards` suggestions mainly for review or testing after the relevant concept has been taught.",
             "- Treat modality suggestions as advice to the main tutor, not mandatory tool calls.",
             "- If the context is weak, lower confidence and use safety flags.",
             "- Do not invent details that are not grounded in the packet or screenshot.",

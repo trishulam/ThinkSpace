@@ -121,6 +121,16 @@ async function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<
   ]);
 }
 
+function createLiveEntryId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `live-entry-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const AUTO_CONNECT_SETTLE_MS = 2500;
+const STARTUP_GREETING_SETTLE_MS = 1500;
+
 type CanvasCaptureHudProps = {
   gestureState: GestureRuntimeState | null;
   recordingError: string | null;
@@ -1034,8 +1044,13 @@ export const SessionCanvas: React.FC = () => {
   const [interpreterToast, setInterpreterToast] =
     useState<CanvasJobToastState | null>(null);
   const flashcardStateRef = useRef<FlashcardState>(EMPTY_FLASHCARD_STATE);
+  const liveEntryIdRef = useRef<string>(createLiveEntryId());
+  const autoConnectAttemptedRef = useRef(false);
   const autoRecordingAttemptedRef = useRef(false);
+  const autoAudioAttemptedRef = useRef(false);
   const autoGestureAttemptedRef = useRef(false);
+  const startupGreetingSentRef = useRef(false);
+  const wasRecordingActiveRef = useRef(false);
   const flashcardActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -1125,6 +1140,7 @@ export const SessionCanvas: React.FC = () => {
   const ws = useAgentWebSocket({
     userId,
     sessionId: wsSessionId,
+    sessionEntryId: liveEntryIdRef.current,
     onPlayAudio: playAudioChunk,
     onStopPlayback: stopPlayback,
     initialEventLog: persistedEventLog,
@@ -2091,8 +2107,13 @@ export const SessionCanvas: React.FC = () => {
 
   useEffect(() => {
     hasLoadedRemoteSnapshotRef.current = false;
+    liveEntryIdRef.current = createLiveEntryId();
+    autoConnectAttemptedRef.current = false;
     autoRecordingAttemptedRef.current = false;
+    autoAudioAttemptedRef.current = false;
     autoGestureAttemptedRef.current = false;
+    startupGreetingSentRef.current = false;
+    wasRecordingActiveRef.current = false;
     setResumeError(null);
     setSessionActionError(null);
     setResolvedUserId("demo-user");
@@ -2171,6 +2192,150 @@ export const SessionCanvas: React.FC = () => {
       void saveCheckpoint("disconnect", "frontend_manual");
     };
   }, [editor, saveCheckpoint, sessionId]);
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      recordingStatus !== "recording" ||
+      isAudioActive ||
+      autoAudioAttemptedRef.current
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (isAudioActive || autoAudioAttemptedRef.current) {
+        return;
+      }
+
+      autoAudioAttemptedRef.current = true;
+      void handleStartAudio();
+    }, suppressRestoreOverlay ? 140 : 280);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    handleStartAudio,
+    isAudioActive,
+    recordingStatus,
+    sessionId,
+    suppressRestoreOverlay,
+  ]);
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      !editor ||
+      !app ||
+      recordingStatus !== "recording" ||
+      !isAudioActive ||
+      isRestoringSession ||
+      !!resumeError ||
+      isSessionActionPending ||
+      ws.connectionState !== "idle" ||
+      autoConnectAttemptedRef.current
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (
+        autoConnectAttemptedRef.current ||
+        !isAudioActive ||
+        ws.connectionState !== "idle" ||
+        isSessionActionPending
+      ) {
+        return;
+      }
+
+      autoConnectAttemptedRef.current = true;
+      ws.connect();
+    }, suppressRestoreOverlay ? AUTO_CONNECT_SETTLE_MS : AUTO_CONNECT_SETTLE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    app,
+    editor,
+    isAudioActive,
+    isRestoringSession,
+    isSessionActionPending,
+    recordingStatus,
+    resumeError,
+    sessionId,
+    suppressRestoreOverlay,
+    ws,
+  ]);
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      recordingStatus !== "recording" ||
+      !isAudioActive ||
+      ws.connectionState !== "connected" ||
+      startupGreetingSentRef.current
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (
+        startupGreetingSentRef.current ||
+        ws.connectionState !== "connected" ||
+        recordingStatus !== "recording" ||
+        !isAudioActive
+      ) {
+        return;
+      }
+
+      const didSend = ws.sendSessionStartup(liveEntryIdRef.current);
+      if (didSend) {
+        startupGreetingSentRef.current = true;
+      }
+    }, STARTUP_GREETING_SETTLE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    isAudioActive,
+    recordingStatus,
+    sessionId,
+    ws,
+  ]);
+
+  useEffect(() => {
+    if (recordingStatus === "recording") {
+      wasRecordingActiveRef.current = true;
+      return;
+    }
+
+    if (!wasRecordingActiveRef.current || isSessionActionPending) {
+      if (recordingStatus === "idle" || recordingStatus === "error") {
+        wasRecordingActiveRef.current = false;
+        autoConnectAttemptedRef.current = false;
+        autoAudioAttemptedRef.current = false;
+        startupGreetingSentRef.current = false;
+      }
+      return;
+    }
+
+    wasRecordingActiveRef.current = false;
+    autoConnectAttemptedRef.current = false;
+    autoAudioAttemptedRef.current = false;
+    startupGreetingSentRef.current = false;
+    if (isAudioActive) {
+      stopAudio();
+    }
+    if (
+      ws.connectionState === "connected" ||
+      ws.connectionState === "connecting"
+    ) {
+      ws.disconnect();
+    }
+  }, [isAudioActive, isSessionActionPending, recordingStatus, stopAudio, ws]);
 
   useEffect(() => {
     if (
