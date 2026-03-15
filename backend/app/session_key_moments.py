@@ -11,10 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Protocol
 
-from google.cloud import firestore
 from google.genai import Client
 from google.genai import types as genai_types
 from pydantic import BaseModel, ConfigDict, Field
+from google_cloud_clients import get_firestore_client
 
 from session_store import SessionRecord, TranscriptTurnRecord
 from thinkspace_agent.config import get_key_moment_generation_model
@@ -153,7 +153,7 @@ class FirestoreKeyMomentStore:
         prefix: str = "thinkspace",
         database: str | None = None,
     ) -> None:
-        self._db = firestore.Client(project=project, database=database)
+        self._db = get_firestore_client(project=project, database=database)
         self._collection = self._db.collection(f"{prefix}_session_key_moments")
 
     def get_artifact(self, session_id: str) -> SessionKeyMomentArtifact | None:

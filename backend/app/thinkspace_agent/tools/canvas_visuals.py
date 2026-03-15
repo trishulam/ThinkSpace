@@ -106,6 +106,7 @@ async def _run_canvas_visual_job(
             "title_hint": title_hint,
             "visual_style_hint": visual_style_hint,
         },
+        "context_request_trace": None,
         "context_summary": None,
         "context_wait": None,
         "artifact_generation": None,
@@ -123,6 +124,13 @@ async def _run_canvas_visual_job(
             session_id=session_id,
             job_id=job_id,
             timeout_s=CANVAS_CONTEXT_REQUEST_TIMEOUT_S,
+        )
+        trace["context_request_trace"] = (
+            canvas_context_request_store.get_trace_snapshot(
+                user_id=user_id,
+                session_id=session_id,
+                job_id=job_id,
+            )
         )
         context_response_received_at = now_iso()
         trace["context_response_received_at"] = context_response_received_at
@@ -225,6 +233,24 @@ async def _run_canvas_visual_job(
             session_id,
             job_id,
         )
+        if trace.get("context_request_trace") is None:
+            trace["context_request_trace"] = (
+                canvas_context_request_store.get_trace_snapshot(
+                    user_id=user_id,
+                    session_id=session_id,
+                    job_id=job_id,
+                )
+            )
+        if isinstance(exc, asyncio.TimeoutError):
+            trace["context_wait"] = {
+                "started_at": trace.get("context_request_started_at"),
+                "timed_out_at": now_iso(),
+                "duration_ms": max(
+                    0, int((time.perf_counter() - context_wait_started_perf) * 1000)
+                ),
+                "timeout_s": CANVAS_CONTEXT_REQUEST_TIMEOUT_S,
+                "status": "timed_out",
+            }
         trace["status"] = "failed"
         trace["errors"] = {
             "message": str(exc),
@@ -241,6 +267,13 @@ async def _run_canvas_visual_job(
         trace["total_duration_ms"] = max(
             0, int((time.perf_counter() - job_started_perf) * 1000)
         )
+        final_context_request_trace = canvas_context_request_store.pop_trace_snapshot(
+            user_id=user_id,
+            session_id=session_id,
+            job_id=job_id,
+        )
+        if final_context_request_trace is not None:
+            trace["context_request_trace"] = final_context_request_trace
         trace_path = write_generate_visual_trace(job_id, trace)
         logger.info("Wrote canvas.generate_visual trace: %s", trace_path)
 
@@ -355,7 +388,7 @@ def canvas_generate_visual(
     if normalized_style_hint:
         payload["visual_style_hint"] = normalized_style_hint
 
-    return _build_tool_result(
+    accepted_result = _build_tool_result(
         status="accepted",
         tool=CANVAS_GENERATE_VISUAL_TOOL,
         summary=(
@@ -376,6 +409,15 @@ def canvas_generate_visual(
         ),
         job_id=job_id,
     )
+    asyncio.get_running_loop().create_task(
+        publish_canvas_visual_job_result(
+            user_id=user_id,
+            session_id=session_id,
+            result=accepted_result,
+        ),
+        name=f"canvas-generate-visual-accepted-{job_id}",
+    )
+    return accepted_result
 
 
 def get_canvas_visual_tools() -> list[LongRunningFunctionTool]:

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from session_grounding_bundle import InterpreterGroundingBundle
 from session_store import SessionRecord
 from thinkspace_agent.context.assembler import build_runtime_context
 from thinkspace_agent.context.models import LectureContext, SessionContext, SurfaceState
@@ -119,6 +120,7 @@ class InterpreterInputPacket(ApiModel):
     session_compaction: CompactedSessionContext
     surface_state: InterpreterSurfaceState
     runtime_context_text: str
+    grounding: InterpreterGroundingBundle | None = None
     previous_interpreter_summary: str | None = None
 
 
@@ -225,6 +227,7 @@ def build_interpreter_input_packet(
     canvas_context: dict[str, object] | None,
     compacted_session_context: CompactedSessionContext,
     flashcard_snapshot: dict[str, object] | None,
+    grounding: InterpreterGroundingBundle | None = None,
 ) -> InterpreterInputPacket:
     sanitized_canvas_context = sanitize_canvas_context(canvas_context)
     surface_state = InterpreterSurfaceState(
@@ -252,6 +255,18 @@ def build_interpreter_input_packet(
         else [],
     )
 
+    runtime_context_text = build_runtime_context(runtime_context)
+    if grounding is not None and grounding.runtime_context_digest.strip():
+        grounding_section = (
+            "## Grounding Summary\n"
+            f"{grounding.runtime_context_digest.strip()}"
+        )
+        runtime_context_text = (
+            f"{runtime_context_text}\n\n{grounding_section}"
+            if runtime_context_text.strip()
+            else grounding_section
+        )
+
     return InterpreterInputPacket(
         session=InterpreterSessionMetadata(
             session_id=session.session_id,
@@ -267,7 +282,8 @@ def build_interpreter_input_packet(
         canvas_context=sanitized_canvas_context,
         session_compaction=compacted_session_context,
         surface_state=surface_state,
-        runtime_context_text=build_runtime_context(runtime_context),
+        runtime_context_text=runtime_context_text,
+        grounding=grounding,
         previous_interpreter_summary=None,
     )
 

@@ -107,6 +107,14 @@ export interface CanvasContextResponseMessage {
 	source_tool: string
 	job_id: string
 	context: unknown
+	trace?: Record<string, unknown>
+}
+
+export interface CanvasContextTraceMessage {
+	type: 'canvas_context_trace'
+	source_tool: string
+	job_id: string
+	trace: Record<string, unknown>
 }
 
 export interface CanvasDelegateResultMessage {

@@ -4,6 +4,7 @@ export interface Session {
   goal?: string
   mode: 'guided' | 'socratic' | 'challenge'
   level: 'beginner' | 'intermediate' | 'advanced'
+  persona: SessionPersonaId
   status: string
   summary?: string
   lastActive: Date
@@ -15,11 +16,14 @@ export interface Session {
   milestoneCount: number
 }
 
+export type SessionPersonaId = 'professor' | 'coach' | 'challenger'
+
 export interface NewSessionData {
   topic: string
   goal?: string
   mode: 'guided' | 'socratic' | 'challenge'
   level: 'beginner' | 'intermediate' | 'advanced'
+  persona: SessionPersonaId
 }
 
 export interface Keypoint {

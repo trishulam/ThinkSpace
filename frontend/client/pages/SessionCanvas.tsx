@@ -1430,6 +1430,20 @@ export const SessionCanvas: React.FC = () => {
           }
 
           if (!editor) {
+            if (action.job_id) {
+              ws.sendCanvasContextTrace({
+                type: "canvas_context_trace",
+                source_tool: action.source_tool,
+                job_id: action.job_id,
+                trace: {
+                  event: "editor_not_ready",
+                  action_type: action.type,
+                  editor_ready: false,
+                  app_ready: app !== null,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
             ws.sendFrontendAck({
               status: "failed",
               action_type: action.type,
@@ -1451,15 +1465,59 @@ export const SessionCanvas: React.FC = () => {
           }
 
           const jobId = action.job_id;
+          const traceStartedAtMs = Date.now();
+          const sendCanvasContextTrace = (
+            event: string,
+            details: Record<string, unknown> = {},
+          ) => {
+            ws.sendCanvasContextTrace({
+              type: "canvas_context_trace",
+              source_tool: action.source_tool,
+              job_id: jobId,
+              trace: {
+                event,
+                action_type: action.type,
+                editor_ready: true,
+                app_ready: app !== null,
+                elapsed_ms: Math.max(0, Date.now() - traceStartedAtMs),
+                ...details,
+              },
+            });
+          };
 
           void (async () => {
+            sendCanvasContextTrace("action_received");
             try {
+              const buildStartedAt = new Date().toISOString();
+              sendCanvasContextTrace("context_build_started", {
+                started_at: buildStartedAt,
+              });
               const context = await buildCanvasPlacementPlannerContext(editor, app);
+              const buildCompletedAt = new Date().toISOString();
+              const responseTrace = {
+                action_type: action.type,
+                build_started_at: buildStartedAt,
+                build_completed_at: buildCompletedAt,
+                response_sent_at: new Date().toISOString(),
+                elapsed_ms: Math.max(0, Date.now() - traceStartedAtMs),
+                editor_ready: true,
+                app_ready: app !== null,
+                selected_shape_count: context.selected_shape_ids.length,
+                blurry_shape_count: context.blurry_shapes.length,
+                peripheral_cluster_count: context.peripheral_clusters.length,
+                canvas_lint_count: context.canvas_lints.length,
+                screenshot_present: context.screenshot_data_url.length > 0,
+              } satisfies Record<string, unknown>;
+              sendCanvasContextTrace("context_build_completed", responseTrace);
               ws.sendCanvasContextResponse({
                 type: "canvas_context_response",
                 source_tool: action.source_tool,
                 job_id: jobId,
                 context,
+                trace: responseTrace,
+              });
+              sendCanvasContextTrace("context_response_sent", {
+                response_sent_at: responseTrace.response_sent_at,
               });
               ws.sendFrontendAck({
                 status: "applied",
@@ -1472,6 +1530,12 @@ export const SessionCanvas: React.FC = () => {
               });
             } catch (error) {
               console.error("Failed to build fresh canvas context", error);
+              sendCanvasContextTrace("context_build_failed", {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to build fresh canvas context",
+              });
               ws.sendFrontendAck({
                 status: "failed",
                 action_type: action.type,

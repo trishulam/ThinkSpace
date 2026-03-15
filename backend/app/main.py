@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -44,6 +45,23 @@ from session_notes import (
     create_notes_store,
     generate_session_notes_artifact,
 )
+from session_grounding_status import (
+    SessionGroundingStatus,
+    create_grounding_status_store,
+    default_grounding_status,
+)
+from session_grounding_summarization import (
+    generate_document_summary_result,
+    generate_source_summary_artifact,
+    generate_study_plan_artifact,
+)
+from session_grounding_bundle import (
+    ORCHESTRATOR_SOURCE_HASH_STATE_KEY,
+    ORCHESTRATOR_STUDY_PLAN_STATE_KEY,
+    RuntimeGroundingBundle,
+    build_orchestrator_grounding_state,
+    load_runtime_grounding_bundle,
+)
 from session_replay_status import (
     SessionReplayStatusBatchRequest,
     SessionReplayStatusBatchResponse,
@@ -53,6 +71,23 @@ from session_replay_status import (
     default_replay_status,
 )
 from session_recordings import SessionRecordingManifest, SessionRecordingStore
+from session_source_extraction import (
+    ParsedSource,
+    build_prompt_parsed_source,
+    extract_parsed_sources,
+    is_supported_source_material,
+)
+from session_source_materials import (
+    SessionSourceMaterialManifest,
+    SessionSourceMaterialStore,
+)
+from session_source_summary import create_source_summary_store
+from session_study_plan import create_study_plan_store
+from session_vertex_rag import (
+    VertexSessionRagPreparationError,
+    delete_session_rag_corpus,
+    prepare_session_rag_corpus,
+)
 from session_store import (
     AdkSessionSummary,
     CheckpointCreateRequest,
@@ -64,6 +99,12 @@ from session_store import (
     TranscriptEntryRecord,
     TranscriptTurnRecord,
     create_session_store,
+)
+from session_personas import (
+    ORCHESTRATOR_PERSONA_STATE_KEY,
+    get_persona_overlay_text,
+    get_persona_voice_name,
+    normalize_session_persona,
 )
 
 # Load environment variables from .env file BEFORE importing agent
@@ -628,6 +669,71 @@ async def _backfill_adk_conversation_memory_from_transcript(
     await session_service.append_event(adk_session, memory_event)
 
 
+async def _sync_adk_runtime_grounding_state(
+    *,
+    session_record: SessionRecord,
+) -> RuntimeGroundingBundle | None:
+    """Load persisted grounding artifacts and mirror orchestrator text into ADK state."""
+
+    bundle = load_runtime_grounding_bundle(
+        session_id=session_record.session_id,
+        grounding_status_store=grounding_status_store,
+        study_plan_store=study_plan_store,
+        source_summary_store=source_summary_store,
+    )
+    adk_session = await session_service.get_session(
+        app_name=APP_NAME,
+        user_id=session_record.user_id,
+        session_id=session_record.session_id,
+    )
+    if adk_session is None:
+        return bundle
+
+    desired_state = build_orchestrator_grounding_state(bundle)
+    current_study_plan_text = adk_session.state.get(ORCHESTRATOR_STUDY_PLAN_STATE_KEY)
+    current_source_hash = adk_session.state.get(ORCHESTRATOR_SOURCE_HASH_STATE_KEY)
+    if (
+        current_study_plan_text == desired_state[ORCHESTRATOR_STUDY_PLAN_STATE_KEY]
+        and current_source_hash == desired_state[ORCHESTRATOR_SOURCE_HASH_STATE_KEY]
+    ):
+        return bundle
+
+    grounding_event = Event(
+        author="system",
+        invocationId=f"grounding-sync-{uuid4().hex}",
+        actions=EventActions(stateDelta=desired_state),
+    )
+    await session_service.append_event(adk_session, grounding_event)
+    return bundle
+
+
+async def _sync_adk_persona_state(*, session_record: SessionRecord) -> None:
+    """Mirror the active session persona into ADK state for instruction assembly."""
+
+    adk_session = await session_service.get_session(
+        app_name=APP_NAME,
+        user_id=session_record.user_id,
+        session_id=session_record.session_id,
+    )
+    if adk_session is None:
+        return
+
+    persona = normalize_session_persona(session_record.persona)
+    desired_overlay = get_persona_overlay_text(persona)
+    current_overlay = adk_session.state.get(ORCHESTRATOR_PERSONA_STATE_KEY)
+    if current_overlay == desired_overlay:
+        return
+
+    persona_event = Event(
+        author="system",
+        invocationId=f"persona-sync-{uuid4().hex}",
+        actions=EventActions(
+            stateDelta={ORCHESTRATOR_PERSONA_STATE_KEY: desired_overlay}
+        ),
+    )
+    await session_service.append_event(adk_session, persona_event)
+
+
 def _normalize_frontend_action(
     candidate: object,
     fallback_tool: str | None = None,
@@ -750,6 +856,259 @@ def _build_tool_result_message(result: dict[str, object]) -> dict[str, object]:
         "type": "tool_result",
         "result": result,
     }
+
+
+_LIVE_TOOL_PROBE_DIRECTORY = Path(__file__).parent / "debug_traces" / "live_tool_events"
+_PROBED_LIVE_TOOL_NAMES = {
+    "canvas_generate_visual",
+    "canvas_generate_graph",
+    "canvas_generate_notation",
+    "flashcards_create",
+}
+_PROBED_RESULT_TOOL_NAMES = {
+    "canvas.generate_visual",
+    "canvas.generate_graph",
+    "canvas.generate_notation",
+    "flashcards.create",
+}
+
+
+def _truncate_probe_value(value: object, limit: int = 400) -> object:
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, str):
+        return value if len(value) <= limit else value[: limit - 3] + "..."
+    return str(value)
+
+
+def _read_record_field(candidate: object, *keys: str) -> object:
+    if not _is_record(candidate):
+        return None
+    for key in keys:
+        if key in candidate:
+            return candidate.get(key)
+    return None
+
+
+def _extract_live_tool_probe_entries(raw_event: object) -> list[dict[str, object]]:
+    queue: list[object] = [raw_event]
+    seen: set[int] = set()
+    probes: list[dict[str, object]] = []
+
+    while queue:
+        current = queue.pop(0)
+        current_id = id(current)
+        if current is None or current_id in seen:
+            continue
+        seen.add(current_id)
+
+        if isinstance(current, str):
+            parsed = _parse_json_candidate(current)
+            if parsed is not None:
+                queue.append(parsed)
+            continue
+
+        if isinstance(current, list):
+            queue.extend(current)
+            continue
+
+        if not _is_record(current):
+            continue
+
+        function_call = _read_record_field(current, "functionCall", "function_call")
+        if _is_record(function_call):
+            function_name = function_call.get("name")
+            if function_name in _PROBED_LIVE_TOOL_NAMES:
+                args_payload = _read_record_field(function_call, "args", "arguments")
+                probes.append(
+                    {
+                        "kind": "function_call",
+                        "name": function_name,
+                        "id": _truncate_probe_value(function_call.get("id")),
+                        "args_type": type(args_payload).__name__,
+                        "args_preview": _truncate_probe_value(args_payload),
+                    }
+                )
+
+        function_response = _read_record_field(
+            current, "functionResponse", "function_response"
+        )
+        if _is_record(function_response):
+            function_name = function_response.get("name")
+            response_payload = function_response.get("response")
+            if function_name in _PROBED_LIVE_TOOL_NAMES:
+                response_job = response_payload.get("job") if _is_record(response_payload) else None
+                response_frontend_action = (
+                    response_payload.get("frontend_action")
+                    if _is_record(response_payload)
+                    else None
+                )
+                probes.append(
+                    {
+                        "kind": "function_response",
+                        "name": function_name,
+                        "id": _truncate_probe_value(function_response.get("id")),
+                        "response_keys": (
+                            sorted(response_payload.keys())
+                            if _is_record(response_payload)
+                            else None
+                        ),
+                        "response_status": (
+                            _truncate_probe_value(response_payload.get("status"))
+                            if _is_record(response_payload)
+                            else None
+                        ),
+                        "response_tool": (
+                            _truncate_probe_value(response_payload.get("tool"))
+                            if _is_record(response_payload)
+                            else None
+                        ),
+                        "response_job_id": (
+                            _truncate_probe_value(response_job.get("id"))
+                            if _is_record(response_job)
+                            else None
+                        ),
+                        "response_frontend_action_type": (
+                            _truncate_probe_value(response_frontend_action.get("type"))
+                            if _is_record(response_frontend_action)
+                            else None
+                        ),
+                    }
+                )
+
+        tool_name = current.get("tool")
+        if tool_name in _PROBED_RESULT_TOOL_NAMES:
+            job_payload = current.get("job")
+            frontend_action = current.get("frontend_action")
+            probes.append(
+                {
+                    "kind": "tool_result_payload",
+                    "tool": tool_name,
+                    "status": _truncate_probe_value(current.get("status")),
+                    "job_id": (
+                        _truncate_probe_value(job_payload.get("id"))
+                        if _is_record(job_payload)
+                        else None
+                    ),
+                    "frontend_action_type": (
+                        _truncate_probe_value(frontend_action.get("type"))
+                        if _is_record(frontend_action)
+                        else None
+                    ),
+                    "keys": sorted(current.keys()),
+                }
+            )
+
+        for value in current.values():
+            queue.append(value)
+
+    return probes
+
+
+def _extract_live_tool_probe_summary(raw_event: object) -> dict[str, object]:
+    queue: list[object] = [raw_event]
+    seen: set[int] = set()
+    top_level_keys: list[str] = []
+    function_call_names: list[str] = []
+    function_response_names: list[str] = []
+    part_kinds: list[str] = []
+
+    if _is_record(raw_event):
+        top_level_keys = sorted(raw_event.keys())
+
+    while queue:
+        current = queue.pop(0)
+        current_id = id(current)
+        if current is None or current_id in seen:
+            continue
+        seen.add(current_id)
+
+        if isinstance(current, str):
+            parsed = _parse_json_candidate(current)
+            if parsed is not None:
+                queue.append(parsed)
+            continue
+
+        if isinstance(current, list):
+            queue.extend(current)
+            continue
+
+        if not _is_record(current):
+            continue
+
+        function_call = _read_record_field(current, "functionCall", "function_call")
+        if _is_record(function_call):
+            function_name = function_call.get("name")
+            if isinstance(function_name, str) and function_name.strip():
+                function_call_names.append(function_name)
+            part_kinds.append("function_call")
+
+        function_response = _read_record_field(
+            current, "functionResponse", "function_response"
+        )
+        if _is_record(function_response):
+            function_name = function_response.get("name")
+            if isinstance(function_name, str) and function_name.strip():
+                function_response_names.append(function_name)
+            part_kinds.append("function_response")
+
+        if _read_record_field(current, "inlineData", "inline_data") is not None:
+            part_kinds.append("inline_data")
+        if _read_record_field(current, "text") is not None:
+            part_kinds.append("text")
+        if _read_record_field(current, "executableCode", "executable_code") is not None:
+            part_kinds.append("executable_code")
+        if _read_record_field(
+            current, "codeExecutionResult", "code_execution_result"
+        ) is not None:
+            part_kinds.append("code_execution_result")
+
+        for value in current.values():
+            queue.append(value)
+
+    return {
+        "top_level_keys": top_level_keys,
+        "turn_complete": _truncate_probe_value(
+            _read_record_field(raw_event, "turnComplete", "turn_complete")
+        ),
+        "interrupted": _truncate_probe_value(
+            _read_record_field(raw_event, "interrupted")
+        ),
+        "author": _truncate_probe_value(_read_record_field(raw_event, "author")),
+        "invocation_id": _truncate_probe_value(
+            _read_record_field(raw_event, "invocationId", "invocation_id")
+        ),
+        "function_call_names": sorted(set(function_call_names)),
+        "function_response_names": sorted(set(function_response_names)),
+        "part_kinds": sorted(set(part_kinds)),
+        "raw_preview": _truncate_probe_value(raw_event, limit=1400),
+    }
+
+
+def _write_live_tool_probe(
+    *,
+    session_id: str,
+    source: str,
+    payload: object,
+    extracted_frontend_action: dict[str, object] | None,
+) -> None:
+    probes = _extract_live_tool_probe_entries(payload)
+    payload_summary = _extract_live_tool_probe_summary(payload)
+    if source != "downstream_event" and not probes:
+        return
+
+    _LIVE_TOOL_PROBE_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    probe_path = _LIVE_TOOL_PROBE_DIRECTORY / f"{session_id}.jsonl"
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": source,
+        "payload_summary": payload_summary,
+        "probe_entries": probes,
+        "extracted_frontend_action": extracted_frontend_action,
+    }
+    with probe_path.open("a", encoding="utf-8") as file_obj:
+        file_obj.write(json.dumps(record, ensure_ascii=True))
+        file_obj.write("\n")
 
 
 def _summarize_live_tool_declarations() -> list[dict[str, object]]:
@@ -1115,6 +1474,9 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 session_service = create_adk_session_service()
 session_store = create_session_store()
 recording_store = SessionRecordingStore(Path(__file__).parent / "data" / "session_recordings")
+source_material_store = SessionSourceMaterialStore(
+    Path(__file__).parent / "data" / "session_source_materials"
+)
 key_moment_store = create_key_moment_store(
     Path(__file__).parent / "data" / "session_key_moments"
 )
@@ -1122,8 +1484,19 @@ notes_store = create_notes_store(Path(__file__).parent / "data" / "session_notes
 replay_status_store = create_replay_status_store(
     Path(__file__).parent / "data" / "session_replay_status"
 )
+grounding_status_store = create_grounding_status_store(
+    Path(__file__).parent / "data" / "session_grounding_status"
+)
+study_plan_store = create_study_plan_store(
+    Path(__file__).parent / "data" / "session_study_plans"
+)
+source_summary_store = create_source_summary_store(
+    Path(__file__).parent / "data" / "session_source_summaries"
+)
 pending_replay_jobs: set[tuple[str, str]] = set()
 replay_job_tasks: set[asyncio.Task[None]] = set()
+pending_grounding_jobs: set[str] = set()
+grounding_job_tasks: set[asyncio.Task[None]] = set()
 
 # Define your runner
 runner = Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
@@ -1247,10 +1620,76 @@ def _read_session_replay_status(session: SessionRecord) -> SessionReplayStatus:
     return _build_session_replay_status(session, persist=False)
 
 
+def _read_session_grounding_status(session: SessionRecord) -> SessionGroundingStatus:
+    return grounding_status_store.get_status(session.session_id) or default_grounding_status(
+        session.session_id
+    )
+
+
+def _build_source_material_hash(
+    session: SessionRecord, parsed_sources: list[ParsedSource]
+) -> str:
+    source_payload = "\n\n".join(
+        f"{source.source_id}|{source.source_type}|{source.title}|{source.mime_type}|{source.text}"
+        for source in parsed_sources
+    )
+    payload = "\n".join(
+        [session.session_id, session.topic, session.goal or "", session.mode, session.level, source_payload]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _combine_grounding_warnings(*warnings: str | None) -> str | None:
+    messages = [warning.strip() for warning in warnings if warning and warning.strip()]
+    if not messages:
+        return None
+    return " | ".join(messages)
+
+
+def _build_grounding_error_updates(
+    session_id: str, message: str
+) -> dict[str, object]:
+    current_status = grounding_status_store.get_status(session_id) or default_grounding_status(
+        session_id
+    )
+
+    updates: dict[str, object] = {
+        "grounding_error": message,
+        "requested_at": current_status.requested_at or datetime.now(timezone.utc).isoformat(),
+        "rag_corpus_id": current_status.rag_corpus_id,
+    }
+
+    if current_status.study_plan_status != "ready":
+        updates["study_plan_status"] = "failed"
+        updates["study_plan_error"] = message
+    if current_status.source_summary_status != "ready":
+        updates["source_summary_status"] = "failed"
+        updates["source_summary_error"] = message
+    if current_status.knowledge_index_status != "ready":
+        updates["knowledge_index_status"] = "failed"
+        updates["knowledge_index_error"] = message
+
+    return updates
+
+
 async def _delete_session_everywhere(session: SessionRecord) -> None:
+    current_grounding_status = grounding_status_store.get_status(session.session_id)
+    if current_grounding_status and current_grounding_status.rag_corpus_id:
+        try:
+            await delete_session_rag_corpus(current_grounding_status.rag_corpus_id)
+        except Exception:
+            logger.exception(
+                "Failed to delete Vertex RAG corpus for session_id=%s",
+                session.session_id,
+            )
+
     key_moment_store.delete_artifact(session.session_id)
     notes_store.delete_artifact(session.session_id)
     replay_status_store.delete_status(session.session_id)
+    grounding_status_store.delete_status(session.session_id)
+    study_plan_store.delete_artifact(session.session_id)
+    source_summary_store.delete_artifact(session.session_id)
+    source_material_store.delete_session(session.session_id)
     recording_store.delete_session(session.session_id)
     session_store.delete_session(session.session_id)
     flashcard_session_store.clear(user_id=session.user_id, session_id=session.session_id)
@@ -1315,6 +1754,215 @@ def _enqueue_replay_job(
     )
     replay_job_tasks.add(task)
     task.add_done_callback(replay_job_tasks.discard)
+
+
+def _enqueue_grounding_job(session_id: str, coroutine_factory) -> None:
+    if session_id in pending_grounding_jobs:
+        return
+
+    pending_grounding_jobs.add(session_id)
+
+    async def runner_wrapper() -> None:
+        try:
+            await coroutine_factory()
+        finally:
+            pending_grounding_jobs.discard(session_id)
+
+    task = asyncio.create_task(
+        runner_wrapper(),
+        name=f"grounding-{session_id}",
+    )
+    grounding_job_tasks.add(task)
+    task.add_done_callback(grounding_job_tasks.discard)
+
+
+async def _run_grounding_job(session_id: str) -> None:
+    session = session_store.get_session(session_id)
+    if session is None:
+        grounding_status_store.merge_status(
+            session_id,
+            **_build_grounding_error_updates(session_id, "Session not found"),
+        )
+        return
+
+    try:
+        grounding_status_store.merge_status(
+            session_id,
+            requested_at=(
+                grounding_status_store.get_status(session_id).requested_at
+                if grounding_status_store.get_status(session_id)
+                else datetime.now(timezone.utc).isoformat()
+            ),
+            grounding_error=None,
+            study_plan_status="pending",
+            study_plan_error=None,
+            source_summary_status="processing",
+            source_summary_error=None,
+            knowledge_index_status="processing",
+            knowledge_index_error=None,
+        )
+
+        prompt_source = build_prompt_parsed_source(session.topic, session.goal)
+        uploaded_materials = source_material_store.list_materials(session_id)
+        extraction_result = extract_parsed_sources(
+            uploaded_materials,
+            read_bytes=source_material_store.get_material_bytes,
+        )
+        attachment_sources = extraction_result.parsed_sources
+        has_prompt = prompt_source is not None
+        has_uploaded_materials = bool(uploaded_materials)
+
+        if not has_prompt or (has_uploaded_materials and not attachment_sources):
+            failure_bits: list[str] = []
+            if not has_prompt:
+                failure_bits.append("Learner prompt is required for grounding")
+            if has_uploaded_materials and not attachment_sources:
+                failure_bits.append("At least one uploaded source material must extract successfully")
+            if extraction_result.failures:
+                failure_bits.append(
+                    "Extraction failures: "
+                    + "; ".join(
+                        f"{failure.title}: {failure.error}"
+                        for failure in extraction_result.failures
+                    )
+                )
+            raise ValueError(". ".join(failure_bits))
+
+        parsed_sources = [prompt_source, *attachment_sources] if prompt_source else attachment_sources
+        source_material_hash = _build_source_material_hash(session, parsed_sources)
+        extraction_warning = (
+            "Some source materials were skipped: "
+            + "; ".join(
+                f"{failure.title}: {failure.error}" for failure in extraction_result.failures
+            )
+            if extraction_result.failures
+            else None
+        )
+
+        document_summary_warning: str | None = None
+        source_summary_for_study_plan = None
+        if attachment_sources:
+            document_summary_result = await generate_document_summary_result(attachment_sources)
+            document_summary_warning = document_summary_result.warning
+            source_summary_artifact = await generate_source_summary_artifact(
+                session_id=session.session_id,
+                document_summaries=document_summary_result.summaries,
+                source_material_hash=source_material_hash,
+            )
+            source_summary_store.save_artifact(source_summary_artifact)
+            source_summary_for_study_plan = source_summary_artifact.source_summary
+            grounding_status_store.merge_status(
+                session_id,
+                source_summary_status="ready",
+                source_summary_error=None,
+                study_plan_status="processing",
+                study_plan_error=None,
+            )
+        else:
+            grounding_status_store.merge_status(
+                session_id,
+                source_summary_status="unavailable",
+                source_summary_error=None,
+                knowledge_index_status="unavailable",
+                knowledge_index_error=None,
+                rag_corpus_id=None,
+                study_plan_status="processing",
+                study_plan_error=None,
+            )
+
+        study_plan_artifact = await generate_study_plan_artifact(
+            session=session,
+            source_summary=source_summary_for_study_plan,
+            source_material_hash=source_material_hash,
+        )
+        study_plan_store.save_artifact(study_plan_artifact)
+        grounding_status_store.merge_status(
+            session_id,
+            study_plan_status="ready",
+            study_plan_error=None,
+        )
+
+        if attachment_sources:
+            rag_result = await prepare_session_rag_corpus(
+                session=session,
+                materials=uploaded_materials,
+                source_material_store=source_material_store,
+                existing_rag_corpus_id=(
+                    grounding_status_store.get_status(session_id).rag_corpus_id
+                    if grounding_status_store.get_status(session_id)
+                    else None
+                ),
+            )
+
+            grounding_status_store.merge_status(
+                session_id,
+                knowledge_index_status="ready",
+                knowledge_index_error=None,
+                grounding_error=_combine_grounding_warnings(
+                    extraction_warning,
+                    document_summary_warning,
+                ),
+                rag_corpus_id=rag_result.rag_corpus_id,
+            )
+        else:
+            grounding_status_store.merge_status(
+                session_id,
+                grounding_error=extraction_warning,
+            )
+    except VertexSessionRagPreparationError as exc:
+        logger.exception("Vertex RAG preparation failed for session_id=%s", session_id)
+        updates = _build_grounding_error_updates(session_id, str(exc))
+        if exc.rag_corpus_id:
+            updates["rag_corpus_id"] = exc.rag_corpus_id
+        grounding_status_store.merge_status(session_id, **updates)
+    except Exception as exc:
+        logger.exception("Grounding job failed for session_id=%s", session_id)
+        grounding_status_store.merge_status(
+            session_id,
+            **_build_grounding_error_updates(session_id, str(exc)),
+        )
+
+
+def _trigger_session_grounding_job(session: SessionRecord) -> SessionGroundingStatus:
+    current_status = _read_session_grounding_status(session)
+    if current_status.grounding_status == "ready":
+        return current_status
+
+    should_reset = current_status.grounding_status in {"failed", "unavailable"}
+    if should_reset:
+        study_plan_store.delete_artifact(session.session_id)
+        source_summary_store.delete_artifact(session.session_id)
+
+    requested_at = current_status.requested_at or datetime.now(timezone.utc).isoformat()
+    grounding_status_store.merge_status(
+        session.session_id,
+        requested_at=requested_at,
+        grounding_error=None,
+        study_plan_status=(
+            "pending"
+            if should_reset or current_status.study_plan_status == "idle"
+            else current_status.study_plan_status
+        ),
+        study_plan_error=None if should_reset else current_status.study_plan_error,
+        source_summary_status=(
+            "pending"
+            if should_reset or current_status.source_summary_status == "idle"
+            else current_status.source_summary_status
+        ),
+        source_summary_error=None if should_reset else current_status.source_summary_error,
+        knowledge_index_status=(
+            "pending"
+            if should_reset or current_status.knowledge_index_status == "idle"
+            else current_status.knowledge_index_status
+        ),
+        knowledge_index_error=None if should_reset else current_status.knowledge_index_error,
+        rag_corpus_id=current_status.rag_corpus_id,
+    )
+    _enqueue_grounding_job(
+        session.session_id,
+        lambda: _run_grounding_job(session.session_id),
+    )
+    return _read_session_grounding_status(session)
 
 
 async def _run_recording_finalize_job(session_id: str) -> None:
@@ -1660,6 +2308,20 @@ async def get_session_notes(session_id: str):
 
 
 @app.get(
+    "/v1/sessions/{session_id}/grounding-status",
+    response_model=SessionGroundingStatus,
+)
+async def get_session_grounding_status(session_id: str):
+    """Return grounding readiness for a session."""
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return _read_session_grounding_status(session)
+
+
+@app.get(
     "/v1/sessions/{session_id}/replay-status",
     response_model=SessionReplayStatus,
 )
@@ -1796,6 +2458,43 @@ async def get_session_recordings(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
     return recording_store.get_manifest(session_id)
+
+
+@app.post(
+    "/v1/sessions/{session_id}/source-materials",
+    response_model=SessionSourceMaterialManifest,
+    status_code=201,
+)
+async def upload_session_source_materials(
+    session_id: str,
+    files: list[UploadFile] = File(...),
+):
+    """Persist uploaded source materials for a session."""
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one source material is required")
+
+    for upload in files:
+        file_name = upload.filename or "uploaded-source"
+        if not is_supported_source_material(file_name, upload.content_type):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported source material type: {file_name}",
+            )
+
+    manifest: SessionSourceMaterialManifest | None = None
+    for upload in files:
+        manifest = source_material_store.save_material(
+            session_id=session_id,
+            file_bytes=await upload.read(),
+            original_filename=upload.filename,
+            mime_type=upload.content_type,
+        )
+
+    return manifest or source_material_store.get_manifest(session_id)
 
 
 @app.post(
@@ -1997,6 +2696,20 @@ async def complete_session(session_id: str):
 
 
 @app.post(
+    "/v1/sessions/{session_id}/grounding:start",
+    response_model=SessionGroundingStatus,
+)
+async def start_session_grounding(session_id: str):
+    """Start or confirm the pre-session grounding job for a session."""
+
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return _trigger_session_grounding_job(session)
+
+
+@app.post(
     "/v1/dev/widgets/reason",
     response_model=WidgetReasonerResponse,
 )
@@ -2028,7 +2741,7 @@ async def websocket_endpoint(
     websocket: WebSocket,
     user_id: str,
     session_id: str,
-    proactivity: bool = False,
+    proactivity: bool = True,
     affective_dialog: bool = False,
 ) -> None:
     """WebSocket endpoint for bidirectional streaming with ADK.
@@ -2047,12 +2760,16 @@ async def websocket_endpoint(
 
     requested_user_id = user_id
     user_id = session_record.user_id
+    session_persona = normalize_session_persona(session_record.persona)
+    persona_voice_name = get_persona_voice_name(session_persona)
     logger.info(
         "WebSocket session starting: requested_user_id=%s resolved_user_id=%s session_id=%s "
-        "proactivity=%s affective_dialog=%s",
+        "persona=%s voice=%s proactivity=%s affective_dialog=%s",
         requested_user_id,
         user_id,
         session_id,
+        session_persona,
+        persona_voice_name,
         proactivity,
         affective_dialog,
     )
@@ -2081,6 +2798,14 @@ async def websocket_endpoint(
         run_config = RunConfig(
             streaming_mode=StreamingMode.BIDI,
             response_modalities=response_modalities,
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=persona_voice_name
+                    )
+                ),
+                language_code="en-US",
+            ),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             session_resumption=types.SessionResumptionConfig(),
@@ -2092,6 +2817,7 @@ async def websocket_endpoint(
         logger.debug(
             f"Native audio model detected: {model_name}, "
             f"using AUDIO response modality, "
+            f"voice={persona_voice_name}, "
             f"proactivity={proactivity}, affective_dialog={affective_dialog}"
         )
     else:
@@ -2124,6 +2850,10 @@ async def websocket_endpoint(
         user_id=user_id,
         session_id=session_id,
     )
+    await _sync_adk_persona_state(session_record=session_record)
+    runtime_grounding_bundle = await _sync_adk_runtime_grounding_state(
+        session_record=session_record
+    )
     await _load_adk_session_summary(session_record, ensure_exists=False)
     adk_session_before_live = await session_service.get_session(
         app_name=APP_NAME,
@@ -2139,13 +2869,31 @@ async def websocket_endpoint(
         getattr(adk_session_before_live, "state", {}) if adk_session_before_live else {}
     )
     conversation_memory = (
-        adk_session_state_before_live.get("conversation_memory")
+        adk_session_state_before_live.get(CONVERSATION_MEMORY_STATE_KEY)
+        if isinstance(adk_session_state_before_live, dict)
+        else None
+    )
+    grounded_study_plan_text = (
+        adk_session_state_before_live.get(ORCHESTRATOR_STUDY_PLAN_STATE_KEY)
+        if isinstance(adk_session_state_before_live, dict)
+        else None
+    )
+    persona_overlay_text = (
+        adk_session_state_before_live.get(ORCHESTRATOR_PERSONA_STATE_KEY)
         if isinstance(adk_session_state_before_live, dict)
         else None
     )
     static_instruction_text = get_static_instruction_text()
     final_instruction_text = build_instruction_text(
-        conversation_memory if isinstance(conversation_memory, str) else None
+        memory=conversation_memory if isinstance(conversation_memory, str) else None,
+        study_plan_text=(
+            grounded_study_plan_text
+            if isinstance(grounded_study_plan_text, str)
+            else None
+        ),
+        persona_overlay_text=(
+            persona_overlay_text if isinstance(persona_overlay_text, str) else None
+        ),
     )
     tool_declaration_summaries = _summarize_live_tool_declarations()
     logger.info(
@@ -2170,6 +2918,45 @@ async def websocket_endpoint(
     )
     if disable_session_resumption:
         await _reset_adk_session_for_reconnect(session_record=session_record)
+        await _sync_adk_persona_state(session_record=session_record)
+        runtime_grounding_bundle = await _sync_adk_runtime_grounding_state(
+            session_record=session_record
+        )
+        await _load_adk_session_summary(session_record, ensure_exists=False)
+        adk_session_before_live = await session_service.get_session(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        adk_session_state_before_live = (
+            getattr(adk_session_before_live, "state", {}) if adk_session_before_live else {}
+        )
+        conversation_memory = (
+            adk_session_state_before_live.get(CONVERSATION_MEMORY_STATE_KEY)
+            if isinstance(adk_session_state_before_live, dict)
+            else None
+        )
+        grounded_study_plan_text = (
+            adk_session_state_before_live.get(ORCHESTRATOR_STUDY_PLAN_STATE_KEY)
+            if isinstance(adk_session_state_before_live, dict)
+            else None
+        )
+        persona_overlay_text = (
+            adk_session_state_before_live.get(ORCHESTRATOR_PERSONA_STATE_KEY)
+            if isinstance(adk_session_state_before_live, dict)
+            else None
+        )
+        final_instruction_text = build_instruction_text(
+            memory=conversation_memory if isinstance(conversation_memory, str) else None,
+            study_plan_text=(
+                grounded_study_plan_text
+                if isinstance(grounded_study_plan_text, str)
+                else None
+            ),
+            persona_overlay_text=(
+                persona_overlay_text if isinstance(persona_overlay_text, str) else None
+            ),
+        )
 
     live_request_queue = LiveRequestQueue()
     shutdown_started = asyncio.Event()
@@ -2551,14 +3338,70 @@ async def websocket_endpoint(
 
     async def _send_frontend_action_message(frontend_action: dict[str, object]) -> None:
         logger.debug("Sending frontend action: %s", json.dumps(frontend_action))
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "frontend_action",
-                    "action": frontend_action,
-                }
+        action_type = frontend_action.get("type")
+        source_tool = frontend_action.get("source_tool")
+        job_id = frontend_action.get("job_id")
+        if (
+            isinstance(action_type, str)
+            and isinstance(source_tool, str)
+            and isinstance(job_id, str)
+            and job_id.strip()
+        ):
+            canvas_context_request_store.append_trace_event(
+                user_id=user_id,
+                session_id=session_id,
+                job_id=job_id,
+                event={
+                    "event": "frontend_action_send_started",
+                    "action_type": action_type,
+                    "source_tool": source_tool,
+                },
             )
-        )
+        try:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "frontend_action",
+                        "action": frontend_action,
+                    }
+                )
+            )
+        except Exception as exc:
+            if (
+                isinstance(action_type, str)
+                and isinstance(source_tool, str)
+                and isinstance(job_id, str)
+                and job_id.strip()
+            ):
+                canvas_context_request_store.append_trace_event(
+                    user_id=user_id,
+                    session_id=session_id,
+                    job_id=job_id,
+                    event={
+                        "event": "frontend_action_send_failed",
+                        "action_type": action_type,
+                        "source_tool": source_tool,
+                        "error": str(exc),
+                        "error_type": exc.__class__.__name__,
+                    },
+                )
+            raise
+        if (
+            isinstance(action_type, str)
+            and isinstance(source_tool, str)
+            and isinstance(job_id, str)
+            and job_id.strip()
+        ):
+            canvas_context_request_store.append_trace_event(
+                user_id=user_id,
+                session_id=session_id,
+                job_id=job_id,
+                event={
+                    "event": "frontend_action_sent",
+                    "action_type": action_type,
+                    "source_tool": source_tool,
+                },
+            )
 
     async def _send_interpreter_lifecycle_event(
         lifecycle_event: dict[str, object]
@@ -2745,6 +3588,27 @@ async def websocket_endpoint(
                     ack = _normalize_frontend_ack(json_message.get("ack"))
                     if ack is None:
                         continue
+                    ack_job_id = ack.get("job_id")
+                    ack_action_type = ack.get("action_type")
+                    ack_source_tool = ack.get("source_tool")
+                    if (
+                        isinstance(ack_job_id, str)
+                        and ack_job_id.strip()
+                        and isinstance(ack_action_type, str)
+                        and isinstance(ack_source_tool, str)
+                    ):
+                        canvas_context_request_store.append_trace_event(
+                            user_id=user_id,
+                            session_id=session_id,
+                            job_id=ack_job_id,
+                            event={
+                                "event": "frontend_ack_received",
+                                "action_type": ack_action_type,
+                                "source_tool": ack_source_tool,
+                                "ack_status": ack.get("status"),
+                                "ack_summary": ack.get("summary"),
+                            },
+                        )
                     semantic_text = _apply_flashcard_ack_state(
                         ack,
                         user_id,
@@ -2771,6 +3635,7 @@ async def websocket_endpoint(
 
                 elif json_message.get("type") == "canvas_context_response":
                     context_payload = json_message.get("context")
+                    context_trace = json_message.get("trace")
                     source_tool = json_message.get("source_tool")
                     job_id = json_message.get("job_id")
                     if (
@@ -2784,11 +3649,33 @@ async def websocket_endpoint(
                             session_id=session_id,
                             payload=context_payload,
                         )
-                        canvas_context_request_store.resolve_response(
+                        canvas_context_request_store.append_trace_event(
+                            user_id=user_id,
+                            session_id=session_id,
+                            job_id=job_id,
+                            event={
+                                "event": "response_received_by_backend",
+                                "source_tool": source_tool,
+                                "frontend_trace": (
+                                    context_trace if _is_record(context_trace) else None
+                                ),
+                            },
+                        )
+                        matched_pending_request = canvas_context_request_store.resolve_response(
                             user_id=user_id,
                             session_id=session_id,
                             job_id=job_id,
                             payload=context_payload,
+                        )
+                        canvas_context_request_store.append_trace_event(
+                            user_id=user_id,
+                            session_id=session_id,
+                            job_id=job_id,
+                            event={
+                                "event": "response_match_result",
+                                "source_tool": source_tool,
+                                "matched_pending_request": matched_pending_request,
+                            },
                         )
                         if source_tool == INTERPRETER_REASONING_SOURCE_TOOL:
                             pending_job = await interpreter_snapshot_job_store.pop_job_if_current(
@@ -2803,6 +3690,11 @@ async def websocket_endpoint(
                                     canvas_context=context_payload,
                                     compacted_session_context=pending_job.compacted_session_context,
                                     flashcard_snapshot=pending_job.flashcard_snapshot,
+                                    grounding=(
+                                        runtime_grounding_bundle.interpreter_grounding
+                                        if runtime_grounding_bundle is not None
+                                        else None
+                                    ),
                                 )
                                 packet_payload = packet.model_dump(
                                     mode="python", by_alias=False
@@ -2825,6 +3717,27 @@ async def websocket_endpoint(
                                     pending_job.canvas_window.id,
                                     job_id,
                                 )
+
+                elif json_message.get("type") == "canvas_context_trace":
+                    trace_payload = json_message.get("trace")
+                    source_tool = json_message.get("source_tool")
+                    job_id = json_message.get("job_id")
+                    if (
+                        _is_record(trace_payload)
+                        and isinstance(source_tool, str)
+                        and isinstance(job_id, str)
+                        and job_id.strip()
+                    ):
+                        canvas_context_request_store.append_trace_event(
+                            user_id=user_id,
+                            session_id=session_id,
+                            job_id=job_id,
+                            event={
+                                "event": "frontend_trace",
+                                "source_tool": source_tool,
+                                "trace": trace_payload,
+                            },
+                        )
 
                 elif json_message.get("type") == "canvas_activity_window":
                     window_payload = _normalize_canvas_activity_window(
@@ -2969,6 +3882,12 @@ async def websocket_endpoint(
                 event_json = event.model_dump_json(exclude_none=True, by_alias=True)
                 event_payload = json.loads(event_json)
                 frontend_action = extract_frontend_action(event_payload)
+                _write_live_tool_probe(
+                    session_id=session_id,
+                    source="downstream_event",
+                    payload=event_payload,
+                    extracted_frontend_action=frontend_action,
+                )
                 await websocket.send_text(event_json)
 
                 # Parse event for transcript persistence
@@ -3040,6 +3959,12 @@ async def websocket_endpoint(
                 json.dumps(_build_tool_result_message(result))
             )
             frontend_action = extract_frontend_action(result)
+            _write_live_tool_probe(
+                session_id=session_id,
+                source=task_label,
+                payload=result,
+                extracted_frontend_action=frontend_action,
+            )
             if frontend_action is not None:
                 await _send_frontend_action_message(frontend_action)
             semantic_update = _build_background_tool_semantic_update(result)

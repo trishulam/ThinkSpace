@@ -125,6 +125,7 @@ async def _run_canvas_widget_job(
             "prompt": prompt,
             "placement_hint": placement_hint,
         },
+        "context_request_trace": None,
         "context_summary": None,
         "context_wait": None,
         "artifact_generation": None,
@@ -142,6 +143,13 @@ async def _run_canvas_widget_job(
             session_id=session_id,
             job_id=job_id,
             timeout_s=CANVAS_CONTEXT_REQUEST_TIMEOUT_S,
+        )
+        trace["context_request_trace"] = (
+            canvas_context_request_store.get_trace_snapshot(
+                user_id=user_id,
+                session_id=session_id,
+                job_id=job_id,
+            )
         )
         context_response_received_at = now_iso()
         trace["context_response_received_at"] = context_response_received_at
@@ -233,6 +241,24 @@ async def _run_canvas_widget_job(
             job_id,
             tool_name,
         )
+        if trace.get("context_request_trace") is None:
+            trace["context_request_trace"] = (
+                canvas_context_request_store.get_trace_snapshot(
+                    user_id=user_id,
+                    session_id=session_id,
+                    job_id=job_id,
+                )
+            )
+        if isinstance(exc, asyncio.TimeoutError):
+            trace["context_wait"] = {
+                "started_at": trace.get("context_request_started_at"),
+                "timed_out_at": now_iso(),
+                "duration_ms": max(
+                    0, int((time.perf_counter() - context_wait_started_perf) * 1000)
+                ),
+                "timeout_s": CANVAS_CONTEXT_REQUEST_TIMEOUT_S,
+                "status": "timed_out",
+            }
         trace["status"] = "failed"
         trace["errors"] = {
             "message": str(exc),
@@ -249,6 +275,13 @@ async def _run_canvas_widget_job(
         trace["total_duration_ms"] = max(
             0, int((time.perf_counter() - job_started_perf) * 1000)
         )
+        final_context_request_trace = canvas_context_request_store.pop_trace_snapshot(
+            user_id=user_id,
+            session_id=session_id,
+            job_id=job_id,
+        )
+        if final_context_request_trace is not None:
+            trace["context_request_trace"] = final_context_request_trace
         trace_path = write_generate_widget_trace(job_id, trace)
         logger.info("Wrote widget generation trace: %s", trace_path)
 
@@ -318,7 +351,7 @@ def _start_widget_job(
         name=f"{tool_name.replace('.', '-')}-{job_id}",
     )
 
-    return _build_tool_result(
+    accepted_result = _build_tool_result(
         status="accepted",
         tool=tool_name,
         summary=(
@@ -340,6 +373,15 @@ def _start_widget_job(
         ),
         job_id=job_id,
     )
+    asyncio.get_running_loop().create_task(
+        publish_canvas_widget_job_result(
+            user_id=user_id,
+            session_id=session_id,
+            result=accepted_result,
+        ),
+        name=f"{tool_name.replace('.', '-')}-accepted-{job_id}",
+    )
+    return accepted_result
 
 
 def canvas_generate_graph(

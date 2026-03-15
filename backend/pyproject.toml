@@ -17,9 +17,11 @@ dependencies = [
     "python-multipart>=0.0.20",
     "python-dotenv>=1.0.0",
     "uvicorn[standard]>=0.32.0",
+    "google-cloud-aiplatform>=1.133.0",
     "google-cloud-firestore>=2.24.0",
     "google-cloud-storage>=3.8.0",
     "pg8000>=1.31.5",
+    "pypdf>=6.8.0",
 ]
 
 [project.optional-dependencies]

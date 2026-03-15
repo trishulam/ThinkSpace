@@ -26,6 +26,11 @@ This directory contains shared architecture and product-design notes for the pro
   for locking `canvas.generate_visual` scope, contracts, and phased
   implementation before coding.
 
+- `study-plan-and-knowledge-grounding-scratchpad.md`
+  Working scratchpad for the pre-session grounding story. Use this as the
+  tactical pad for scoping `study_plan`, `source_summary`, `knowledge.lookup`,
+  and the async material-indexing flow before coding.
+
 - `implementation-stories.md`
   Ordered implementation story plan with dependencies, tasks, execution notes, and a two-day coding sequence for building the full proactive tutor system.
 
@@ -35,16 +40,14 @@ This directory contains shared architecture and product-design notes for the pro
 - `adk-live-integration.md`
   Official-ADK-aligned notes for how Google ADK Live maps onto the ThinkSpace architecture, including `send_content()`, `send_realtime()`, `run_live()`, event handling, modality constraints, and tool execution implications.
 
-<<<<<<< Updated upstream
 - `session-persistence-architecture.md`
   Shared persistence design for durable session management across the GCP frontend, Cloudflare canvas agent, and GCP FastAPI ADK backend, including session metadata, transcript storage, Tldraw checkpointing, and resume flows.
-=======
+
 - `gemini-live-tool-integration-reference.md`
   End-to-end implementation reference for adding tool-driven behavior to the
   ThinkSpace Gemini Live agent, including backend/frontend contracts, ack
   handling, semantic feedback timing, flashcards lessons learned, and the
   recommended pattern for future tool families.
->>>>>>> Stashed changes
 
 ## Related
 

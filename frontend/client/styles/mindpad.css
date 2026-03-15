@@ -3705,25 +3705,48 @@
   position: absolute;
   top: calc(100% + 10px);
   left: 0;
-  width: 230px;
-  padding: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 16px;
-  background: rgba(10, 11, 18, 0.98);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.32);
+  width: 272px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(17, 24, 39, 0.98) 0%, rgba(8, 11, 18, 0.98) 100%);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
   text-align: left;
+  backdrop-filter: blur(18px);
 }
 
 .ts-home-landing-prompt-popover-action {
   width: 100%;
   min-height: 38px;
-  border: 1px solid rgba(109, 63, 242, 0.18);
-  background: rgba(109, 63, 242, 0.1);
+  border: 1px solid rgba(109, 63, 242, 0.16);
+  background: linear-gradient(180deg, rgba(109, 63, 242, 0.16) 0%, rgba(109, 63, 242, 0.1) 100%);
   color: #f8fafc;
   border-radius: 12px;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.ts-home-landing-prompt-popover-action:hover {
+  border-color: rgba(109, 63, 242, 0.3);
+  background: linear-gradient(180deg, rgba(109, 63, 242, 0.2) 0%, rgba(109, 63, 242, 0.12) 100%);
+}
+
+.ts-home-landing-prompt-popover-action:active {
+  transform: translateY(1px);
+}
+
+.ts-home-landing-prompt-popover-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 112px);
+  gap: 8px;
 }
 
 .ts-home-landing-prompt-popover-note {
@@ -3731,6 +3754,114 @@
   color: rgba(148, 163, 184, 0.74);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.ts-home-landing-prompt-persona {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.ts-home-landing-prompt-persona-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ts-home-landing-prompt-persona-label {
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ts-home-landing-prompt-persona-voice {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(226, 232, 240, 0.72);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ts-home-landing-prompt-persona-select {
+  position: relative;
+}
+
+.ts-home-landing-prompt-persona-select select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 38px 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--mindpad-font-family);
+  appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23CBD5E1' stroke-linecap='square' stroke-linejoin='miter' stroke-width='1.5' d='M5 7.5 10 12.5l5-5'/%3e%3c/svg%3e");
+  background-position: right 12px center;
+  background-repeat: no-repeat;
+  background-size: 18px;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.ts-home-landing-prompt-persona-select select:focus {
+  outline: none;
+  border-color: rgba(109, 63, 242, 0.42);
+  box-shadow: 0 0 0 4px rgba(109, 63, 242, 0.12);
+}
+
+.ts-home-landing-prompt-persona-card {
+  position: relative;
+  overflow: hidden;
+  padding: 12px 12px 11px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(109, 63, 242, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
+}
+
+.ts-home-landing-prompt-persona-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, rgba(129, 140, 248, 0.95) 0%, rgba(109, 63, 242, 0.88) 100%);
+}
+
+.ts-home-landing-prompt-persona-card-copy {
+  display: grid;
+  gap: 4px;
+  padding-left: 8px;
+}
+
+.ts-home-landing-prompt-persona-name {
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ts-home-landing-prompt-persona-helper {
+  margin: 0;
+  color: rgba(148, 163, 184, 0.74);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .ts-home-landing-prompt-file-list {

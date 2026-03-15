@@ -9,8 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Protocol
 
-from google.cloud import firestore
 from pydantic import BaseModel, ConfigDict
+
+from google_cloud_clients import get_firestore_client
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,7 @@ class FirestoreReplayStatusStore:
         prefix: str = "thinkspace",
         database: str | None = None,
     ) -> None:
-        self._db = firestore.Client(project=project, database=database)
+        self._db = get_firestore_client(project=project, database=database)
         self._collection = self._db.collection(f"{prefix}_session_replay_status")
 
     def get_status(self, session_id: str) -> SessionReplayStatus | None:

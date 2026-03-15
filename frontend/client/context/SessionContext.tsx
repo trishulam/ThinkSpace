@@ -13,6 +13,7 @@ import {
   listSessions,
 } from "../api/sessions";
 import { NewSessionData, Session } from "../types/session";
+import { DEFAULT_SESSION_PERSONA } from "../config/personas";
 
 interface SessionContextType {
   sessions: Session[];
@@ -37,7 +38,8 @@ const SESSION_CACHE_KEY = "thinkspace:session-cache";
 let cachedSessionsMemory: Session[] | null = null;
 let sessionsRequestPromise: Promise<Session[]> | null = null;
 
-type StoredSession = Omit<Session, "lastActive" | "createdAt" | "updatedAt"> & {
+type StoredSession = Omit<Session, "lastActive" | "createdAt" | "updatedAt" | "persona"> & {
+  persona?: Session["persona"];
   lastActive: string;
   createdAt: string;
   updatedAt: string;
@@ -45,6 +47,7 @@ type StoredSession = Omit<Session, "lastActive" | "createdAt" | "updatedAt"> & {
 
 const hydrateStoredSession = (session: StoredSession): Session => ({
   ...session,
+  persona: session.persona ?? DEFAULT_SESSION_PERSONA,
   lastActive: new Date(session.lastActive),
   createdAt: new Date(session.createdAt),
   updatedAt: new Date(session.updatedAt),

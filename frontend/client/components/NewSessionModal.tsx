@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { NewSessionData } from '../types/session'
+import { DEFAULT_SESSION_PERSONA, SESSION_PERSONAS } from '../config/personas'
 
 interface NewSessionModalProps {
   isOpen: boolean
@@ -24,7 +25,8 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     topic: '',
     goal: '',
     mode: 'guided',
-    level: 'beginner'
+    level: 'beginner',
+    persona: DEFAULT_SESSION_PERSONA
   })
 
   const [errors, setErrors] = useState<{ topic?: string }>({})
@@ -54,7 +56,8 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
       topic: '',
       goal: '',
       mode: 'guided',
-      level: 'beginner'
+      level: 'beginner',
+      persona: DEFAULT_SESSION_PERSONA
     })
     setErrors({})
   }
@@ -64,7 +67,8 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
       topic: '',
       goal: '',
       mode: 'guided',
-      level: 'beginner'
+      level: 'beginner',
+      persona: DEFAULT_SESSION_PERSONA
     })
     setErrors({})
     onClose()
@@ -165,6 +169,26 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                 >
                   Challenge
                 </button>
+              </div>
+            </div>
+
+            <div className="ts-session-form-group">
+              <label htmlFor="persona" className="ts-session-form-label">
+                Persona
+              </label>
+              <div className="ts-session-select">
+                <select
+                  id="persona"
+                  value={formData.persona}
+                  onChange={(e) => handleInputChange('persona', e.target.value as NewSessionData['persona'])}
+                  disabled={isSubmitting}
+                >
+                  {SESSION_PERSONAS.map((persona) => (
+                    <option key={persona.id} value={persona.id}>
+                      {persona.label} - {persona.helper}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 

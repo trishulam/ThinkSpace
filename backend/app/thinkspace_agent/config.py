@@ -8,6 +8,13 @@ DEFAULT_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_FLASHCARD_MODEL = "gemini-3-flash-preview"
 DEFAULT_KEY_MOMENT_MODEL = "gemini-3-flash-preview"
 DEFAULT_NOTES_MODEL = "gemini-3-flash-preview"
+DEFAULT_GROUNDING_SUMMARIZATION_MODEL = "gemini-3-flash-preview"
+DEFAULT_VERTEX_RAG_LOCATION = "us-central1"
+DEFAULT_VERTEX_RAG_EMBEDDING_MODEL = "publishers/google/models/text-embedding-005"
+DEFAULT_VERTEX_RAG_CHUNK_SIZE = 512
+DEFAULT_VERTEX_RAG_CHUNK_OVERLAP = 100
+DEFAULT_VERTEX_RAG_MAX_EMBEDDING_REQUESTS_PER_MIN = 900
+DEFAULT_VERTEX_RAG_VERIFICATION_TOP_K = 3
 DEFAULT_SESSION_COMPACTION_MODEL = "gemini-3-flash-preview"
 DEFAULT_CANVAS_INTERPRETER_MODEL = "gemini-3-flash-preview"
 DEFAULT_WIDGET_REASONER_MODEL = "gemini-3-flash-preview"
@@ -27,6 +34,16 @@ def _get_bool_env(name: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _get_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
 
 
 def get_agent_model() -> str:
@@ -59,6 +76,63 @@ def get_notes_generation_model() -> str:
     """Return the model used by the session notes generator."""
 
     return os.getenv("THINKSPACE_NOTES_MODEL", DEFAULT_NOTES_MODEL)
+
+
+def get_grounding_summarization_model() -> str:
+    """Return the model used by the grounding summarization pipeline."""
+
+    return os.getenv(
+        "THINKSPACE_GROUNDING_SUMMARIZATION_MODEL",
+        DEFAULT_GROUNDING_SUMMARIZATION_MODEL,
+    )
+
+
+def get_vertex_rag_location() -> str:
+    """Return the configured Vertex AI RAG region."""
+
+    return os.getenv("THINKSPACE_VERTEX_RAG_LOCATION", DEFAULT_VERTEX_RAG_LOCATION)
+
+
+def get_vertex_rag_embedding_model() -> str:
+    """Return the Vertex embedding model used for session corpora."""
+
+    return os.getenv(
+        "THINKSPACE_VERTEX_RAG_EMBEDDING_MODEL",
+        DEFAULT_VERTEX_RAG_EMBEDDING_MODEL,
+    )
+
+
+def get_vertex_rag_chunk_size() -> int:
+    """Return the chunk size used during RAG ingestion."""
+
+    return _get_int_env("THINKSPACE_VERTEX_RAG_CHUNK_SIZE", DEFAULT_VERTEX_RAG_CHUNK_SIZE)
+
+
+def get_vertex_rag_chunk_overlap() -> int:
+    """Return the chunk overlap used during RAG ingestion."""
+
+    return _get_int_env(
+        "THINKSPACE_VERTEX_RAG_CHUNK_OVERLAP",
+        DEFAULT_VERTEX_RAG_CHUNK_OVERLAP,
+    )
+
+
+def get_vertex_rag_max_embedding_requests_per_min() -> int:
+    """Return the per-minute embedding request cap for RAG ingestion."""
+
+    return _get_int_env(
+        "THINKSPACE_VERTEX_RAG_MAX_EMBEDDING_REQUESTS_PER_MIN",
+        DEFAULT_VERTEX_RAG_MAX_EMBEDDING_REQUESTS_PER_MIN,
+    )
+
+
+def get_vertex_rag_verification_top_k() -> int:
+    """Return the top-k used by the RAG smoke retrieval query."""
+
+    return _get_int_env(
+        "THINKSPACE_VERTEX_RAG_VERIFICATION_TOP_K",
+        DEFAULT_VERTEX_RAG_VERIFICATION_TOP_K,
+    )
 
 
 def get_session_compaction_model() -> str:

@@ -1,5 +1,6 @@
 import type { AgentLogEntry, LogEntryType } from "../types/agent-live";
 import type { NewSessionData, Session } from "../types/session";
+import { DEFAULT_SESSION_PERSONA } from "../config/personas";
 
 export interface ApiSession {
   sessionId: string;
@@ -8,6 +9,7 @@ export interface ApiSession {
   goal: string | null;
   mode: Session["mode"];
   level: Session["level"];
+  persona?: Session["persona"];
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -103,6 +105,26 @@ export interface ApiSessionRecordingManifest {
   updatedAt: string;
 }
 
+export interface ApiSourceMaterialRecord {
+  sourceId: string;
+  sessionId: string;
+  fileName: string;
+  relativePath: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  status: "ready" | "failed";
+  error: string | null;
+}
+
+export interface ApiSessionSourceMaterialManifest {
+  sessionId: string;
+  status: "idle" | "ready" | "failed";
+  materials: ApiSourceMaterialRecord[];
+  error: string | null;
+  updatedAt: string;
+}
+
 export interface ApiSessionKeyMoment {
   id: string;
   title: string;
@@ -164,6 +186,21 @@ export interface ApiSessionReplayStatus {
 
 export interface ApiSessionReplayStatusBatchResponse {
   statuses: ApiSessionReplayStatus[];
+}
+
+export interface ApiSessionGroundingStatus {
+  sessionId: string;
+  groundingStatus: "idle" | "processing" | "ready" | "failed" | "unavailable";
+  studyPlanStatus: ApiReplayArtifactStatus;
+  sourceSummaryStatus: ApiReplayArtifactStatus;
+  knowledgeIndexStatus: ApiReplayArtifactStatus;
+  groundingError: string | null;
+  studyPlanError: string | null;
+  sourceSummaryError: string | null;
+  knowledgeIndexError: string | null;
+  ragCorpusId: string | null;
+  requestedAt: string | null;
+  updatedAt: string;
 }
 
 export interface CreateSessionRequest extends NewSessionData {
@@ -247,6 +284,7 @@ export function apiSessionToSession(session: ApiSession): Session {
     goal: session.goal || undefined,
     mode: session.mode,
     level: session.level,
+    persona: session.persona ?? DEFAULT_SESSION_PERSONA,
     status: session.status,
     summary: session.summary || undefined,
     lastActive: new Date(session.lastActiveAt),
@@ -307,11 +345,48 @@ export async function getSessionRecordingManifest(
   );
 }
 
+export async function uploadSessionSourceMaterials(
+  sessionId: string,
+  files: File[]
+): Promise<ApiSessionSourceMaterialManifest> {
+  const formData = new FormData();
+  files.forEach((file) => {
+    formData.append("files", file, file.name);
+  });
+
+  return requestJson<ApiSessionSourceMaterialManifest>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/source-materials`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+}
+
 export async function getSessionReplayStatus(
   sessionId: string
 ): Promise<ApiSessionReplayStatus> {
   return requestJson<ApiSessionReplayStatus>(
     `/v1/sessions/${encodeURIComponent(sessionId)}/replay-status`
+  );
+}
+
+export async function getSessionGroundingStatus(
+  sessionId: string
+): Promise<ApiSessionGroundingStatus> {
+  return requestJson<ApiSessionGroundingStatus>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/grounding-status`
+  );
+}
+
+export async function startSessionGrounding(
+  sessionId: string
+): Promise<ApiSessionGroundingStatus> {
+  return requestJson<ApiSessionGroundingStatus>(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/grounding:start`,
+    {
+      method: "POST",
+    }
   );
 }
 

@@ -2,12 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSession } from "../context/SessionContext";
 import type { NewSessionData, Session } from "../types/session";
+import { DEFAULT_SESSION_PERSONA, isSessionPersonaId } from "../config/personas";
 
 const DEFAULT_SESSION: NewSessionData = {
   topic: "Canvas workspace",
   goal: "Explore ideas on the canvas",
   mode: "guided",
   level: "beginner",
+  persona: DEFAULT_SESSION_PERSONA,
 };
 
 function isMode(value: string | null): value is Session["mode"] {
@@ -31,12 +33,14 @@ export const CanvasEntry: React.FC = () => {
     const goal = searchParams.get("goal")?.trim();
     const mode = searchParams.get("mode");
     const level = searchParams.get("level");
+    const persona = searchParams.get("persona");
 
     return {
       topic: topic || DEFAULT_SESSION.topic,
       goal: goal || DEFAULT_SESSION.goal,
       mode: isMode(mode) ? mode : DEFAULT_SESSION.mode,
       level: isLevel(level) ? level : DEFAULT_SESSION.level,
+      persona: isSessionPersonaId(persona) ? persona : DEFAULT_SESSION.persona,
     };
   }, [searchParams]);
 
