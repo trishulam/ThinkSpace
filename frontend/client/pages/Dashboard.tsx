@@ -933,12 +933,9 @@ export const Dashboard: React.FC = () => {
                   Start your first session, ask questions out loud, and come back to replay the
                   recording with notes and key moments.
                 </p>
-                <button className="ts-home-landing-prompt-btn" onClick={handleOpenCanvas} type="button">
-                  Start Canvas Session
-                </button>
-                <button className="ts-home-landing-prompt-btn" onClick={handleNewSession} type="button">
+                {/* <button className="ts-home-landing-prompt-btn" onClick={handleNewSession} type="button">
                   Start First Session
-                </button>
+                </button> */}
               </section>
             ) : (
               <>

@@ -216,6 +216,11 @@ def _configure_logging() -> None:
         force=True,
     )
 
+    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvicorn_logger = logging.getLogger(logger_name)
+        for handler in uvicorn_logger.handlers:
+            handler.setFormatter(formatter)
+
     # Keep third-party internals from flooding logs during realtime audio sessions.
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
     logging.getLogger("google.auth._default").setLevel(logging.INFO)
