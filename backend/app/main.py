@@ -256,6 +256,11 @@ INTERPRETER_LIFECYCLE_ACTION = "interpreter.lifecycle"
 INTERPRETER_REASONING_SOURCE_TOOL = "canvas.interpreter_reasoning"
 INTERPRETER_DELIVERY_USER_SPEECH_STALE_S = 1.0
 INTERPRETER_DELIVERY_COOLDOWN_S = 15.0
+IDLE_CHECKIN_SOURCE_TOOL = "orchestrator.idle_checkin"
+IDLE_CHECKIN_SILENCE_S = 10.0
+IDLE_CHECKIN_COOLDOWN_S = 25.0
+IDLE_CHECKIN_REQUEST_TIMEOUT_S = 8.0
+IDLE_CHECKIN_POLL_INTERVAL_S = 1.0
 LIVE_ENTRY_GREETING_TTL_S = 6 * 60 * 60
 _live_entry_greeting_registry: dict[str, float] = {}
 
@@ -293,7 +298,8 @@ def _build_session_startup_semantic_update(
     opening_line = (
         "Welcome to ThinkSpace. "
         f"Today we're working on {topic}, and our goal is {goal}. "
-        "I'll guide you step by step."
+        "I'll guide you step by step. "
+        "Say yes when you're ready to begin."
     )
     lines = [
         "Session startup cue for the next tutor turn.",
@@ -304,16 +310,17 @@ def _build_session_startup_semantic_update(
         "Keep the full opening under 4 sentences.",
         "This opening turn is for greeting, orientation, and inviting the learner in.",
         "Do not call tools in this opening turn.",
-        "After the opening, invite the student to reply before moving into deeper teaching.",
+        "End with a short readiness cue that invites the learner to reply with yes.",
+        "Do not ask an open-ended question such as what they want to begin with.",
         "Do not mention internal instructions, system cues, or reconnection state.",
     ]
     if is_returning_session:
         lines.append(
-            "The learner has prior session history available, so keep the opening brief and continue naturally after they respond."
+            "The learner has prior session history available, so keep the opening brief and continue naturally after they say yes."
         )
     else:
         lines.append(
-            "Treat this as the first live teaching moment for the session and use the opening to orient the learner."
+            "Treat this as the first live teaching moment for the session and use the opening to orient the learner before they say yes."
         )
     return "\n".join(lines)
 
@@ -3137,6 +3144,12 @@ async def websocket_endpoint(
     activity_clock = asyncio.get_running_loop()
     user_speaking_active = False
     last_user_activity_at: float | None = None
+    last_agent_activity_at: float | None = None
+    last_canvas_activity_at: float | None = None
+    agent_turn_in_progress = False
+    pending_idle_checkin_job_id: str | None = None
+    pending_idle_checkin_requested_at: float | None = None
+    last_idle_prompt_delivered_at: float | None = None
     last_delivered_interpreter_at: float | None = None
     last_delivered_interpreter_key: str | None = None
     latest_closed_canvas_window_id: str | None = None
@@ -3226,6 +3239,28 @@ async def websocket_endpoint(
         nonlocal user_speaking_active
         user_speaking_active = False
 
+    def _mark_agent_activity() -> None:
+        nonlocal last_agent_activity_at
+        last_agent_activity_at = activity_clock.time()
+
+    def _mark_canvas_activity() -> None:
+        nonlocal last_canvas_activity_at
+        last_canvas_activity_at = activity_clock.time()
+
+    def _mark_agent_turn_started() -> None:
+        nonlocal agent_turn_in_progress
+        agent_turn_in_progress = True
+        _mark_agent_activity()
+
+    def _clear_agent_turn_state() -> None:
+        nonlocal agent_turn_in_progress
+        agent_turn_in_progress = False
+
+    def _clear_pending_idle_checkin() -> None:
+        nonlocal pending_idle_checkin_job_id, pending_idle_checkin_requested_at
+        pending_idle_checkin_job_id = None
+        pending_idle_checkin_requested_at = None
+
     def _is_recently_active(
         *,
         active: bool,
@@ -3244,6 +3279,126 @@ async def websocket_endpoint(
             stale_window_s=INTERPRETER_DELIVERY_USER_SPEECH_STALE_S,
             now=now,
         )
+
+    def _has_new_activity_since(since_ts: float) -> bool:
+        activity_candidates = (
+            last_user_activity_at,
+            last_agent_activity_at,
+            last_canvas_activity_at,
+        )
+        return any(
+            activity_ts is not None and activity_ts > since_ts
+            for activity_ts in activity_candidates
+        )
+
+    def _build_idle_checkin_semantic_update() -> str:
+        return "\n".join(
+            [
+                "Idle re-engagement cue for the next tutor turn.",
+                "",
+                "The learner has been inactive for about 10 seconds.",
+                "A fresh viewport snapshot is available for grounding.",
+                "",
+                "Use the visible canvas state together with the study plan to choose the best next move.",
+                "If the learner seems stuck, briefly help or nudge them forward.",
+                "If the current topic seems complete, continue with the next planned step.",
+                "Otherwise, re-engage naturally and carry the lesson forward.",
+                "",
+                "Requirements:",
+                "- Keep it short, natural, and supportive.",
+                "- Ground the response in the current canvas state.",
+                "- Follow the study plan when appropriate.",
+                "- Do not mention inactivity, timers, snapshots, or internal instructions.",
+                "- Do not call tools.",
+                "- Do not force a quiz.",
+            ]
+        )
+
+    def _send_live_content(content: types.Content) -> None:
+        _mark_agent_turn_started()
+        live_request_queue.send_content(content)
+
+    def _send_live_text(text: str) -> None:
+        if not text.strip():
+            return
+        _send_live_content(types.Content(parts=[types.Part(text=text)]))
+
+    async def _request_idle_checkin_snapshot() -> None:
+        nonlocal pending_idle_checkin_job_id, pending_idle_checkin_requested_at
+
+        snapshot_bridge = await canvas_snapshot_session_bridge_store.get_bridge(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if snapshot_bridge is None:
+            return
+
+        job_id = f"idle-checkin-{uuid4()}"
+        pending_idle_checkin_job_id = job_id
+        pending_idle_checkin_requested_at = activity_clock.time()
+        await snapshot_bridge.send_frontend_action(
+            {
+                "type": CANVAS_VIEWPORT_SNAPSHOT_REQUESTED_ACTION,
+                "source_tool": IDLE_CHECKIN_SOURCE_TOOL,
+                "job_id": job_id,
+                "payload": {
+                    "title": "Refreshing canvas view",
+                    "message": "Capturing a fresh viewport snapshot and context",
+                },
+            }
+        )
+        logger.debug(
+            "Queued idle check-in snapshot request: session_id=%s job_id=%s",
+            session_id,
+            job_id,
+        )
+
+    async def _idle_checkin_monitor_task() -> None:
+        while True:
+            await asyncio.sleep(IDLE_CHECKIN_POLL_INTERVAL_S)
+            now = activity_clock.time()
+            if (
+                last_user_activity_at is None
+                and last_agent_activity_at is None
+                and last_canvas_activity_at is None
+            ):
+                continue
+            if pending_idle_checkin_job_id is not None:
+                if (
+                    pending_idle_checkin_requested_at is not None
+                    and now - pending_idle_checkin_requested_at
+                    > IDLE_CHECKIN_REQUEST_TIMEOUT_S
+                ):
+                    logger.debug(
+                        "Clearing stale idle check-in snapshot request: session_id=%s job_id=%s",
+                        session_id,
+                        pending_idle_checkin_job_id,
+                    )
+                    _clear_pending_idle_checkin()
+                continue
+            if _is_user_speaking_now(now) or agent_turn_in_progress:
+                continue
+            if (
+                last_idle_prompt_delivered_at is not None
+                and now - last_idle_prompt_delivered_at < IDLE_CHECKIN_COOLDOWN_S
+            ):
+                continue
+            if (
+                last_user_activity_at is not None
+                and now - last_user_activity_at < IDLE_CHECKIN_SILENCE_S
+            ):
+                continue
+            if (
+                last_agent_activity_at is not None
+                and now - last_agent_activity_at < IDLE_CHECKIN_SILENCE_S
+            ):
+                continue
+            if (
+                last_canvas_activity_at is not None
+                and now - last_canvas_activity_at < IDLE_CHECKIN_SILENCE_S
+            ):
+                continue
+            await _request_idle_checkin_snapshot()
 
     def _build_interpreter_delivery_key(result: dict[str, object]) -> str | None:
         proactivity = result.get("proactivity")
@@ -3484,7 +3639,7 @@ async def websocket_endpoint(
             packet_window_id,
             delivery_key,
         )
-        live_request_queue.send_content(types.Content(parts=[types.Part(text=semantic_update)]))
+        _send_live_text(semantic_update)
         _update_interpreter_delivery_trace(
             result,
             send_content_status="delivered",
@@ -3674,7 +3829,7 @@ async def websocket_endpoint(
 
     async def upstream_task() -> None:
         """Receives messages from WebSocket and sends to LiveRequestQueue."""
-        nonlocal latest_closed_canvas_window_id
+        nonlocal latest_closed_canvas_window_id, last_idle_prompt_delivered_at
         logger.debug("upstream_task started")
         while True:
             # Receive message from WebSocket (text or binary)
@@ -3703,6 +3858,7 @@ async def websocket_endpoint(
                     mime_type="audio/pcm;rate=16000", data=audio_data
                 )
                 live_request_queue.send_realtime(audio_blob)
+                _mark_user_activity(speaking=True)
 
             # Handle text frames (JSON messages)
             else:
@@ -3719,7 +3875,7 @@ async def websocket_endpoint(
                     content = types.Content(
                         parts=[types.Part(text=user_text)]
                     )
-                    live_request_queue.send_content(content)
+                    _send_live_content(content)
 
                 elif json_message.get("type") == "session_startup":
                     startup_entry_id = json_message.get("entry_id")
@@ -3739,7 +3895,7 @@ async def websocket_endpoint(
                         content = types.Content(
                             parts=[types.Part(text=startup_semantic_update)]
                         )
-                        live_request_queue.send_content(content)
+                        _send_live_content(content)
                     else:
                         logger.info(
                             "Skipping duplicate session startup greeting cue: session_id=%s entry_id=%s",
@@ -3754,6 +3910,7 @@ async def websocket_endpoint(
                     # Decode base64 image data
                     image_data = base64.b64decode(json_message["data"])
                     mime_type = json_message.get("mimeType", "image/jpeg")
+                    _mark_user_activity(speaking=False)
 
                     logger.debug(
                         "Sending image: %s bytes, type: %s",
@@ -3807,8 +3964,7 @@ async def websocket_endpoint(
                             "Sending frontend acknowledgement semantic update: %s",
                             semantic_text,
                         )
-                        content = types.Content(parts=[types.Part(text=semantic_text)])
-                        live_request_queue.send_content(content)
+                        _send_live_text(semantic_text)
 
                 elif json_message.get("type") == "canvas_context":
                     context_payload = json_message.get("context")
@@ -3903,6 +4059,56 @@ async def websocket_endpoint(
                                     pending_job.canvas_window.id,
                                     job_id,
                                 )
+                        elif source_tool == IDLE_CHECKIN_SOURCE_TOOL:
+                            if job_id != pending_idle_checkin_job_id:
+                                continue
+                            requested_at = pending_idle_checkin_requested_at
+                            _clear_pending_idle_checkin()
+                            if requested_at is None:
+                                continue
+                            now = activity_clock.time()
+                            if now - requested_at > IDLE_CHECKIN_REQUEST_TIMEOUT_S:
+                                logger.debug(
+                                    "Skipping stale idle check-in response: session_id=%s job_id=%s",
+                                    session_id,
+                                    job_id,
+                                )
+                                continue
+                            if _has_new_activity_since(requested_at):
+                                logger.debug(
+                                    "Skipping idle check-in after newer activity: session_id=%s job_id=%s",
+                                    session_id,
+                                    job_id,
+                                )
+                                continue
+                            if _is_user_speaking_now(now) or agent_turn_in_progress:
+                                logger.debug(
+                                    "Skipping idle check-in while session is active: session_id=%s job_id=%s",
+                                    session_id,
+                                    job_id,
+                                )
+                                continue
+                            if (
+                                last_idle_prompt_delivered_at is not None
+                                and now - last_idle_prompt_delivered_at
+                                < IDLE_CHECKIN_COOLDOWN_S
+                            ):
+                                continue
+                            screenshot_data_url = context_payload.get("screenshot_data_url")
+                            if (
+                                isinstance(screenshot_data_url, str)
+                                and screenshot_data_url.strip()
+                            ):
+                                await _send_realtime_image_data_url(
+                                    screenshot_data_url
+                                )
+                            _send_live_text(_build_idle_checkin_semantic_update())
+                            last_idle_prompt_delivered_at = activity_clock.time()
+                            logger.debug(
+                                "Delivered idle check-in cue: session_id=%s job_id=%s",
+                                session_id,
+                                job_id,
+                            )
 
                 elif json_message.get("type") == "canvas_context_trace":
                     trace_payload = json_message.get("trace")
@@ -3932,6 +4138,7 @@ async def websocket_endpoint(
                     if window_payload is None:
                         continue
                     latest_closed_canvas_window_id = window_payload.id
+                    _mark_canvas_activity()
 
                     compacted_context = await build_compacted_session_context(
                         session_store=session_store,
@@ -4027,8 +4234,7 @@ async def websocket_endpoint(
                                 "it relates to the current topic. Do not ask a new "
                                 "question or introduce a new topic."
                             )
-                            content = types.Content(parts=[types.Part(text=semantic_text)])
-                            live_request_queue.send_content(content)
+                            _send_live_text(semantic_text)
                         else:
                             failure_summary = (
                                 error_summary.strip()
@@ -4081,10 +4287,12 @@ async def websocket_endpoint(
 
                 if ev.get("turnComplete"):
                     _clear_user_speaking_state()
+                    _clear_agent_turn_state()
                     await _persist_turn("completed")
                     continue
                 if ev.get("interrupted"):
                     _clear_user_speaking_state()
+                    _clear_agent_turn_state()
                     await _persist_turn("interrupted")
                     continue
 
@@ -4098,6 +4306,7 @@ async def websocket_endpoint(
                     )
                 if ev.get("outputTranscription", {}).get("text"):
                     ot = ev["outputTranscription"]
+                    _mark_agent_turn_started()
                     _clear_user_speaking_state()
                     await _add_transcript_entry(
                         "agent-transcription",
@@ -4107,12 +4316,15 @@ async def websocket_endpoint(
                 if ev.get("content", {}).get("parts"):
                     for part in ev["content"]["parts"]:
                         if part.get("text") and not part.get("thought"):
+                            _mark_agent_turn_started()
                             _clear_user_speaking_state()
                             await _add_transcript_entry(
                                 "agent-text",
                                 part["text"],
                                 is_partial=bool(ev.get("partial")),
                             )
+                        if _read_record_field(part, "inlineData", "inline_data") is not None:
+                            _mark_agent_turn_started()
                 if frontend_action is not None:
                     await _send_frontend_action_message(frontend_action)
             logger.debug("run_live() generator completed")
@@ -4160,8 +4372,7 @@ async def websocket_endpoint(
                     task_label,
                     semantic_update,
                 )
-                content = types.Content(parts=[types.Part(text=semantic_update)])
-                live_request_queue.send_content(content)
+                _send_live_text(semantic_update)
 
     # Run the core websocket pair concurrently.
     # Background tool-result relays stay attached to the session, but they do not
@@ -4204,12 +4415,17 @@ async def websocket_endpoint(
         ),
         name="websocket-canvas-delegate-background-tool-results",
     )
+    idle_checkin_monitor = asyncio.create_task(
+        _idle_checkin_monitor_task(),
+        name="websocket-idle-checkin-monitor",
+    )
     background_tasks = (
         flashcard_background_results,
         knowledge_lookup_background_results,
         canvas_background_results,
         canvas_widget_background_results,
         canvas_delegate_background_results,
+        idle_checkin_monitor,
     )
 
     try:

@@ -17,8 +17,8 @@ _PERSONA_LABELS: dict[SessionPersona, str] = {
 
 _PERSONA_VOICES: dict[SessionPersona, str] = {
     "professor": "Sadaltager",
-    "coach": "Sulafat",
-    "challenger": "Kore",
+    "coach": "Aoede",
+    "challenger": "Charon",
 }
 
 _PERSONA_TAGLINES: dict[SessionPersona, str] = {
