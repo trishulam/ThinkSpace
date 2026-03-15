@@ -981,37 +981,19 @@ def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
         action_type == "canvas.context_requested"
         and source_tool == CANVAS_GENERATE_VISUAL_TOOL
     ):
-        return (
-            "The `canvas.generate_visual` job is now visibly in progress in the UI. "
-            "Stay on the same topic while the visual is being prepared. Briefly "
-            "recap, review, ask a light reflective question, or make small "
-            "on-topic conversation, but do not describe the visual as already "
-            "visible or complete."
-        )
+        return None
 
     if (
         action_type == "canvas.context_requested"
         and source_tool in {CANVAS_GENERATE_GRAPH_TOOL, CANVAS_GENERATE_NOTATION_TOOL}
     ):
-        return (
-            f"The `{source_tool}` job is now visibly in progress in the UI. "
-            "Stay on the same topic while the widget is being prepared. Briefly "
-            "recap, review, ask a light reflective question, or make small "
-            "on-topic conversation, but do not describe the widget as already "
-            "visible or complete."
-        )
+        return None
 
     if (
         action_type == "canvas.delegate_requested"
         and source_tool == CANVAS_DELEGATE_TASK_TOOL
     ):
-        return (
-            "The `canvas.delegate_task` job is now visibly in progress in the UI. "
-            "Keep the conversation warm and on-topic while the canvas worker is "
-            "working. You may recap, ask a light reflective question, or make "
-            "small topical conversation, but do not describe the delegated canvas "
-            "result as finished yet."
-        )
+        return None
 
     if action_type == "canvas.insert_widget":
         summary = ack.get("summary")
@@ -1019,13 +1001,13 @@ def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
             return (
                 "The widget is now inserted on the canvas. "
                 f"{summary} "
-                "Talk briefly about what was created or shown on the canvas, and "
-                "do not ask a new question yet."
+                "Explain what the generated widget shows and how it relates to the "
+                "current topic. Do not ask a new question or introduce a new topic."
             )
         return (
             "The widget is now inserted on the canvas. "
-            "Talk briefly about what was created or shown on the canvas, and do "
-            "not ask a new question yet."
+            "Explain what the generated widget shows and how it relates to the "
+            "current topic. Do not ask a new question or introduce a new topic."
         )
 
     if action_type != "canvas.insert_visual":
@@ -1036,13 +1018,13 @@ def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
         return (
             "The visual is now inserted on the canvas. "
             f"{summary} "
-            "Talk briefly about what was created or shown on the canvas, and do "
-            "not ask a new question yet."
+            "Explain what the generated visual shows and how it relates to the "
+            "current topic. Do not ask a new question or introduce a new topic."
         )
     return (
         "The visual is now inserted on the canvas. "
-        "Talk briefly about what was created or shown on the canvas, and do not "
-        "ask a new question yet."
+        "Explain what the generated visual shows and how it relates to the "
+        "current topic. Do not ask a new question or introduce a new topic."
     )
 
 
@@ -2942,8 +2924,9 @@ async def websocket_endpoint(
                             semantic_text = (
                                 "The canvas worker finished the delegated task: "
                                 f"{job_record.goal}. "
-                                "Briefly explain what was added or changed on the canvas, "
-                                "and do not ask a new question yet."
+                                "Explain what was added or changed on the canvas and how "
+                                "it relates to the current topic. Do not ask a new "
+                                "question or introduce a new topic."
                             )
                             content = types.Content(parts=[types.Part(text=semantic_text)])
                             live_request_queue.send_content(content)

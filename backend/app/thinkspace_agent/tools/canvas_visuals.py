@@ -177,7 +177,10 @@ async def _run_canvas_visual_job(
             status="completed",
             tool=CANVAS_GENERATE_VISUAL_TOOL,
             summary=(
-                "Generated the requested visual and prepared it for canvas insertion"
+                "Generated the requested visual and prepared it for canvas insertion. "
+                "Once it is visible, explain what the visual shows and how it "
+                "supports the current topic. Do not ask a new question or start a "
+                "new topic."
             ),
             payload={
                 "artifact_id": artifact_payload["artifact_id"],
@@ -355,7 +358,12 @@ def canvas_generate_visual(
     return _build_tool_result(
         status="accepted",
         tool=CANVAS_GENERATE_VISUAL_TOOL,
-        summary="Starting visual generation for the requested teaching artifact",
+        summary=(
+            "Started visual generation. Hold the conversation on the same topic "
+            "while the visual is being prepared. Do not ask a new question or "
+            "introduce a new topic unless the user asks. Casual small talk is "
+            "fine only to avoid dead air."
+        ),
         payload=payload,
         frontend_action=_build_frontend_action(
             CANVAS_CONTEXT_REQUESTED_ACTION,

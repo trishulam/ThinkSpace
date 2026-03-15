@@ -149,7 +149,12 @@ def canvas_delegate_task(
     return _build_tool_result(
         status="accepted",
         tool=CANVAS_DELEGATE_TASK_TOOL,
-        summary="Starting delegated canvas work",
+        summary=(
+            "Started delegated canvas work. Stay on the same topic for a longer "
+            "stretch while the canvas worker is working. Do not ask a new "
+            "question or introduce a new topic unless the user asks. Casual "
+            "small talk is fine only to avoid dead air."
+        ),
         payload={
             "goal": normalized_goal,
             "target_scope": normalized_target_scope,

@@ -182,7 +182,12 @@ async def _run_canvas_widget_job(
         result = _build_tool_result(
             status="completed",
             tool=tool_name,
-            summary="Generated the requested widget and prepared it for canvas insertion",
+            summary=(
+                "Generated the requested widget and prepared it for canvas insertion. "
+                "Once it is visible, explain what the widget shows and how it "
+                "supports the current topic. Do not ask a new question or start a "
+                "new topic."
+            ),
             payload={
                 "artifact_id": artifact_payload["artifact_id"],
                 "widget_kind": artifact_payload["widget_kind"],
@@ -316,7 +321,12 @@ def _start_widget_job(
     return _build_tool_result(
         status="accepted",
         tool=tool_name,
-        summary="Starting widget generation for the requested teaching artifact",
+        summary=(
+            "Started widget generation. Hold the conversation on the same topic "
+            "while the widget is being prepared. Do not ask a new question or "
+            "introduce a new topic unless the user asks. Casual small talk is "
+            "fine only to avoid dead air."
+        ),
         payload={
             "widget_kind": widget_kind,
             "prompt": normalized_prompt,
