@@ -728,11 +728,17 @@
   line-height: 1.4;
 }
 
-.ts-canvas-recording-indicator {
+.ts-canvas-top-chrome {
   position: fixed;
   left: 104px;
-  bottom: 0;
-  z-index: 70;
+  bottom: 20px;
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ts-canvas-recording-indicator {
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -797,10 +803,6 @@
 }
 
 .ts-canvas-control-rail {
-  position: fixed;
-  top: 20px;
-  right: 20px;
-  z-index: 80;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -965,9 +967,14 @@
 }
 
 @media (max-width: 768px) {
+  .ts-canvas-top-chrome {
+    left: 66px;
+    bottom: 12px;
+    gap: 8px;
+  }
+
   .ts-canvas-control-rail {
-    top: 12px;
-    right: 12px;
+    gap: 8px;
   }
 
   .ts-canvas-control-rail__button {
@@ -982,8 +989,6 @@
   }
 
   .ts-canvas-recording-indicator {
-    left: 66px;
-    bottom: 12px;
     min-height: 38px;
     padding: 0 12px;
     gap: 8px;

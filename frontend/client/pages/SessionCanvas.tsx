@@ -314,7 +314,7 @@ const CanvasTopChrome = ({
   const muteLabel = isMicMuted ? "Unmute microphone" : "Mute microphone";
 
   return (
-    <>
+    <div className="ts-canvas-top-chrome">
       <CanvasRecordingIndicator
         recordingStatus={recordingStatus}
         recordingError={recordingError}
@@ -354,7 +354,7 @@ const CanvasTopChrome = ({
           <EndSessionIcon />
         </button>
       </div>
-    </>
+    </div>
   );
 };
 
