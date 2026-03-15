@@ -31,22 +31,17 @@ import {
   TldrawAgentAppContextProvider,
   TldrawAgentAppProvider,
 } from "../agent/TldrawAgentAppProvider";
-// Chat panel replaced by AgentSidebar
-// import { ChatPanel } from '../components/ChatPanel'
-// import { ChatPanelFallback } from '../components/ChatPanelFallback'
 import { CustomHelperButtons } from "../components/CustomHelperButtons";
 import { AgentViewportBoundsHighlights } from "../components/highlights/AgentViewportBoundsHighlights";
 import { AllContextHighlights } from "../components/highlights/ContextHighlights";
 import { TargetAreaTool } from "../tools/TargetAreaTool";
 import { TargetShapeTool } from "../tools/TargetShapeTool";
 import { DynamicIsland } from "../components/DynamicIsland";
-import { AgentSidebar } from "../components/AgentSidebar";
 import { AgentSubtitleOverlay } from "../components/AgentSubtitleOverlay";
 import { SessionRestoreOverlay } from "../components/SessionRestoreOverlay";
 import { FlashcardPanel } from "../components/FlashcardPanel";
 import { GestureHost } from "../gesture/components/GestureHost";
-import { GestureLogEntry, GestureRuntimeState } from "../gesture/types";
-import { subscribeGestureLogs } from "../gesture/utils/logger";
+import { GestureRuntimeState } from "../gesture/types";
 import {
   EMPTY_FLASHCARD_STATE,
   applyFlashcardAction,
@@ -71,10 +66,8 @@ import {
 } from "../canvasScreenshot";
 import type { AgentLogEntry } from "../types/agent-live";
 import type {
-  ConnectionState,
   FrontendAction,
   InterpreterLifecyclePayload,
-  TalkingState,
 } from "../types/agent-live";
 import { thinkspaceShapeUtils } from "../components/widgets/ThinkspaceWidgetShapeUtil";
 import {
@@ -88,13 +81,15 @@ DefaultSizeStyle.setDefaultValue("s");
 // Custom tools for picking context items
 const tools = [TargetShapeTool, TargetAreaTool];
 
-type CustomToolbarProps = {
+type CanvasTopChromeProps = {
   recordingStatus: string;
   recordingError: string | null;
-  recordingSupported: boolean;
   isRecording: boolean;
+  elapsedSeconds: number;
+  isAudioActive: boolean;
+  isMicMuted: boolean;
   isBusy: boolean;
-  onStartRecording: () => void;
+  onToggleMute: () => void;
   onBackToDashboard: () => void;
   onEndSession: () => void;
 };
@@ -137,11 +132,47 @@ type CanvasCaptureHudProps = {
 };
 
 type CanvasRecordingIndicatorProps = {
-  isVisible: boolean;
+  recordingStatus: string;
+  recordingError: string | null;
+  isRecording: boolean;
   elapsedSeconds: number;
 };
 
 type CanvasExitAction = "back" | "end";
+
+type CanvasStartupOverlayProps = {
+  recordingStatus: string;
+  recordingError: string | null;
+  onRetryRecording: () => void;
+  onBackToDashboard: () => void;
+};
+
+const MicIcon = ({ muted }: { muted: boolean }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+    <path d="M12 3.5a2.75 2.75 0 0 1 2.75 2.75v5.5a2.75 2.75 0 0 1-5.5 0v-5.5A2.75 2.75 0 0 1 12 3.5Z" />
+    <path d="M6.75 10.75a5.25 5.25 0 0 0 10.5 0" />
+    <path d="M12 16v4" />
+    <path d="M8.5 20h7" />
+    {muted ? <path d="M4.5 4.5 19.5 19.5" /> : null}
+  </svg>
+);
+
+const EndSessionIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+    <path d="M7 6.5h10" />
+    <path d="M9.5 6.5V5.25A1.75 1.75 0 0 1 11.25 3.5h1.5A1.75 1.75 0 0 1 14.5 5.25V6.5" />
+    <path d="M7.75 6.5h8.5l-.7 10.05A2 2 0 0 1 13.56 18.4h-3.12a2 2 0 0 1-1.99-1.85L7.75 6.5Z" />
+    <path d="M10 10.25v4.5" />
+    <path d="M14 10.25v4.5" />
+  </svg>
+);
+
+const BackToDashboardIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+    <path d="m10.5 6-6 6 6 6" />
+    <path d="M5.5 12h10.25a3.75 3.75 0 1 1 0 7.5H14.5" />
+  </svg>
+);
 
 const CanvasCaptureHud = ({
   gestureState,
@@ -200,20 +231,36 @@ const CanvasCaptureHud = ({
 };
 
 const CanvasRecordingIndicator = ({
-  isVisible,
+  recordingStatus,
+  recordingError,
+  isRecording,
   elapsedSeconds,
 }: CanvasRecordingIndicatorProps) => {
-  if (!isVisible) {
-    return null;
-  }
+  const label = recordingError
+    ? "Recording blocked"
+    : isRecording
+      ? "Recording"
+      : recordingStatus === "requesting-permission"
+        ? "Awaiting access"
+        : "Preparing";
+  const detail = recordingError
+    ? "Check browser permissions"
+    : isRecording
+      ? formatRecordingDuration(elapsedSeconds)
+      : recordingStatus === "requesting-permission"
+        ? "Select this tab"
+        : "Starting up";
 
   return (
-    <div className="ts-canvas-recording-indicator" aria-live="polite">
+    <div
+      className={`ts-canvas-recording-indicator${isRecording ? " is-live" : ""}${
+        recordingError ? " is-error" : ""
+      }`}
+      aria-live="polite"
+    >
       <span className="ts-canvas-recording-indicator__dot" aria-hidden="true" />
-      <span className="ts-canvas-recording-indicator__label">Recording</span>
-      <span className="ts-canvas-recording-indicator__time">
-        {formatRecordingDuration(elapsedSeconds)}
-      </span>
+      <span className="ts-canvas-recording-indicator__label">{label}</span>
+      <span className="ts-canvas-recording-indicator__time">{detail}</span>
     </div>
   );
 };
@@ -251,88 +298,117 @@ const CanvasExitOverlay = ({ action }: { action: CanvasExitAction }) => {
   );
 };
 
-const CustomToolbar = ({
+const CanvasTopChrome = ({
   recordingStatus,
   recordingError,
-  recordingSupported,
   isRecording,
+  elapsedSeconds,
+  isAudioActive,
+  isMicMuted,
   isBusy,
-  onStartRecording,
+  onToggleMute,
   onBackToDashboard,
   onEndSession,
-}: CustomToolbarProps) => {
-  const recordingLabel = isRecording ? "Recording" : recordingStatus;
+}: CanvasTopChromeProps) => {
+  const muteDisabled = !isAudioActive || isBusy;
+  const muteLabel = isMicMuted ? "Unmute microphone" : "Mute microphone";
 
   return (
-    <div className="tldraw-custom-toolbar tldraw-custom-toolbar--dark">
-      <button
-        onClick={onBackToDashboard}
-        className="tldraw-back-button"
-        title="Back to Dashboard"
-        type="button"
-        disabled={isBusy}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
-        </svg>
-      </button>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginLeft: 12,
-          padding: "8px 12px",
-          borderRadius: 999,
-          background: "rgba(15, 23, 42, 0.88)",
-          color: "#fff",
-          fontSize: 12,
-        }}
-      >
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: isRecording ? "#ef4444" : "#94a3b8",
-            display: "inline-block",
-          }}
-        />
-        <span>{recordingLabel}</span>
-      </div>
-      {recordingSupported && !isRecording ? (
+    <>
+      <CanvasRecordingIndicator
+        recordingStatus={recordingStatus}
+        recordingError={recordingError}
+        isRecording={isRecording}
+        elapsedSeconds={elapsedSeconds}
+      />
+      <div className="ts-canvas-control-rail" role="toolbar" aria-label="Canvas session controls">
         <button
-          onClick={onStartRecording}
           type="button"
-          disabled={isBusy}
-          style={{ marginLeft: 8 }}
+          className={`ts-canvas-control-rail__button${isMicMuted ? " is-active" : ""}`}
+          onClick={onToggleMute}
+          title={muteDisabled ? "Microphone is still starting" : muteLabel}
+          aria-label={muteLabel}
+          aria-pressed={isMicMuted}
+          disabled={muteDisabled}
         >
-          Start Recording
+          <MicIcon muted={isMicMuted} />
         </button>
-      ) : null}
-      <button
-        onClick={onEndSession}
-        type="button"
-        disabled={isBusy}
-        style={{ marginLeft: 8 }}
-      >
-        End Session
-      </button>
-      {recordingError ? (
-        <div
-          style={{
-            marginLeft: 12,
-            maxWidth: 320,
-            color: "#fecaca",
-            background: "rgba(127, 29, 29, 0.88)",
-            padding: "8px 12px",
-            borderRadius: 12,
-            fontSize: 12,
-          }}
+        <button
+          type="button"
+          className="ts-canvas-control-rail__button"
+          onClick={onBackToDashboard}
+          title="Back to dashboard"
+          aria-label="Back to dashboard"
+          disabled={isBusy}
         >
-          {recordingError}
-        </div>
-      ) : null}
+          <BackToDashboardIcon />
+        </button>
+        <button
+          type="button"
+          className="ts-canvas-control-rail__button ts-canvas-control-rail__button--danger"
+          onClick={onEndSession}
+          title="End session"
+          aria-label="End session"
+          disabled={isBusy}
+        >
+          <EndSessionIcon />
+        </button>
+      </div>
+    </>
+  );
+};
+
+const CanvasStartupOverlay = ({
+  recordingStatus,
+  recordingError,
+  onRetryRecording,
+  onBackToDashboard,
+}: CanvasStartupOverlayProps) => {
+  if (recordingStatus !== "requesting-permission" && recordingStatus !== "error") {
+    return null;
+  }
+
+  const isError = recordingStatus === "error";
+  const title = isError ? "Recording access is required" : "Enable recording to start";
+  const description = isError
+    ? recordingError ?? "ThinkSpace could not start recording for this session."
+    : "Choose this browser tab when prompted. Gestures, agent connection, and audio will start automatically after access is granted.";
+
+  return (
+    <div className="ts-canvas-startup-overlay" role="status" aria-live="polite">
+      <div className="ts-canvas-startup-overlay__panel">
+        {isError ? (
+          <div className="ts-canvas-startup-overlay__badge ts-canvas-startup-overlay__badge--error">
+            Recording blocked
+          </div>
+        ) : (
+          <div className="ts-canvas-startup-overlay__spinner" aria-hidden="true" />
+        )}
+        <h2 className="ts-canvas-startup-overlay__title">{title}</h2>
+        <p className="ts-canvas-startup-overlay__copy">{description}</p>
+        {isError ? (
+          <div className="ts-canvas-startup-overlay__actions">
+            <button
+              type="button"
+              className="ts-home-secondary-btn"
+              onClick={onBackToDashboard}
+            >
+              Back to dashboard
+            </button>
+            <button
+              type="button"
+              className="ts-home-primary-btn"
+              onClick={onRetryRecording}
+            >
+              Retry recording access
+            </button>
+          </div>
+        ) : (
+          <div className="ts-canvas-startup-overlay__hint">
+            Tip: pick the current browser tab for the best capture quality.
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -1026,7 +1102,6 @@ export const SessionCanvas: React.FC = () => {
   const [gestureState, setGestureState] = useState<GestureRuntimeState | null>(
     null,
   );
-  const [gestureLogs, setGestureLogs] = useState<GestureLogEntry[]>([]);
   const [persistedEventLog, setPersistedEventLog] = useState<AgentLogEntry[]>(
     [],
   );
@@ -1058,12 +1133,6 @@ export const SessionCanvas: React.FC = () => {
   const interpreterToastTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(null);
   const processedFlashcardActionKeyRef = useRef<string | null>(null);
-
-  // Temporary testing state for Dynamic Island
-  const [testConnState, setTestConnState] = useState<ConnectionState | null>(
-    null,
-  );
-  const [testTalkState, setTestTalkState] = useState<TalkingState | null>(null);
 
   const handleUnmount = useCallback(() => {
     setApp(null);
@@ -1247,16 +1316,11 @@ export const SessionCanvas: React.FC = () => {
     };
   }, [app, editor]);
 
-  // Audio start/stop handlers that wire into the WS
   const handleStartAudio = useCallback(() => {
-    startAudio((pcmChunk) => {
+    return startAudio((pcmChunk) => {
       ws.sendAudioChunk(pcmChunk);
     });
   }, [startAudio, ws.sendAudioChunk]);
-
-  const handleStopAudio = useCallback(() => {
-    stopAudio();
-  }, [stopAudio]);
 
   const handleFitAllCanvasContent = useCallback(() => {
     if (!editor) {
@@ -1290,27 +1354,12 @@ export const SessionCanvas: React.FC = () => {
     };
   }, [isAudioActive, isMicMuted, toggleMicMuted, ws.connectionState]);
 
-  const handleSendText = useCallback(
-    (message: string) => {
-      ws.sendText(message);
-    },
-    [ws.sendText],
-  );
-
-  const handleToggleGestures = useCallback(() => {
-    setGestureEnabled((current) => !current);
-  }, []);
-
   const handleGestureStateChange = useCallback(
     (nextState: GestureRuntimeState) => {
       setGestureState(nextState);
     },
     [],
   );
-
-  const handleClearGestureLogs = useCallback(() => {
-    setGestureLogs([]);
-  }, []);
 
   const stopRecordingIfNeeded = useCallback(async () => {
     if (
@@ -2095,12 +2144,6 @@ export const SessionCanvas: React.FC = () => {
     ],
   );
 
-  React.useEffect(() => {
-    return subscribeGestureLogs((entry) => {
-      setGestureLogs((previous) => [...previous.slice(-399), entry]);
-    });
-  }, []);
-
   useEffect(() => {
     if (!app || !sessionId) {
       return;
@@ -2323,7 +2366,9 @@ export const SessionCanvas: React.FC = () => {
         wasRecordingActiveRef.current = false;
         autoConnectAttemptedRef.current = false;
         autoAudioAttemptedRef.current = false;
+        autoGestureAttemptedRef.current = false;
         startupGreetingSentRef.current = false;
+        setGestureEnabled(false);
       }
       return;
     }
@@ -2331,7 +2376,9 @@ export const SessionCanvas: React.FC = () => {
     wasRecordingActiveRef.current = false;
     autoConnectAttemptedRef.current = false;
     autoAudioAttemptedRef.current = false;
+    autoGestureAttemptedRef.current = false;
     startupGreetingSentRef.current = false;
+    setGestureEnabled(false);
     if (isAudioActive) {
       stopAudio();
     }
@@ -2385,19 +2432,23 @@ export const SessionCanvas: React.FC = () => {
   ]);
 
   useEffect(() => {
-    if (!sessionId || autoGestureAttemptedRef.current) {
+    if (
+      !sessionId ||
+      recordingStatus !== "recording" ||
+      autoGestureAttemptedRef.current
+    ) {
       return;
     }
 
     const timeoutId = window.setTimeout(() => {
       autoGestureAttemptedRef.current = true;
       setGestureEnabled(true);
-    }, 0);
+    }, 120);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [sessionId]);
+  }, [recordingStatus, sessionId]);
 
   useEffect(() => {
     const latestEvent = ws.eventLog[ws.eventLog.length - 1];
@@ -2545,9 +2596,7 @@ export const SessionCanvas: React.FC = () => {
     };
   }, [app]);
 
-  const notchConnectionState = testConnState ?? ws.connectionState;
-  const notchTalkingState =
-    testTalkState ?? (ws.isKnowledgeLookupActive ? "thinking" : ws.talkingState);
+  const notchTalkingState = ws.isKnowledgeLookupActive ? "thinking" : ws.talkingState;
   if (!sessionId) {
     return <div>Session not found</div>;
   }
@@ -2588,78 +2637,43 @@ export const SessionCanvas: React.FC = () => {
                 onUnmount={handleUnmount}
               />
             </Tldraw>
+            <CanvasStartupOverlay
+              recordingStatus={recordingStatus}
+              recordingError={sessionActionError || recordingError}
+              onRetryRecording={() => {
+                setSessionActionError(null);
+                autoRecordingAttemptedRef.current = false;
+                void startRecording();
+              }}
+              onBackToDashboard={handleBackToDashboard}
+            />
             <AgentSubtitleOverlay subtitle={ws.agentSubtitle} />
             <FlashcardPanel state={flashcardState} />
-            <CanvasRecordingIndicator
-              isVisible={isRecording}
-              elapsedSeconds={elapsedSeconds}
-            />
             <CanvasCaptureHud
               gestureState={gestureState}
               recordingError={sessionActionError || recordingError}
             />
           </div>
-          {/* ChatPanel replaced by live agent sidebar */}
-          {/* <ErrorBoundary fallback={ChatPanelFallback}>
-            {app && (
-              <TldrawAgentAppContextProvider app={app}>
-                <ChatPanel />
-              </TldrawAgentAppContextProvider>
-            )}
-          </ErrorBoundary> */}
-          <AgentSidebar
-            app={app}
-            connectionState={ws.connectionState}
-            eventLog={ws.eventLog}
-            gestureState={gestureState}
-            gestureLogs={gestureLogs}
-            gestureEnabled={gestureEnabled}
-            isAudioActive={isAudioActive}
-            onConnect={ws.connect}
-            onDisconnect={ws.disconnect}
-            onSendText={handleSendText}
-            onStartAudio={handleStartAudio}
-            onStopAudio={handleStopAudio}
-            onClearLog={ws.clearLog}
-            onClearGestureLogs={handleClearGestureLogs}
-            onToggleGestures={handleToggleGestures}
-            onTestNotchConnect={() => {
-              setTestConnState("connected");
-              setTestTalkState("none");
-            }}
-            onTestNotchDisconnect={() => {
-              setTestConnState("idle");
-              setTestTalkState("none");
-            }}
-            onTestNotchThinking={() => {
-              setTestConnState("connected");
-              setTestTalkState("thinking");
-            }}
-            onTestNotchSpeaking={() => {
-              setTestConnState("connected");
-              setTestTalkState("agent");
-            }}
-          />
         </div>
       </TldrawUiToastsProvider>
 
-      <CustomToolbar
+      <CanvasTopChrome
         recordingStatus={recordingStatus}
         recordingError={sessionActionError || recordingError}
-        recordingSupported={isRecordingSupported}
         isRecording={isRecording}
+        elapsedSeconds={elapsedSeconds}
+        isAudioActive={isAudioActive}
+        isMicMuted={isMicMuted}
         isBusy={isSessionActionPending}
-        onStartRecording={() => {
-          setSessionActionError(null);
-          void startRecording();
+        onToggleMute={() => {
+          handleToggleMicMute();
         }}
         onBackToDashboard={handleBackToDashboard}
         onEndSession={handleEndSession}
       />
 
-      {/* Dynamic Island for AI Voice Agent */}
       <DynamicIsland
-        connectionState={notchConnectionState}
+        connectionState={ws.connectionState}
         talkingState={notchTalkingState}
         status={canvasJobToast ?? interpreterToast}
       />
