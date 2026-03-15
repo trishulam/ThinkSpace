@@ -627,17 +627,15 @@
   -webkit-backdrop-filter: blur(14px) saturate(120%);
 }
 
-.tldraw-agent-container--dark .tlui-button,
+.tldraw-agent-container--dark .tlui-button:not([data-testid^="style.color."]),
 .tldraw-agent-container--dark .tlui-menu__item,
-.tldraw-agent-container--dark .tlui-toolbar__button,
-.tldraw-agent-container--dark .tlui-style-panel__button {
+.tldraw-agent-container--dark .tlui-toolbar__button {
   color: #111827 !important;
 }
 
 .tldraw-agent-container--dark .tlui-button:hover,
 .tldraw-agent-container--dark .tlui-menu__item:hover,
-.tldraw-agent-container--dark .tlui-toolbar__button:hover,
-.tldraw-agent-container--dark .tlui-style-panel__button:hover {
+.tldraw-agent-container--dark .tlui-toolbar__button:hover {
   background: rgba(99, 102, 241, 0.08) !important;
 }
 
