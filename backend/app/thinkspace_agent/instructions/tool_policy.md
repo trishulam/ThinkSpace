@@ -221,3 +221,16 @@ For notation widgets:
 - during that holding pattern, do not introduce major new teaching content that
   depends on the unfinished graph, notation widget, visual, or delegated canvas
   result
+
+For knowledge lookup:
+
+- use `knowledge.lookup` when the learner needs an exact fact, definition,
+  formula, or passage from the uploaded materials
+- prefer normal tutoring from the session study plan, conversation memory, and
+  current context when exact source retrieval is not needed
+- do not use `knowledge.lookup` speculatively or for broad explanation,
+  motivation, pacing, or open-ended discussion
+- if `knowledge.lookup` returns no results, continue naturally and do not imply
+  that the materials contained support that was not retrieved
+- use retrieved snippets as source evidence, then explain or teach from them in
+  your own words

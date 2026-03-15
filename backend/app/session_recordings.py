@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from google.cloud import firestore, storage
 from pydantic import BaseModel, ConfigDict
+from google_cloud_clients import get_firestore_client, get_storage_client
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +73,14 @@ class SessionRecordingStore:
         bucket_name = os.getenv("THINKSPACE_GCS_BUCKET")
         self._use_firestore = backend in {"auto", "firestore"} and bool(project)
         self._db = (
-            firestore.Client(project=project, database=database)
+            get_firestore_client(project=project, database=database)
             if self._use_firestore
             else None
         )
         self._manifest_collection = (
             self._db.collection(f"{prefix}_session_recordings") if self._db else None
         )
-        self._bucket = storage.Client(project=project).bucket(bucket_name) if bucket_name else None
+        self._bucket = get_storage_client(project=project).bucket(bucket_name) if bucket_name else None
 
     def get_manifest(self, session_id: str) -> SessionRecordingManifest:
         if self._manifest_collection:

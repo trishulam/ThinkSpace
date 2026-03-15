@@ -6,7 +6,10 @@ from uuid import uuid4
 
 from google.adk.tools import LongRunningFunctionTool, ToolContext
 
-from .canvas_delegate_jobs import canvas_delegate_job_store
+from .canvas_delegate_jobs import (
+    canvas_delegate_job_store,
+    publish_canvas_delegate_job_result,
+)
 
 CANVAS_DELEGATE_TASK_TOOL = "canvas.delegate_task"
 CANVAS_DELEGATE_REQUESTED_ACTION = "canvas.delegate_requested"
@@ -82,6 +85,33 @@ async def _store_delegate_job(
     )
 
 
+async def _publish_accepted_delegate_job(
+    *,
+    user_id: str,
+    session_id: str,
+    job_id: str,
+    goal: str,
+    target_scope: str,
+    constraints: str,
+    teaching_intent: str,
+    accepted_result: dict[str, object],
+) -> None:
+    await _store_delegate_job(
+        user_id=user_id,
+        session_id=session_id,
+        job_id=job_id,
+        goal=goal,
+        target_scope=target_scope,
+        constraints=constraints,
+        teaching_intent=teaching_intent,
+    )
+    await publish_canvas_delegate_job_result(
+        user_id=user_id,
+        session_id=session_id,
+        result=accepted_result,
+    )
+
+
 def canvas_delegate_task(
     goal: str,
     target_scope: str = "viewport",
@@ -122,19 +152,6 @@ def canvas_delegate_task(
 
     import asyncio
 
-    asyncio.get_running_loop().create_task(
-        _store_delegate_job(
-            user_id=user_id,
-            session_id=session_id,
-            job_id=job_id,
-            goal=normalized_goal,
-            target_scope=normalized_target_scope,
-            constraints=normalized_constraints,
-            teaching_intent=normalized_teaching_intent,
-        ),
-        name=f"canvas-delegate-store-{job_id}",
-    )
-
     payload: dict[str, object] = {
         "goal": normalized_goal,
         "target_scope": normalized_target_scope,
@@ -146,7 +163,7 @@ def canvas_delegate_task(
     if normalized_teaching_intent:
         payload["teaching_intent"] = normalized_teaching_intent
 
-    return _build_tool_result(
+    accepted_result = _build_tool_result(
         status="accepted",
         tool=CANVAS_DELEGATE_TASK_TOOL,
         summary=(
@@ -169,6 +186,23 @@ def canvas_delegate_task(
         ),
         job_id=job_id,
     )
+
+    asyncio.get_running_loop().create_task(
+        _publish_accepted_delegate_job(
+            user_id=user_id,
+            session_id=session_id,
+            job_id=job_id,
+            goal=normalized_goal,
+            target_scope=normalized_target_scope,
+            constraints=normalized_constraints,
+            teaching_intent=normalized_teaching_intent,
+            accepted_result=accepted_result,
+        ),
+        name=f"canvas-delegate-accepted-{job_id}",
+    )
+
+    return accepted_result
+
 
 
 def get_canvas_delegate_tools() -> list[LongRunningFunctionTool]:

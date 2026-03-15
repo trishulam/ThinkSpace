@@ -933,6 +933,93 @@ Done means:
 - the tutor interrupts active work
 - the tutor repeats the same helpful suggestions
 
+## Story Group K: Pre-Session Study Plan And Knowledge Grounding
+
+### Goal
+
+Create the pre-session grounding layer that prepares the tutor and the second
+brain before live tutoring begins.
+
+### Why This Matters
+
+ThinkSpace proactivity should be grounded not only in live session events but
+also in a pedagogical plan and a source-grounded understanding of the learner's
+materials.
+
+Without this layer:
+
+- the orchestrator lacks a stable learning arc
+- the second brain becomes more reactive than proactive
+- exact source retrieval risks becoming overused during the session
+
+### Current Tracking Status
+
+Story Group K now has a working scratchpad in
+`docs/study-plan-and-knowledge-grounding-scratchpad.md`.
+
+Current planning direction:
+
+- pre-session preparation should be asynchronous and complete before the live
+  tutoring session begins
+- the grounding pipeline should build `study_plan`, `source_summary`, and
+  `knowledge_index`
+- runtime retrieval should be exposed through a narrow `knowledge.lookup` tool
+- `knowledge.lookup` should be sparse and source-grounded, not the primary brain
+- web retrieval is intentionally out of scope for the first slice
+- the current hackathon framework direction is `Vertex AI RAG Engine` with
+  `gemini-embedding-2-preview`
+
+### Stories
+
+#### Story K1: Study Plan Artifact
+
+What needs to be done:
+
+- define the `study_plan` schema
+- build it from learner goal plus source materials
+- make it concise enough for runtime grounding
+
+Done means:
+
+- the orchestrator has a clear pedagogical backbone for the session
+
+#### Story K2: Source Summary Artifact
+
+What needs to be done:
+
+- define the `source_summary` schema
+- distill source materials into a source-grounded semantic summary
+- capture terms, concepts, examples, formulas, and boundaries
+
+Done means:
+
+- the second brain has a stable semantic grounding layer beyond raw session
+  events
+
+#### Story K3: Knowledge Index And Lookup Tool
+
+What needs to be done:
+
+- index source materials for exact retrieval
+- define `knowledge.lookup`
+- keep retrieval narrow and intentional
+
+Done means:
+
+- the orchestrator can retrieve exact source-grounded context only when needed
+
+### Relevant Resources
+
+- `docs/proactive-tutor-system.md`
+- `docs/thinkspace-end-to-end-technical-architecture.md`
+- `docs/study-plan-and-knowledge-grounding-scratchpad.md`
+
+### Risks
+
+- retrieval becomes the default reasoning path instead of a precision tool
+- source summaries become too verbose for runtime grounding
+- pre-session preprocessing becomes too heavy or slow to feel product-ready
+
 ## Suggested Technical Sequence
 
 If coding begins immediately, the practical order should be:
@@ -945,8 +1032,9 @@ If coding begins immediately, the practical order should be:
 6. F
 7. G
 8. H
-9. I
-10. J
+9. K
+10. I
+11. J
 
 This is the clean top-down sequence from capability to proactivity.
 
@@ -1061,6 +1149,10 @@ Use these docs while implementing:
 
 - `docs/adk-live-integration.md`
   Main ADK Live constraints and implications.
+
+- `docs/study-plan-and-knowledge-grounding-scratchpad.md`
+  Tactical working pad for the pre-session grounding pipeline, study-plan
+  artifact, source summary, and `knowledge.lookup`.
 
 - `PROACTIVE_TUTOR_ARCHITECTURE.md`
   Earlier working architecture note for cross-checking ideas discussed earlier.

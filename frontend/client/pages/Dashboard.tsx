@@ -1,6 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getSessionReplayStatuses } from "../api/sessions";
+import {
+  getSessionGroundingStatus,
+  getSessionReplayStatuses,
+  startSessionGrounding,
+  uploadSessionSourceMaterials,
+  type ApiSessionGroundingStatus,
+} from "../api/sessions";
+import {
+  DEFAULT_SESSION_PERSONA,
+  SESSION_PERSONAS,
+  getSessionPersonaOption,
+} from "../config/personas";
 import { useSession } from "../context/SessionContext";
 import { NewSessionModal } from "../components/NewSessionModal";
 import { NewSessionData, Session } from "../types/session";
@@ -20,6 +31,13 @@ type SessionArtifactState = {
   isReplayReady: boolean;
   isLoading: boolean;
 };
+
+type SessionPreparationPhase =
+  | "creating_session"
+  | "grounding"
+  | "ready"
+  | "failed"
+  | null;
 
 const FILTER_OPTIONS: Array<{ value: DashboardFilter; label: string }> = [
   { value: "all", label: "All" },
@@ -266,17 +284,79 @@ export const Dashboard: React.FC = () => {
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [isSessionPreviewVisible, setIsSessionPreviewVisible] = useState(false);
   const [sessionPreviewStepIndex, setSessionPreviewStepIndex] = useState(0);
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+  const [sessionPreparationPhase, setSessionPreparationPhase] =
+    useState<SessionPreparationPhase>(null);
+  const [groundingStatus, setGroundingStatus] = useState<ApiSessionGroundingStatus | null>(null);
   const [endingSessionId, setEndingSessionId] = useState<string | null>(null);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const [isPromptPopoverOpen, setIsPromptPopoverOpen] = useState(false);
-  const [attachedFileNames, setAttachedFileNames] = useState<string[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedPersonaId, setSelectedPersonaId] =
+    useState<NewSessionData["persona"]>(DEFAULT_SESSION_PERSONA);
   const [activeFilter, setActiveFilter] = useState<DashboardFilter>("all");
   const [artifactBySessionId, setArtifactBySessionId] = useState<
     Record<string, SessionArtifactState>
   >({});
   const promptPopoverRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+
+  const attachedFileNames = useMemo(
+    () => attachedFiles.map((file) => file.name),
+    [attachedFiles]
+  );
+  const selectedPersona = useMemo(
+    () => getSessionPersonaOption(selectedPersonaId),
+    [selectedPersonaId]
+  );
+
+  const startSessionPreparation = async (sessionId: string, files: File[] = []) => {
+    try {
+      if (files.length > 0) {
+        await uploadSessionSourceMaterials(sessionId, files);
+      }
+      const status = await startSessionGrounding(sessionId);
+      setGroundingStatus(status);
+      setPendingSessionId(sessionId);
+      setSessionPreviewStepIndex(0);
+      setAttachedFiles([]);
+      if (attachInputRef.current) {
+        attachInputRef.current.value = "";
+      }
+
+      if (status.groundingStatus === "ready") {
+        setSessionPreparationPhase("ready");
+        navigate(`/session/${sessionId}`, {
+          state: { skipRestoreOverlay: true },
+        });
+        return;
+      }
+
+      if (status.groundingStatus === "failed") {
+        setSessionPreparationPhase("failed");
+        setSessionActionError(
+          status.groundingError ||
+            status.studyPlanError ||
+            status.sourceSummaryError ||
+            status.knowledgeIndexError ||
+            "Unable to prepare the session"
+        );
+        return;
+      }
+
+      setSessionPreparationPhase("grounding");
+      setIsSessionPreviewVisible(true);
+    } catch (startError) {
+      setPendingSessionId(sessionId);
+      setGroundingStatus(null);
+      setSessionPreparationPhase("failed");
+      setSessionActionError(
+        startError instanceof Error ? startError.message : "Unable to prepare the session"
+      );
+      setIsSessionPreviewVisible(true);
+    }
+  };
 
   const handleNewSession = () => setIsNewSessionModalOpen(true);
   const handleOpenCanvas = () => setIsNewSessionModalOpen(true);
@@ -288,6 +368,9 @@ export const Dashboard: React.FC = () => {
     setSessionActionError(null);
     setIsPromptPopoverOpen(false);
     setSessionPreviewStepIndex(0);
+    setPendingSessionId(null);
+    setGroundingStatus(null);
+    setSessionPreparationPhase("creating_session");
     setIsSessionPreviewVisible(true);
 
     try {
@@ -298,14 +381,16 @@ export const Dashboard: React.FC = () => {
         goal: trimmedQuery || undefined,
         mode: "guided",
         level: "beginner",
+        persona: selectedPersonaId,
       });
-      navigate(`/session/${newSession.id}`, {
-        state: { skipRestoreOverlay: true },
-      });
+      await startSessionPreparation(newSession.id, attachedFiles);
     } catch (createError) {
       setSessionActionError(
         createError instanceof Error ? createError.message : "Unable to start the session"
       );
+      setPendingSessionId(null);
+      setGroundingStatus(null);
+      setSessionPreparationPhase(null);
       setIsSessionPreviewVisible(false);
     } finally {
       setIsCreatingSession(false);
@@ -318,7 +403,12 @@ export const Dashboard: React.FC = () => {
     try {
       const newSession = await createSession(data);
       setIsNewSessionModalOpen(false);
-      navigate(`/session/${newSession.id}`);
+      setSessionPreviewStepIndex(0);
+      setPendingSessionId(null);
+      setGroundingStatus(null);
+      setSessionPreparationPhase("creating_session");
+      setIsSessionPreviewVisible(true);
+      await startSessionPreparation(newSession.id);
     } catch {
       // The shared session context already exposes the API error message.
     } finally {
@@ -456,9 +546,13 @@ export const Dashboard: React.FC = () => {
     }, 2400);
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsSessionPreviewVisible(false);
+      if (event.key !== "Escape") {
+        return;
       }
+      if (pendingSessionId && sessionPreparationPhase !== "failed") {
+        return;
+      }
+      setIsSessionPreviewVisible(false);
     };
 
     document.addEventListener("keydown", handleKeyDown);
@@ -466,7 +560,73 @@ export const Dashboard: React.FC = () => {
       window.clearInterval(intervalId);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isSessionPreviewVisible]);
+  }, [isSessionPreviewVisible, pendingSessionId, sessionPreparationPhase]);
+
+  useEffect(() => {
+    if (!isSessionPreviewVisible || !pendingSessionId || sessionPreparationPhase !== "grounding") {
+      return;
+    }
+
+    let cancelled = false;
+    let pollTimeoutId: number | null = null;
+
+    const pollGroundingStatus = async () => {
+      try {
+        const status = await getSessionGroundingStatus(pendingSessionId);
+        if (cancelled) {
+          return;
+        }
+
+        setGroundingStatus(status);
+
+        if (status.groundingStatus === "ready") {
+          setSessionPreparationPhase("ready");
+          navigate(`/session/${pendingSessionId}`, {
+            state: { skipRestoreOverlay: true },
+          });
+          return;
+        }
+
+        if (status.groundingStatus === "failed") {
+          setSessionPreparationPhase("failed");
+          setSessionActionError(
+            status.groundingError ||
+              status.studyPlanError ||
+              status.sourceSummaryError ||
+              status.knowledgeIndexError ||
+              "Unable to prepare the session"
+          );
+          return;
+        }
+      } catch (statusError) {
+        if (cancelled) {
+          return;
+        }
+        setSessionPreparationPhase("failed");
+        setSessionActionError(
+          statusError instanceof Error ? statusError.message : "Unable to read session status"
+        );
+        return;
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      pollTimeoutId = window.setTimeout(() => {
+        void pollGroundingStatus();
+      }, 2000);
+    };
+
+    void pollGroundingStatus();
+
+    return () => {
+      cancelled = true;
+      if (pollTimeoutId !== null) {
+        window.clearTimeout(pollTimeoutId);
+      }
+    };
+  }, [isSessionPreviewVisible, navigate, pendingSessionId, sessionPreparationPhase]);
 
   const sortedSessions = useMemo(
     () =>
@@ -503,6 +663,21 @@ export const Dashboard: React.FC = () => {
   }, [activeFilter, artifactBySessionId, searchQuery, sortedSessions]);
 
   const currentSessionPreviewStep = SESSION_CREATION_PREVIEW_STEPS[sessionPreviewStepIndex];
+  const sessionPreviewHeadline =
+    sessionPreparationPhase === "failed"
+      ? "Preparation failed"
+      : sessionPreparationPhase === "grounding"
+        ? "Grounding your session"
+        : "Preparing your session";
+  const sessionPreviewBody =
+    sessionPreparationPhase === "failed"
+      ? {
+          label: "We couldn't finish preparing this session",
+          description:
+            sessionActionError ||
+            "Please close this overlay and try again once the preparation issue is resolved.",
+        }
+      : currentSessionPreviewStep;
   const scrollToSection = (sectionId: string) => {
     const section = document.getElementById(sectionId);
     if (!section) {
@@ -539,14 +714,14 @@ export const Dashboard: React.FC = () => {
           <div className="ts-home-session-preview-shell">
             <SessionPreviewLoader />
             <div className="ts-home-session-preview-copy">
-              <p className="ts-home-session-preview-kicker">Preparing your session</p>
+              <p className="ts-home-session-preview-kicker">{sessionPreviewHeadline}</p>
               <div
-                key={currentSessionPreviewStep.label}
+                key={`${sessionPreparationPhase ?? "idle"}:${sessionPreviewBody.label}`}
                 className="ts-home-session-preview-copy-body"
               >
                 <div className="ts-home-session-preview-text-row">
                   <p className="ts-home-session-preview-text">
-                    {currentSessionPreviewStep.label}
+                    {sessionPreviewBody.label}
                   </p>
                   <span
                     className="ts-home-session-preview-text-trail"
@@ -554,8 +729,13 @@ export const Dashboard: React.FC = () => {
                   />
                 </div>
                 <p className="ts-home-session-preview-description">
-                  {currentSessionPreviewStep.description}
+                  {sessionPreviewBody.description}
                 </p>
+                {groundingStatus && sessionPreparationPhase === "grounding" ? (
+                  <p className="ts-home-session-preview-description">
+                    Status: {groundingStatus.groundingStatus}
+                  </p>
+                ) : null}
               </div>
             </div>
             <div
@@ -624,16 +804,51 @@ export const Dashboard: React.FC = () => {
                     </button>
                     {isPromptPopoverOpen ? (
                       <div className="ts-home-landing-prompt-popover">
-                        <button
-                          className="ts-home-landing-prompt-popover-action"
-                          type="button"
-                          onClick={() => attachInputRef.current?.click()}
-                        >
-                          Attach files
-                        </button>
+                        <div className="ts-home-landing-prompt-popover-controls">
+                          <button
+                            className="ts-home-landing-prompt-popover-action"
+                            type="button"
+                            onClick={() => attachInputRef.current?.click()}
+                          >
+                            Attach files
+                          </button>
+                          <div className="ts-home-landing-prompt-persona-select">
+                            <select
+                              aria-label="Choose ThinkSpace persona"
+                              value={selectedPersonaId}
+                              onChange={(event) =>
+                                setSelectedPersonaId(event.target.value as NewSessionData["persona"])
+                              }
+                            >
+                              {SESSION_PERSONAS.map((persona) => (
+                                <option key={persona.id} value={persona.id}>
+                                  {persona.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
                         <p className="ts-home-landing-prompt-popover-note">
                           Add supporting files before starting a new session.
                         </p>
+                        <div className="ts-home-landing-prompt-persona">
+                          <div className="ts-home-landing-prompt-persona-header">
+                            <span className="ts-home-landing-prompt-persona-label">Persona</span>
+                            <span className="ts-home-landing-prompt-persona-voice">
+                              {selectedPersona.voiceLabel}
+                            </span>
+                          </div>
+                          <div className="ts-home-landing-prompt-persona-card">
+                            <div className="ts-home-landing-prompt-persona-card-copy">
+                              <span className="ts-home-landing-prompt-persona-name">
+                                {selectedPersona.label}
+                              </span>
+                              <p className="ts-home-landing-prompt-persona-helper">
+                                {selectedPersona.helper}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
                         {attachedFileNames.length > 0 ? (
                           <div className="ts-home-landing-prompt-file-list">
                             {attachedFileNames.map((fileName) => (
@@ -650,9 +865,9 @@ export const Dashboard: React.FC = () => {
                       type="file"
                       className="ts-home-landing-file-input"
                       multiple
+                      accept=".pdf,.txt,.md,.markdown,text/plain,text/markdown,application/pdf"
                       onChange={(event) => {
-                        const nextFiles = Array.from(event.target.files ?? []).map((file) => file.name);
-                        setAttachedFileNames(nextFiles);
+                        setAttachedFiles(Array.from(event.target.files ?? []));
                         setIsPromptPopoverOpen(false);
                       }}
                     />

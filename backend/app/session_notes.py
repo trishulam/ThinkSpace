@@ -11,10 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Protocol
 
-from google.cloud import firestore
 from google.genai import Client
 from google.genai import types as genai_types
 from pydantic import BaseModel, ConfigDict
+from google_cloud_clients import get_firestore_client
 
 from session_key_moments import preprocess_session_transcript
 from session_store import SessionRecord, TranscriptTurnRecord
@@ -99,7 +99,7 @@ class FirestoreNotesStore:
         prefix: str = "thinkspace",
         database: str | None = None,
     ) -> None:
-        self._db = firestore.Client(project=project, database=database)
+        self._db = get_firestore_client(project=project, database=database)
         self._collection = self._db.collection(f"{prefix}_session_notes")
 
     def get_artifact(self, session_id: str) -> SessionNotesArtifact | None:

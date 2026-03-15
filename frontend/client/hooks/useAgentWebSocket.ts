@@ -4,6 +4,7 @@ import type {
 	CanvasActivityWindowMessage,
 	AgentSubtitleState,
 	CanvasContextResponseMessage,
+	CanvasContextTraceMessage,
 	CanvasDelegateResultMessage,
 	ConnectionState,
 	FrontendAck,
@@ -632,6 +633,20 @@ export function useAgentWebSocket({
 		[addLogEntry]
 	)
 
+	const sendCanvasContextTrace = useCallback(
+		(message: CanvasContextTraceMessage) => {
+			if (wsRef.current?.readyState !== WebSocket.OPEN) return
+			const payload = JSON.stringify(message)
+			wsRef.current.send(payload)
+			addLogEntry(
+				'system',
+				`Sent canvas context trace for ${message.job_id} (${String(message.trace.event ?? 'unknown')})`,
+				payload
+			)
+		},
+		[addLogEntry]
+	)
+
 	const sendCanvasDelegateResult = useCallback(
 		(message: CanvasDelegateResultMessage) => {
 			if (wsRef.current?.readyState !== WebSocket.OPEN) return
@@ -688,6 +703,7 @@ export function useAgentWebSocket({
 		sendImage,
 		sendCanvasContext,
 		sendCanvasContextResponse,
+		sendCanvasContextTrace,
 		sendCanvasDelegateResult,
 		sendCanvasActivityWindow,
 		sendAudioChunk,

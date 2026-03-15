@@ -10,8 +10,10 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
-from google.cloud import firestore, storage
+import google.cloud.firestore as firestore
 from pydantic import BaseModel, ConfigDict, Field
+from google_cloud_clients import get_firestore_client, get_storage_client
+from session_personas import DEFAULT_SESSION_PERSONA, SessionPersona
 
 logger = logging.getLogger(__name__)
 INLINE_CHECKPOINT_JSON_LIMIT = 700_000
@@ -40,6 +42,7 @@ class SessionCreateRequest(ApiModel):
     goal: str | None = None
     mode: SessionMode = "guided"
     level: SessionLevel = "beginner"
+    persona: SessionPersona = DEFAULT_SESSION_PERSONA
 
 
 class SessionRecord(ApiModel):
@@ -49,6 +52,7 @@ class SessionRecord(ApiModel):
     goal: str | None = None
     mode: SessionMode
     level: SessionLevel
+    persona: SessionPersona = DEFAULT_SESSION_PERSONA
     status: str = "active"
     created_at: datetime
     updated_at: datetime
@@ -192,6 +196,7 @@ class InMemorySessionStore:
             goal=request.goal.strip() if request.goal else None,
             mode=request.mode,
             level=request.level,
+            persona=request.persona,
             created_at=now,
             updated_at=now,
             last_active_at=now,
@@ -341,9 +346,9 @@ class FirestoreSessionStore:
         prefix: str = "thinkspace",
         database: str | None = None,
     ) -> None:
-        self._db = firestore.Client(project=project, database=database)
+        self._db = get_firestore_client(project=project, database=database)
         self._bucket_name = bucket_name
-        self._bucket = storage.Client(project=project).bucket(bucket_name) if bucket_name else None
+        self._bucket = get_storage_client(project=project).bucket(bucket_name) if bucket_name else None
         self._sessions = self._db.collection(f"{prefix}_sessions")
 
     def create_session(self, request: SessionCreateRequest) -> SessionRecord:
@@ -359,6 +364,7 @@ class FirestoreSessionStore:
             goal=request.goal.strip() if request.goal else None,
             mode=request.mode,
             level=request.level,
+            persona=request.persona,
             created_at=now,
             updated_at=now,
             last_active_at=now,
