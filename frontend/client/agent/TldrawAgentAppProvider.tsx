@@ -16,6 +16,11 @@ export interface TldrawAgentAppProviderProps {
 	 * Callback fired when the app is disposed.
 	 */
 	onUnmount?: () => void
+	/**
+	 * Whether to load and auto-save agent state via local persistence.
+	 * Disable this for per-session canvas agents that should always start fresh.
+	 */
+	enablePersistence?: boolean
 }
 
 /**
@@ -55,6 +60,7 @@ export const TldrawAgentAppProvider = memo(function TldrawAgentAppProvider({
 	children,
 	onMount,
 	onUnmount,
+	enablePersistence = true,
 }: TldrawAgentAppProviderProps) {
 	const editor = useEditor()
 	const toasts = useToasts()
@@ -78,14 +84,18 @@ export const TldrawAgentAppProvider = memo(function TldrawAgentAppProvider({
 	useEffect(() => {
 		const instance = new TldrawAgentApp(editor, { onError: handleError })
 
-		// Load persisted state first (this will create agents from persisted data)
-		instance.persistence.loadState()
+		if (enablePersistence) {
+			// Load persisted state first (this will create agents from persisted data)
+			instance.persistence.loadState()
+		}
 
 		// Ensure at least one agent exists (creates one if none were loaded)
 		const defaultAgent = instance.agents.ensureAtLeastOneAgent()
 
-		// Start auto-saving (must be after loadState to avoid saving during load)
-		instance.persistence.startAutoSave()
+		if (enablePersistence) {
+			// Start auto-saving (must be after loadState to avoid saving during load)
+			instance.persistence.startAutoSave()
+		}
 
 		setApp(instance)
 
@@ -105,7 +115,7 @@ export const TldrawAgentAppProvider = memo(function TldrawAgentAppProvider({
 			delete (window as any).agent
 			delete (window as any).editor
 		}
-	}, [editor, handleError, onMount, onUnmount])
+	}, [editor, enablePersistence, handleError, onMount, onUnmount])
 
 	// Don't render children until app exists
 	if (!app) {

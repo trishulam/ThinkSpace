@@ -1901,6 +1901,14 @@ export const SessionCanvas: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!app || !sessionId) {
+      return;
+    }
+
+    app.agents.resetAllAgents();
+  }, [app, sessionId]);
+
+  useEffect(() => {
     hasLoadedRemoteSnapshotRef.current = false;
     autoRecordingAttemptedRef.current = false;
     setResumeError(null);
@@ -2182,6 +2190,7 @@ export const SessionCanvas: React.FC = () => {
                 onStateChange={handleGestureStateChange}
               />
               <TldrawAgentAppProvider
+                enablePersistence={false}
                 onMount={setApp}
                 onUnmount={handleUnmount}
               />

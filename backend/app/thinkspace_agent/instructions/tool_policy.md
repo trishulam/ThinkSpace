@@ -25,9 +25,19 @@ For flashcards:
 - use `flashcards.next`, `flashcards.reveal_answer`, and `flashcards.end` to
   control the active flashcard session
 - prefer these tools over narrating frontend state changes in prose
-- while a flashcard session is active, treat the flashcard tool payloads as the
-  authoritative grounding for the current card question, current card answer,
-  and following card question; do not rely on conversational memory for these
+- after calling `flashcards.create`, do not ask any flashcard question until the
+  system confirms the deck is visible in the UI
+- do not treat the completed `flashcards.create` tool result as permission to
+  ask the first question; wait for the confirmed `flashcards.show` UI update
+- while a flashcard session is active, treat `flashcards.next` payloads as the
+  authoritative grounding for the active card answer and the following card
+  question
+- treat the confirmed `flashcards.show` UI update as the authoritative source
+  for the initial visible question, answer, and following question
+- `flashcards.next` UI confirmation should not add a semantic update to the
+  orchestrator; it only updates backend session state
+- `flashcards.reveal_answer` UI confirmation should not add a semantic update to
+  the orchestrator; it only updates backend session state
 - for flashcard interactions, do the UI action first and then talk about what is
   now visible; do not describe a revealed answer or a next card before the
   corresponding tool has been called and the system confirms the UI update
@@ -46,18 +56,17 @@ For flashcards:
   from the revealed answer
 - do not advance immediately after requesting `flashcards.reveal_answer`; wait
   until the system tells you the answer is visible in the UI
+- always reveal the answer before moving to the next flashcard
 - after the answer is visible, talk about that revealed answer and then stop;
   wait for a new learner response before calling `flashcards.next`
 - do not call `flashcards.reveal_answer` and `flashcards.next` back to back in
   the same response cycle
 - call `flashcards.next` at most once for a given learner reply; if you already
-  requested it, wait for the semantic confirmation that the next card is visible
-  instead of calling it again
+  requested it, do not call it again until the UI has advanced
 - do not talk about the next question until `flashcards.next` has completed and
-  the system confirms that the next card is visible in the UI
+  the UI has actually advanced to the next card
 - when you call `flashcards.next`, do not include the next question text in that
-  same response; wait for the semantic confirmation and then ask the exact
-  visible question
+  same response
 - do not assume `flashcards.show` is complete the moment the tool finishes;
   treat the deck as fully ready only after the system tells you it is visible in
   the UI

@@ -72,7 +72,7 @@ The fully-qualified backend tool name that produced the action.
 Examples:
 
 - `canvas.generate_visual`
-- `canvas.enhance`
+- `canvas.generate_graph`
 - `flashcards.create`
 
 ### `job_id`
@@ -108,8 +108,8 @@ Enter a lightweight toast-style loading state for a long-running canvas job.
 Typical sources:
 
 - `canvas.generate_visual`
-- `canvas.generate_widget`
-- `canvas.enhance`
+- `canvas.generate_graph`
+- `canvas.generate_notation`
 
 Behavior notes:
 
@@ -125,7 +125,6 @@ Insert a generated visual artifact into the canvas.
 Typical sources:
 
 - `canvas.generate_visual`
-- `canvas.enhance`
 
 Locked E1 payload direction:
 
@@ -140,23 +139,34 @@ Locked E1 payload direction:
 
 Locked E1 placement direction:
 
-- the planner determines exact bounded geometry for insertion
+- the backend determines exact insertion geometry after planning
 - the frontend should apply the image exactly at the provided `x/y/w/h`
 
 ### `canvas.insert_widget`
 
-Insert a generated widget or HTML artifact into the canvas.
+Insert a generated graph or notation widget into the canvas.
 
-Typical source:
+Typical sources:
 
-- `canvas.generate_widget`
+- `canvas.generate_graph`
+- `canvas.generate_notation`
 
-Payload will likely need:
+Current payload direction:
 
-- widget artifact reference or HTML payload
-- placement data
-- size data
-- optional widget metadata
+- `artifact_id`
+- `widget_kind`
+- `title`
+- `spec`
+- `x`
+- `y`
+- optional `w`
+- optional `h`
+
+Placement notes:
+
+- graphs receive fully resolved top-left `x/y/w/h` from the backend
+- notation receives top-left `x/y` and is render-measured in the frontend
+- the frontend should apply the geometry exactly as provided in the action
 
 ### `flashcards.begin`
 

@@ -43,9 +43,10 @@ Important status notes:
   rather than as one generic `canvas.generate_widget` entry point.
 - `canvas.enhance` is documented historically but is not currently implemented
   in the live runtime.
-- the placement planner contract for visuals and widgets is now anchor-first:
-  the model chooses top-left `x/y`, while deterministic backend or frontend
-  sizing computes the final `w/h`.
+- the placement planner contract is now split:
+  visuals and graphs return a semantic center point, while notation still uses
+  an anchor-style placement flow because its final size is render-measured in
+  the frontend.
 - widget and visual placement now use compact geometry preprocessing plus a
   screenshot-assisted planner path.
 - beyond the tool surface, the product also includes a gesture-control runtime,
@@ -521,9 +522,9 @@ Current execution shape:
 8. placement planning first compacts the canvas into `occupied_rects` and ranked
    `free_rects`
 9. the planner receives compact geometry plus screenshot and returns only a
-   top-left anchor
-10. the backend derives final `w/h` by max-filling the selected free rect while
-    preserving the requested aspect ratio
+   semantic center point
+10. the backend builds the exact fixed-size visual rect from that center and
+    runs a deterministic repair pass
 11. backend publishes completed result with `canvas.insert_visual`
 12. frontend inserts the asset into the canvas
 13. frontend sends a focused screenshot via `send_realtime(...)`
@@ -536,9 +537,10 @@ Important behavior notes:
 - the tool is long-running
 - the frontend-visible in-progress cue is currently driven by
   `canvas.context_requested`
-- the planner no longer returns `w/h`; it returns only `x/y`
-- the backend owns final image sizing using the chosen free rect, aspect ratio,
-  and global min/max bounds
+- the planner no longer returns `w/h`; it returns only `center_x/center_y`
+- visuals now use exact aspect-ratio presets, not variable backend sizing
+- the backend owns final image geometry through a post-planner repair pass that
+  minimizes overlap and maximizes visible area without forcing full containment
 - screenshot input is enabled so placement can be semantically better than
   simply picking the largest empty region
 - successful insertion, not backend job completion alone, is the point where the
@@ -574,9 +576,9 @@ Current execution shape:
 6. backend runs the widget reasoner and placement planner in parallel
 7. the reasoner converts the prompt into a typed graph spec
 8. the planner receives compact geometry plus screenshot and returns only a
-   top-left anchor
-9. the backend computes final graph `w/h` by max-filling the chosen free rect
-   using the graph card aspect ratio and graph-specific min/max bounds
+   semantic center point
+9. the backend converts that center into one exact fixed-size graph rect and
+   runs a deterministic repair pass
 10. backend publishes completed result with `canvas.insert_widget`
 11. frontend inserts the graph widget
 12. frontend sends a focused screenshot via `send_realtime(...)`
@@ -586,7 +588,9 @@ Current execution shape:
 Important behavior notes:
 
 - graph generation uses a shared backend widget reasoner
-- graph sizing is backend-owned, not planner-owned
+- graph sizing is backend-owned, fixed, and not planner-owned
+- the planner chooses semantic position, while the backend repair pass handles
+  overlap and visible-area optimization
 - successful insertion, not backend completion alone, is when the tutor may
   safely talk as if the graph is present
 
@@ -927,8 +931,6 @@ in `backend/app/main.py` is intentionally strict.
 ### Delivery is then delayed or blocked if
 
 - the user is currently speaking
-- the agent is currently speaking
-- the agent has spoken too recently and has not been quiet long enough
 - interpreter cooldown is active
 - the dedupe key matches the most recently delivered interpreter update
 
@@ -945,7 +947,7 @@ in `backend/app/main.py` is intentionally strict.
 The interpreter is meant to feel naturally helpful, not intrusive. The gate
 prevents:
 
-- interrupting speech
+- racing an in-flight user turn
 - duplicate nudges
 - delivering stale reasoning
 - speaking from weak or outdated context
@@ -967,8 +969,8 @@ sequenceDiagram
     F-->>B: frontend_ack applied
     B->>O: send_content warm holding-pattern guidance
     F->>B: canvas_context_response
-    B->>V: run image generation and anchor planner in parallel
-    V-->>B: artifact + anchor + backend-sized x/y/w/h + traces
+    B->>V: run image generation and center planner in parallel
+    V-->>B: artifact + planned center + repaired x/y/w/h + traces
     B->>F: frontend_action canvas.insert_visual
     F->>F: insert visual into canvas
     F->>B: send_realtime focused screenshot
@@ -991,8 +993,8 @@ sequenceDiagram
     F-->>B: frontend_ack applied
     B->>O: send_content warm holding-pattern guidance
     F->>B: canvas_context_response
-    B->>W: run reasoner and anchor planner in parallel
-    W-->>B: graph spec + backend-sized x/y/w/h + traces
+    B->>W: run reasoner and center planner in parallel
+    W-->>B: graph spec + planned center + repaired x/y/w/h + traces
     B->>F: frontend_action canvas.insert_widget
     F->>F: render and insert graph widget
     F->>B: send_realtime focused screenshot

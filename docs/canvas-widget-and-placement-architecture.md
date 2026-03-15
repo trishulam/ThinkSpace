@@ -10,7 +10,7 @@ pipeline that now powers:
 - `canvas.generate_notation`
 
 It explains the shared placement system, the compact geometry preprocessor, the
-anchor-only planner contract, and the split of sizing responsibility across the
+center-point planner contract for visuals and graphs, and the split of sizing responsibility across the
 backend and frontend.
 
 ## High-Level Model
@@ -26,7 +26,7 @@ asked to solve full geometry from raw canvas context. Instead:
 - deterministic code computes occupied and free regions first
 - the model chooses the best semantic free region using compact geometry and the
   screenshot
-- the planner returns only a top-left anchor
+- the planner returns only a semantic center point for visuals and graphs
 - backend or frontend code computes the final size
 
 ## Tool Family
@@ -36,8 +36,9 @@ asked to solve full geometry from raw canvas context. Instead:
 Produces a static teaching image.
 
 - image generation runs in parallel with placement planning
-- the planner returns top-left `x/y`
-- the backend computes final `w/h`
+- the planner returns `center_x/center_y`
+- the backend applies one exact size preset per aspect ratio and repairs the
+  final rect deterministically
 - the frontend inserts the resulting image shape
 
 ### `canvas.generate_graph`
@@ -45,8 +46,9 @@ Produces a static teaching image.
 Produces a structured graph widget through the shared widget reasoner.
 
 - the reasoner turns the prompt into a typed graph spec
-- the planner returns top-left `x/y`
-- the backend computes final graph card `w/h`
+- the planner returns `center_x/center_y`
+- the backend applies one exact graph size preset and repairs the final rect
+  deterministically
 - the frontend inserts the graph widget through `canvas.insert_widget`
 
 ### `canvas.generate_notation`
@@ -54,7 +56,7 @@ Produces a structured graph widget through the shared widget reasoner.
 Produces a notation widget for equations, derivations, and proof-like steps.
 
 - the reasoner turns the prompt into a typed notation spec
-- the planner returns top-left `x/y`
+- the planner still returns top-left `x/y`
 - the frontend renders the notation content off-screen and measures best-fit
   size from the actual DOM output
 - the frontend inserts the notation widget through `canvas.insert_widget`
@@ -155,12 +157,19 @@ Current design intent:
 
 ## Planner Output Contract
 
-The planner now returns only:
+For visuals and graphs, the planner now returns only:
+
+- `center_x`
+- `center_y`
+
+These coordinates are the intended semantic center of the new artifact.
+
+For notation, the planner still returns:
 
 - `x`
 - `y`
 
-These coordinates are the intended top-left corner of the new artifact.
+because notation stays on the render-measured anchor flow.
 
 The planner is explicitly not responsible for:
 
@@ -176,15 +185,18 @@ Visual sizing is backend-owned.
 
 Rules:
 
-- preserve the requested aspect ratio
-- expand from the chosen anchor to fill the chosen free rect as much as possible
-- clamp inside visual bounds
+- use one exact preset per aspect ratio
+- do not resize during post-pass repair
+- repair placement to reduce overlap and maximize visible area
+- do not require full containment inside the viewport
 
-Current visual bounds:
+Current visual presets:
 
-- minimum short edge: `240`
-- maximum width: `960`
-- maximum height: `720`
+- `1:1` -> `560 x 560`
+- `4:3` -> `640 x 480`
+- `3:4` -> `480 x 640`
+- `16:9` -> `768 x 432`
+- `9:16` -> `432 x 768`
 
 ### Graphs
 
@@ -192,17 +204,14 @@ Graph sizing is backend-owned.
 
 Rules:
 
-- preserve the graph card aspect ratio
-- expand from the chosen anchor to fill the chosen free rect as much as possible
-- clamp inside graph bounds
+- use one exact fixed graph size
+- do not resize during post-pass repair
+- repair placement to reduce overlap and maximize visible area
+- do not require full containment inside the viewport
 
-Current graph bounds:
+Current graph preset:
 
-- minimum width: `360`
-- minimum height: `240`
-- maximum width: `860`
-- maximum height: `620`
-- preferred aspect ratio: approximately `1.515`
+- `720 x 475`
 
 ### Notation
 
@@ -218,18 +227,22 @@ Rules:
 This fixes the earlier failure mode where backend-estimated notation dimensions
 caused clipping or excess whitespace.
 
-## Free-Rect Resolution After Planner Output
+## Post-Planner Repair Pass
 
-Once the planner returns an anchor, the backend resolves it against the compact
-geometry payload.
+Once the planner returns a center point, the backend deterministically repairs
+the final rect against the compact geometry payload.
 
 Current behavior:
 
-- if the anchor lands inside one or more free rects, choose the containing free
-  rect with the best coverage
-- otherwise, choose the nearest free rect
-- clamp the anchor into that rect
-- expand from that anchor to compute final geometry
+- build the raw rect from `center - size / 2`
+- choose the containing or nearest free rect
+- evaluate the raw rect plus a small deterministic set of nudged candidates
+- score candidates by:
+  - zero-overlap if available
+  - maximum visible area
+  - minimum overlap area
+  - minimum movement from the planned center
+- emit final repaired top-left `x/y` with unchanged preset `w/h`
 
 This gives the backend deterministic control over the final geometry while still
 letting the model choose the semantically right region.

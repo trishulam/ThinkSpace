@@ -385,3 +385,197 @@ def fit_rect_from_anchor(
         "w": round(max(width, 0.0)),
         "h": round(max(height, 0.0)),
     }
+
+
+def _extract_viewport_from_payload(payload: dict[str, object]) -> Rect | None:
+    return _coerce_rect(payload.get("viewport_bounds"))
+
+
+def _build_rect(*, x: float, y: float, w: float, h: float) -> Rect:
+    return {"x": x, "y": y, "w": max(w, 0.0), "h": max(h, 0.0)}
+
+
+def _build_rect_from_center(
+    *,
+    center_x: float,
+    center_y: float,
+    width: float,
+    height: float,
+) -> Rect:
+    return _build_rect(
+        x=center_x - (width / 2.0),
+        y=center_y - (height / 2.0),
+        w=width,
+        h=height,
+    )
+
+
+def _rect_center(rect: Rect) -> tuple[float, float]:
+    return rect["x"] + (rect["w"] / 2.0), rect["y"] + (rect["h"] / 2.0)
+
+
+def _rect_intersection_area(a: Rect, b: Rect) -> float:
+    x1 = max(a["x"], b["x"])
+    y1 = max(a["y"], b["y"])
+    x2 = min(_rect_right(a), _rect_right(b))
+    y2 = min(_rect_bottom(a), _rect_bottom(b))
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+    return (x2 - x1) * (y2 - y1)
+
+
+def _visible_area_in_viewport(rect: Rect, viewport: Rect) -> float:
+    return _rect_intersection_area(rect, viewport)
+
+
+def _overlap_area_with_rects(rect: Rect, occupied_rects: list[Rect]) -> float:
+    return sum(_rect_intersection_area(rect, occupied) for occupied in occupied_rects)
+
+
+def _dedupe_sorted_positions(values: list[float]) -> list[float]:
+    unique: list[float] = []
+    for value in sorted(values):
+        if not unique or abs(unique[-1] - value) > 0.5:
+            unique.append(value)
+    return unique
+
+
+def _axis_candidate_positions(
+    *,
+    raw_start: float,
+    size: float,
+    preferred_start: float,
+    preferred_end: float,
+    viewport_start: float,
+    viewport_end: float,
+) -> list[float]:
+    preferred_span = preferred_end - preferred_start
+    viewport_span = viewport_end - viewport_start
+    return _dedupe_sorted_positions(
+        [
+            raw_start,
+            preferred_start,
+            preferred_end - size,
+            preferred_start + ((preferred_span - size) / 2.0),
+            viewport_start,
+            viewport_end - size,
+            viewport_start + ((viewport_span - size) / 2.0),
+        ]
+    )
+
+
+def repair_rect_from_center(
+    *,
+    compact_payload: dict[str, object],
+    center_x: float,
+    center_y: float,
+    desired_w: float,
+    desired_h: float,
+) -> tuple[dict[str, float], dict[str, float] | None, dict[str, object]]:
+    viewport = _extract_viewport_from_payload(compact_payload)
+    if viewport is None:
+        raise ValueError("Compact placement payload is missing viewport bounds")
+
+    occupied_rects = _load_rects_from_payload(compact_payload, "occupied_rects")
+    selected_free_rect = select_free_rect_for_anchor(
+        compact_payload=compact_payload,
+        x=center_x,
+        y=center_y,
+    ) or viewport
+
+    raw_rect = _build_rect_from_center(
+        center_x=center_x,
+        center_y=center_y,
+        width=desired_w,
+        height=desired_h,
+    )
+    raw_x = raw_rect["x"]
+    raw_y = raw_rect["y"]
+
+    x_positions = _axis_candidate_positions(
+        raw_start=raw_x,
+        size=desired_w,
+        preferred_start=selected_free_rect["x"],
+        preferred_end=_rect_right(selected_free_rect),
+        viewport_start=viewport["x"],
+        viewport_end=_rect_right(viewport),
+    )
+    y_positions = _axis_candidate_positions(
+        raw_start=raw_y,
+        size=desired_h,
+        preferred_start=selected_free_rect["y"],
+        preferred_end=_rect_bottom(selected_free_rect),
+        viewport_start=viewport["y"],
+        viewport_end=_rect_bottom(viewport),
+    )
+
+    candidates: list[Rect] = [raw_rect]
+    seen_signatures = {
+        (
+            round(raw_rect["x"], 2),
+            round(raw_rect["y"], 2),
+            round(raw_rect["w"], 2),
+            round(raw_rect["h"], 2),
+        )
+    }
+    for candidate_x in x_positions:
+        for candidate_y in y_positions:
+            candidate_rect = _build_rect(
+                x=candidate_x,
+                y=candidate_y,
+                w=desired_w,
+                h=desired_h,
+            )
+            signature = (
+                round(candidate_rect["x"], 2),
+                round(candidate_rect["y"], 2),
+                round(candidate_rect["w"], 2),
+                round(candidate_rect["h"], 2),
+            )
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            candidates.append(candidate_rect)
+
+    def _score_rect(rect: Rect) -> tuple[int, float, float, float]:
+        overlap_area = _overlap_area_with_rects(rect, occupied_rects)
+        visible_area = _visible_area_in_viewport(rect, viewport)
+        rect_center_x, rect_center_y = _rect_center(rect)
+        movement_sq = ((rect_center_x - center_x) ** 2) + ((rect_center_y - center_y) ** 2)
+        has_overlap = 1 if overlap_area > 0.5 else 0
+        return (has_overlap, -visible_area, overlap_area, movement_sq)
+
+    best_rect = min(candidates, key=_score_rect)
+    best_overlap_area = _overlap_area_with_rects(best_rect, occupied_rects)
+    best_visible_area = _visible_area_in_viewport(best_rect, viewport)
+    best_center_x, best_center_y = _rect_center(best_rect)
+
+    selected_free_rect_payload = {
+        "x": round(selected_free_rect["x"]),
+        "y": round(selected_free_rect["y"]),
+        "w": round(selected_free_rect["w"]),
+        "h": round(selected_free_rect["h"]),
+    }
+    repair_trace = {
+        "candidate_count": len(candidates),
+        "raw_center": {
+            "x": round(center_x),
+            "y": round(center_y),
+        },
+        "raw_rect": _round_rect(raw_rect),
+        "best_rect_visible_area": round(best_visible_area),
+        "best_rect_overlap_area": round(best_overlap_area),
+        "best_rect_movement_distance_sq": round(
+            ((best_center_x - center_x) ** 2) + ((best_center_y - center_y) ** 2)
+        ),
+    }
+    return (
+        {
+            "x": round(best_rect["x"]),
+            "y": round(best_rect["y"]),
+            "w": round(best_rect["w"]),
+            "h": round(best_rect["h"]),
+        },
+        selected_free_rect_payload,
+        repair_trace,
+    )

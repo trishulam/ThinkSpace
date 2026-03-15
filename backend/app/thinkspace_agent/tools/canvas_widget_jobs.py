@@ -29,7 +29,7 @@ from thinkspace_agent.widgets.reasoner import reason_widget
 from .canvas_placement_geometry import (
     build_compact_placement_payload,
     clamp_anchor_to_rect,
-    fit_rect_from_anchor,
+    repair_rect_from_center,
     select_free_rect_for_anchor,
 )
 from .canvas_widget_trace import now_iso, summarize_context
@@ -39,11 +39,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_VIEWPORT_WIDTH = 1440
 DEFAULT_VIEWPORT_HEIGHT = 900
 DEFAULT_CANVAS_PADDING = 48
-GRAPH_CARD_ASPECT_RATIO = 1.515
-MIN_GRAPH_WIDTH = 360
-MIN_GRAPH_HEIGHT = 240
-MAX_GRAPH_WIDTH = 860
-MAX_GRAPH_HEIGHT = 620
+GRAPH_WIDGET_WIDTH = 720.0
+GRAPH_WIDGET_HEIGHT = 475.0
 MIN_NOTATION_WIDTH = 280
 MIN_NOTATION_HEIGHT = 220
 
@@ -53,6 +50,13 @@ class CanvasWidgetPlacementAnchor(BaseModel):
 
     x: float
     y: float
+
+
+class CanvasWidgetPlacementCenter(BaseModel):
+    """Structured output for center-point graph placement."""
+
+    center_x: float
+    center_y: float
 
 
 @dataclass
@@ -145,28 +149,21 @@ def _extract_viewport_bounds(context: dict[str, object] | None) -> dict[str, flo
     return {
         "x": x,
         "y": y,
-        "w": max(w, float(MIN_GRAPH_WIDTH)),
-        "h": max(h, float(MIN_GRAPH_HEIGHT)),
+        "w": max(w, 1.0),
+        "h": max(h, 1.0),
     }
 
 
 def _derive_suggested_widget_size(
     widget_kind: WidgetKind, viewport_bounds: dict[str, float]
 ) -> tuple[float, float]:
+    if widget_kind == "graph":
+        return round(GRAPH_WIDGET_WIDTH), round(GRAPH_WIDGET_HEIGHT)
+
     viewport_w = viewport_bounds["w"]
     viewport_h = viewport_bounds["h"]
-    usable_w = max(viewport_w - (DEFAULT_CANVAS_PADDING * 2), float(MIN_GRAPH_WIDTH))
-    usable_h = max(viewport_h - (DEFAULT_CANVAS_PADDING * 2), float(MIN_GRAPH_HEIGHT))
-
-    if widget_kind == "graph":
-        width = min(usable_w * 0.5, float(MAX_GRAPH_WIDTH))
-        height = width / GRAPH_CARD_ASPECT_RATIO
-        if height > min(usable_h * 0.56, float(MAX_GRAPH_HEIGHT)):
-            height = min(usable_h * 0.56, float(MAX_GRAPH_HEIGHT))
-            width = height * GRAPH_CARD_ASPECT_RATIO
-        width = max(width, float(MIN_GRAPH_WIDTH))
-        height = max(height, float(MIN_GRAPH_HEIGHT))
-        return round(width), round(height)
+    usable_w = max(viewport_w - (DEFAULT_CANVAS_PADDING * 2), float(MIN_NOTATION_WIDTH))
+    usable_h = max(viewport_h - (DEFAULT_CANVAS_PADDING * 2), float(MIN_NOTATION_HEIGHT))
 
     width = min(usable_w * 0.44, 620.0)
     height = min(max(usable_h * 0.38, float(MIN_NOTATION_HEIGHT)), usable_h * 0.7)
@@ -175,44 +172,20 @@ def _derive_suggested_widget_size(
     return round(width), round(height)
 
 
-def _build_graph_geometry_from_anchor(
+def _build_graph_geometry_from_center(
     *,
-    anchor: CanvasWidgetPlacementAnchor,
+    center: CanvasWidgetPlacementCenter,
     compact_context: dict[str, object],
-    viewport_bounds: dict[str, float],
-) -> tuple[dict[str, float], dict[str, float] | None]:
-    selected_free_rect = select_free_rect_for_anchor(
+    desired_w: float,
+    desired_h: float,
+) -> tuple[dict[str, float], dict[str, float] | None, dict[str, object]]:
+    return repair_rect_from_center(
         compact_payload=compact_context,
-        x=anchor.x,
-        y=anchor.y,
+        center_x=float(center.center_x),
+        center_y=float(center.center_y),
+        desired_w=desired_w,
+        desired_h=desired_h,
     )
-    if selected_free_rect is None:
-        selected_free_rect = {
-            "x": viewport_bounds["x"] + DEFAULT_CANVAS_PADDING,
-            "y": viewport_bounds["y"] + DEFAULT_CANVAS_PADDING,
-            "w": max(viewport_bounds["w"] - (DEFAULT_CANVAS_PADDING * 2), 0.0),
-            "h": max(viewport_bounds["h"] - (DEFAULT_CANVAS_PADDING * 2), 0.0),
-        }
-
-    clamped_anchor = clamp_anchor_to_rect(
-        x=float(anchor.x),
-        y=float(anchor.y),
-        rect=selected_free_rect,
-    )
-    geometry = fit_rect_from_anchor(
-        anchor_x=clamped_anchor["x"],
-        anchor_y=clamped_anchor["y"],
-        free_rect=selected_free_rect,
-        aspect_ratio=GRAPH_CARD_ASPECT_RATIO,
-        max_width=float(MAX_GRAPH_WIDTH),
-        max_height=float(MAX_GRAPH_HEIGHT),
-    )
-    return geometry, {
-        "x": round(selected_free_rect["x"]),
-        "y": round(selected_free_rect["y"]),
-        "w": round(selected_free_rect["w"]),
-        "h": round(selected_free_rect["h"]),
-    }
 
 
 def _clamp_widget_anchor_to_viewport(
@@ -247,22 +220,22 @@ def _build_fallback_placement(
     viewport_w = viewport_bounds["w"]
     viewport_h = viewport_bounds["h"]
 
-    x = viewport_x + (viewport_w - width) / 2
-    y = viewport_y + (viewport_h - height) / 2
+    center_x = viewport_x + (viewport_w / 2.0)
+    center_y = viewport_y + (viewport_h / 2.0)
 
     if placement_hint == "viewport_right":
-        x = viewport_x + viewport_w - DEFAULT_CANVAS_PADDING - width
+        center_x = viewport_x + viewport_w - (width / 2.0) - DEFAULT_CANVAS_PADDING
     elif placement_hint == "viewport_left":
-        x = viewport_x + DEFAULT_CANVAS_PADDING
+        center_x = viewport_x + (width / 2.0) + DEFAULT_CANVAS_PADDING
     elif placement_hint == "viewport_top":
-        y = viewport_y + DEFAULT_CANVAS_PADDING
+        center_y = viewport_y + (height / 2.0) + DEFAULT_CANVAS_PADDING
     elif placement_hint == "viewport_bottom":
-        y = viewport_y + viewport_h - DEFAULT_CANVAS_PADDING - height
+        center_y = viewport_y + viewport_h - (height / 2.0) - DEFAULT_CANVAS_PADDING
 
     return (
         {
-            "x": round(x),
-            "y": round(y),
+            "x": round(center_x - (width / 2.0)),
+            "y": round(center_y - (height / 2.0)),
             "w": round(width),
             "h": round(height),
         },
@@ -332,10 +305,18 @@ def _build_widget_placement_planner_prompt(
     return "\n".join(
         [
             "You plan where a generated teaching widget should be inserted on a ThinkSpace canvas.",
-            "Return only the page-space x and y for the widget's top-left corner.",
+            (
+                "Return only the page-space center_x and center_y for the widget center."
+                if widget_kind == "graph"
+                else "Return only the page-space x and y for the widget's top-left corner."
+            ),
             f"The widget is {widget_description}.",
             "Requirements:",
-            "- Respect the provided viewport bounds and choose a top-left coordinate that lies inside one of the free rects when possible.",
+            (
+                "- Respect the provided viewport bounds and choose a center point that best matches the intended semantic placement."
+                if widget_kind == "graph"
+                else "- Respect the provided viewport bounds and choose a top-left coordinate that lies inside one of the free rects when possible."
+            ),
             "- Occupied rects are blocked areas with safety padding already applied.",
             "- Free rects are open candidate regions already computed from the viewport and blocked areas.",
             "- Use the screenshot to choose the semantically best open region when one is provided.",
@@ -343,9 +324,13 @@ def _build_widget_placement_planner_prompt(
             (
                 "- You do not decide width or height for notation; the frontend will size the card from the rendered content."
                 if widget_kind == "notation"
-                else "- You do not decide width or height for graphs; the backend will expand from your top-left coordinate to the largest readable graph card that fits."
+                else "- You do not decide width or height for graphs; the graph size is already locked and the backend will run a deterministic repair pass after your center choice."
             ),
-            "- Choose a top-left coordinate that leaves room for the widget to grow rightward and downward inside the intended free region.",
+            (
+                "- Choose a center point that best indicates the intended graph region."
+                if widget_kind == "graph"
+                else "- Choose a top-left coordinate that leaves room for the widget to grow rightward and downward inside the intended free region."
+            ),
             "- If placement_hint is auto, choose the clearest open area in the current viewport.",
             "- If placement_hint is directional, honor it when reasonable without causing excessive overlap.",
             f"Widget kind: {widget_kind}",
@@ -403,13 +388,16 @@ def _plan_canvas_widget_placement(
     if screenshot_part is not None:
         contents.append(screenshot_part)
 
+    response_schema = (
+        CanvasWidgetPlacementCenter if widget_kind == "graph" else CanvasWidgetPlacementAnchor
+    )
     response = client.models.generate_content(
         model=get_canvas_visual_planner_model(),
         contents=contents,
         config=genai_types.GenerateContentConfig(
             temperature=0.2,
             response_mime_type="application/json",
-            response_schema=CanvasWidgetPlacementAnchor,
+            response_schema=response_schema,
         ),
     )
 
@@ -421,8 +409,8 @@ def _plan_canvas_widget_placement(
         if isinstance(response.parsed, BaseModel)
         else response.parsed
     )
-    plan = CanvasWidgetPlacementAnchor.model_validate(response.parsed)
     if widget_kind == "notation":
+        plan = CanvasWidgetPlacementAnchor.model_validate(response.parsed)
         selected_free_rect = select_free_rect_for_anchor(
             compact_payload=compact_context,
             x=plan.x,
@@ -452,14 +440,18 @@ def _plan_canvas_widget_placement(
                 y=plan.y,
                 viewport_bounds=viewport_bounds,
             )
+        repair_trace = None
     else:
-        final_geometry, selected_free_rect_payload = _build_graph_geometry_from_anchor(
-            anchor=plan,
+        desired_w, desired_h = _derive_suggested_widget_size(widget_kind, viewport_bounds)
+        plan = CanvasWidgetPlacementCenter.model_validate(response.parsed)
+        final_geometry, selected_free_rect_payload, repair_trace = _build_graph_geometry_from_center(
+            center=plan,
             compact_context=compact_context,
-            viewport_bounds=viewport_bounds,
+            desired_w=desired_w,
+            desired_h=desired_h,
         )
         if final_geometry["w"] <= 0 or final_geometry["h"] <= 0:
-            raise ValueError("Canvas graph placement backend could not size a positive geometry from anchor")
+            raise ValueError("Canvas graph placement backend could not repair a positive geometry from center")
     completed_at = now_iso()
     return {
         "geometry": final_geometry,
@@ -475,7 +467,13 @@ def _plan_canvas_widget_placement(
             "planner_prompt": contents[0],
             "raw_response_payload": raw_response_payload,
             "parsed_plan": plan.model_dump(),
+            "desired_size": (
+                {"w": round(desired_w), "h": round(desired_h)}
+                if widget_kind == "graph"
+                else None
+            ),
             "selected_free_rect": selected_free_rect_payload,
+            "repair_trace": repair_trace,
             "final_geometry": final_geometry,
             "used_fallback": False,
         },

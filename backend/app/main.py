@@ -204,9 +204,7 @@ LAST_AGENT_MESSAGE_STATE_KEY = "last_agent_message"
 MAX_CONVERSATION_MEMORY_CHARS = 24_000
 INTERPRETER_LIFECYCLE_ACTION = "interpreter.lifecycle"
 INTERPRETER_REASONING_SOURCE_TOOL = "canvas.interpreter_reasoning"
-INTERPRETER_DELIVERY_AGENT_QUIET_S = 1.0
 INTERPRETER_DELIVERY_USER_SPEECH_STALE_S = 1.0
-INTERPRETER_DELIVERY_AGENT_SPEECH_STALE_S = 1.0
 INTERPRETER_DELIVERY_COOLDOWN_S = 15.0
 
 
@@ -902,7 +900,7 @@ def _extract_flashcard_grounding(snapshot: dict[str, object] | None) -> dict[str
     }
 
 
-def _build_flashcard_grounding_suffix(snapshot: dict[str, object] | None) -> str:
+def _build_flashcard_show_grounding_suffix(snapshot: dict[str, object] | None) -> str:
     grounding = _extract_flashcard_grounding(snapshot)
     parts: list[str] = []
 
@@ -941,7 +939,7 @@ def _apply_flashcard_ack_state(
             user_id=user_id,
             session_id=session_id,
         )
-        grounding_suffix = _build_flashcard_grounding_suffix(snapshot)
+        grounding_suffix = _build_flashcard_show_grounding_suffix(snapshot)
         if grounding_suffix:
             return (
                 "The flashcards are now visible in the UI. "
@@ -952,39 +950,18 @@ def _apply_flashcard_ack_state(
         return "The flashcards are now visible in the UI."
 
     if action_type == "flashcards.reveal_answer":
-        snapshot = flashcard_session_store.mark_answer_rendered(
+        flashcard_session_store.mark_answer_rendered(
             user_id=user_id,
             session_id=session_id,
         )
-        grounding_suffix = _build_flashcard_grounding_suffix(snapshot)
-        if grounding_suffix:
-            return (
-                "The current flashcard answer is now visible in the UI. "
-                f"{grounding_suffix} "
-                "Briefly explain the revealed answer, then pause and wait for the "
-                "learner."
-            )
-        return (
-            "The current flashcard answer is now visible in the UI. "
-            "Explain it briefly, then pause and wait for the learner."
-        )
+        return None
 
     if action_type == "flashcards.next":
-        snapshot = flashcard_session_store.mark_next_rendered(
+        flashcard_session_store.mark_next_rendered(
             user_id=user_id,
             session_id=session_id,
         )
-        grounding_suffix = _build_flashcard_grounding_suffix(snapshot)
-        if grounding_suffix:
-            return (
-                "The next flashcard is now visible in the UI. "
-                f"{grounding_suffix} "
-                "Ask the learner exactly the current visible question, word for word."
-            )
-        return (
-            "The next flashcard is now visible in the UI. "
-            "Ask the exact visible next question."
-        )
+        return None
 
     if action_type == "flashcards.clear":
         return None
@@ -1039,16 +1016,34 @@ def _apply_canvas_ack_state(ack: dict[str, str]) -> str | None:
     if action_type == "canvas.insert_widget":
         summary = ack.get("summary")
         if summary:
-            return f"The widget is now inserted on the canvas. {summary}"
-        return "The widget is now inserted on the canvas."
+            return (
+                "The widget is now inserted on the canvas. "
+                f"{summary} "
+                "Talk briefly about what was created or shown on the canvas, and "
+                "do not ask a new question yet."
+            )
+        return (
+            "The widget is now inserted on the canvas. "
+            "Talk briefly about what was created or shown on the canvas, and do "
+            "not ask a new question yet."
+        )
 
     if action_type != "canvas.insert_visual":
         return None
 
     summary = ack.get("summary")
     if summary:
-        return f"The visual is now inserted on the canvas. {summary}"
-    return "The visual is now inserted on the canvas."
+        return (
+            "The visual is now inserted on the canvas. "
+            f"{summary} "
+            "Talk briefly about what was created or shown on the canvas, and do "
+            "not ask a new question yet."
+        )
+    return (
+        "The visual is now inserted on the canvas. "
+        "Talk briefly about what was created or shown on the canvas, and do not "
+        "ask a new question yet."
+    )
 
 
 def _build_background_tool_semantic_update(result: dict[str, object]) -> str | None:
@@ -2216,9 +2211,7 @@ async def websocket_endpoint(
     turn_sequence = len(existing_turns)
     activity_clock = asyncio.get_running_loop()
     user_speaking_active = False
-    agent_speaking_active = False
     last_user_activity_at: float | None = None
-    last_agent_activity_at: float | None = None
     last_delivered_interpreter_at: float | None = None
     last_delivered_interpreter_key: str | None = None
     latest_closed_canvas_window_id: str | None = None
@@ -2304,12 +2297,6 @@ async def websocket_endpoint(
         if speaking is not None:
             user_speaking_active = speaking
 
-    def _mark_agent_activity(*, speaking: bool | None = None) -> None:
-        nonlocal agent_speaking_active, last_agent_activity_at
-        last_agent_activity_at = activity_clock.time()
-        if speaking is not None:
-            agent_speaking_active = speaking
-
     def _clear_user_speaking_state() -> None:
         nonlocal user_speaking_active
         user_speaking_active = False
@@ -2330,14 +2317,6 @@ async def websocket_endpoint(
             active=user_speaking_active,
             last_activity_at=last_user_activity_at,
             stale_window_s=INTERPRETER_DELIVERY_USER_SPEECH_STALE_S,
-            now=now,
-        )
-
-    def _is_agent_speaking_now(now: float) -> bool:
-        return _is_recently_active(
-            active=agent_speaking_active,
-            last_activity_at=last_agent_activity_at,
-            stale_window_s=INTERPRETER_DELIVERY_AGENT_SPEECH_STALE_S,
             now=now,
         )
 
@@ -2502,8 +2481,6 @@ async def websocket_endpoint(
         packet_window_id = result.get("packet_window_id")
         delivery_key = _build_interpreter_delivery_key(result)
         current_user_speaking = _is_user_speaking_now(now)
-        current_agent_speaking = _is_agent_speaking_now(now)
-
         skip_reason: str | None = None
         retry_delay_s: float | None = None
 
@@ -2519,19 +2496,6 @@ async def websocket_endpoint(
                 0.1,
                 INTERPRETER_DELIVERY_USER_SPEECH_STALE_S - (now - last_user_activity_at),
             ) if last_user_activity_at is not None else 1.0
-        elif current_agent_speaking:
-            skip_reason = "agent_currently_speaking"
-            retry_delay_s = max(
-                0.1,
-                INTERPRETER_DELIVERY_AGENT_SPEECH_STALE_S - (now - last_agent_activity_at),
-            ) if last_agent_activity_at is not None else 1.0
-        elif last_agent_activity_at is not None:
-            quiet_remaining_s = INTERPRETER_DELIVERY_AGENT_QUIET_S - (
-                now - last_agent_activity_at
-            )
-            if quiet_remaining_s > 0:
-                skip_reason = "agent_recent_speech"
-                retry_delay_s = quiet_remaining_s
         if skip_reason is None and last_delivered_interpreter_at is not None:
             cooldown_remaining_s = INTERPRETER_DELIVERY_COOLDOWN_S - (
                 now - last_delivered_interpreter_at
@@ -2545,13 +2509,12 @@ async def websocket_endpoint(
 
         if skip_reason is not None:
             logger.debug(
-                "Skipping interpreter delivery (%s): reason=%s run_id=%s window_id=%s user_speaking=%s agent_speaking=%s cooldown_remaining=%s dedupe_key=%s",
+                "Skipping interpreter delivery (%s): reason=%s run_id=%s window_id=%s user_speaking=%s cooldown_remaining=%s dedupe_key=%s",
                 trigger,
                 skip_reason,
                 run_id,
                 packet_window_id,
                 current_user_speaking,
-                current_agent_speaking,
                 (
                     max(0.0, INTERPRETER_DELIVERY_COOLDOWN_S - (now - last_delivered_interpreter_at))
                     if last_delivered_interpreter_at is not None
@@ -2979,7 +2942,8 @@ async def websocket_endpoint(
                             semantic_text = (
                                 "The canvas worker finished the delegated task: "
                                 f"{job_record.goal}. "
-                                "Briefly explain what was added or changed on the canvas."
+                                "Briefly explain what was added or changed on the canvas, "
+                                "and do not ask a new question yet."
                             )
                             content = types.Content(parts=[types.Part(text=semantic_text)])
                             live_request_queue.send_content(content)
@@ -3029,12 +2993,10 @@ async def websocket_endpoint(
 
                 if ev.get("turnComplete"):
                     _clear_user_speaking_state()
-                    _mark_agent_activity(speaking=False)
                     await _persist_turn("completed")
                     continue
                 if ev.get("interrupted"):
                     _clear_user_speaking_state()
-                    _mark_agent_activity(speaking=False)
                     await _persist_turn("interrupted")
                     continue
 
@@ -3049,7 +3011,6 @@ async def websocket_endpoint(
                 if ev.get("outputTranscription", {}).get("text"):
                     ot = ev["outputTranscription"]
                     _clear_user_speaking_state()
-                    _mark_agent_activity(speaking=not ot.get("finished", False))
                     await _add_transcript_entry(
                         "agent-transcription",
                         ot["text"],
@@ -3059,7 +3020,6 @@ async def websocket_endpoint(
                     for part in ev["content"]["parts"]:
                         if part.get("text") and not part.get("thought"):
                             _clear_user_speaking_state()
-                            _mark_agent_activity(speaking=bool(ev.get("partial")))
                             await _add_transcript_entry(
                                 "agent-text",
                                 part["text"],
