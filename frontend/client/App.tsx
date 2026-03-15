@@ -2,7 +2,6 @@ import { useCallback, useMemo, useState } from "react";
 import {
   DefaultSizeStyle,
   defaultShapeUtils,
-  ErrorBoundary,
   TLComponents,
   Tldraw,
   TldrawOverlays,
@@ -14,8 +13,6 @@ import {
   TldrawAgentAppContextProvider,
   TldrawAgentAppProvider,
 } from "./agent/TldrawAgentAppProvider";
-import { ChatPanel } from "./components/ChatPanel";
-import { ChatPanelFallback } from "./components/ChatPanelFallback";
 import { CustomHelperButtons } from "./components/CustomHelperButtons";
 import { AgentViewportBoundsHighlights } from "./components/highlights/AgentViewportBoundsHighlights";
 import { AllContextHighlights } from "./components/highlights/ContextHighlights";
@@ -103,13 +100,6 @@ function App() {
             />
           </Tldraw>
         </div>
-        <ErrorBoundary fallback={ChatPanelFallback}>
-          {app && (
-            <TldrawAgentAppContextProvider app={app}>
-              <ChatPanel />
-            </TldrawAgentAppContextProvider>
-          )}
-        </ErrorBoundary>
       </div>
     </TldrawUiToastsProvider>
   );

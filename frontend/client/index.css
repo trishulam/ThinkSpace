@@ -26,15 +26,8 @@ body {
 .tldraw-agent-container {
   position: fixed;
   inset: 0;
-  display: grid;
-  grid-template-columns: 1fr 350px;
-}
-
-@media (max-width: 768px) {
-  .tldraw-agent-container {
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr auto;
-  }
+  width: 100vw;
+  height: 100vh;
 }
 
 .tldraw-canvas {
