@@ -1,4 +1,3 @@
-import type { AgentLogEntry, LogEntryType } from "../types/agent-live";
 import type { NewSessionData, Session } from "../types/session";
 import { DEFAULT_SESSION_PERSONA } from "../config/personas";
 
@@ -498,43 +497,6 @@ export async function completeSession(sessionId: string): Promise<Session> {
 
 export function getSessionRecordingFinalUrl(sessionId: string): string {
   return `${getSessionApiBaseUrl()}/v1/sessions/${encodeURIComponent(sessionId)}/recordings/final`;
-}
-
-const VALID_LOG_ENTRY_TYPES: LogEntryType[] = [
-  "user-text",
-  "user-transcription",
-  "user-audio",
-  "agent-text",
-  "agent-transcription",
-  "agent-audio",
-  "tool-call",
-  "tool-result",
-  "system",
-];
-
-/** Convert persisted transcript turns to AgentLogEntry[] for the sidebar. */
-export function transcriptToEventLog(
-  transcript: ApiTranscriptTurn[] | undefined
-): AgentLogEntry[] {
-  if (!transcript?.length) return [];
-  const entries: AgentLogEntry[] = [];
-  let idx = 0;
-  for (const turn of transcript) {
-    for (const e of turn.entries) {
-      const type = VALID_LOG_ENTRY_TYPES.includes(e.type as LogEntryType)
-        ? (e.type as LogEntryType)
-        : "system";
-      entries.push({
-        id: `persisted-${turn.turnId}-${idx}`,
-        timestamp: new Date(e.timestamp),
-        type,
-        content: e.content,
-        isPartial: e.isPartial ?? false,
-      });
-      idx += 1;
-    }
-  }
-  return entries;
 }
 
 export async function createCheckpoint(

@@ -24,7 +24,6 @@ import {
   createCheckpoint,
   completeSession,
   getSessionResume,
-  transcriptToEventLog,
 } from "../api/sessions";
 import { TldrawAgentApp } from "../agent/TldrawAgentApp";
 import {
@@ -64,7 +63,6 @@ import {
   captureCanvasScreenshotForBounds,
   captureCanvasScreenshotForShapeIds,
 } from "../canvasScreenshot";
-import type { AgentLogEntry } from "../types/agent-live";
 import type {
   FrontendAction,
   InterpreterLifecyclePayload,
@@ -1102,9 +1100,6 @@ export const SessionCanvas: React.FC = () => {
   const [gestureState, setGestureState] = useState<GestureRuntimeState | null>(
     null,
   );
-  const [persistedEventLog, setPersistedEventLog] = useState<AgentLogEntry[]>(
-    [],
-  );
   const [resolvedUserId, setResolvedUserId] = useState("demo-user");
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const canvasChangeTrackerRef = useRef<CanvasChangeTracker | null>(null);
@@ -1212,7 +1207,6 @@ export const SessionCanvas: React.FC = () => {
     sessionEntryId: liveEntryIdRef.current,
     onPlayAudio: playAudioChunk,
     onStopPlayback: stopPlayback,
-    initialEventLog: persistedEventLog,
   });
   const wsConnectionState = ws.connectionState;
   const connectAgent = ws.connect;
@@ -2164,7 +2158,6 @@ export const SessionCanvas: React.FC = () => {
     setResumeError(null);
     setSessionActionError(null);
     setResolvedUserId("demo-user");
-    setPersistedEventLog([]);
 
     if (!sessionId) {
       setIsRestoringSession(false);
@@ -2201,9 +2194,6 @@ export const SessionCanvas: React.FC = () => {
           hasLoadedRemoteSnapshotRef.current = true;
         }
 
-        if (resumePayload.transcript?.length) {
-          setPersistedEventLog(transcriptToEventLog(resumePayload.transcript));
-        }
       })
       .catch((error) => {
         if (!cancelled) {
@@ -2451,15 +2441,10 @@ export const SessionCanvas: React.FC = () => {
   }, [recordingStatus, sessionId]);
 
   useEffect(() => {
-    const latestEvent = ws.eventLog[ws.eventLog.length - 1];
-    if (
-      latestEvent &&
-      latestEvent.type === "system" &&
-      latestEvent.content === "Turn complete"
-    ) {
+    if (ws.turnCompleteCount > 0) {
       void saveCheckpoint("turn_complete", "frontend_manual");
     }
-  }, [saveCheckpoint, ws.eventLog]);
+  }, [saveCheckpoint, ws.turnCompleteCount]);
 
   React.useEffect(() => {
     return () => {
@@ -2480,19 +2465,11 @@ export const SessionCanvas: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const latestEvent = ws.eventLog[ws.eventLog.length - 1];
-    if (
-      !latestEvent ||
-      latestEvent.type !== "tool-result" ||
-      !isRecord(latestEvent.rawEvent)
-    ) {
+    if (!ws.latestToolResult) {
       return;
     }
 
-    const result = latestEvent.rawEvent.result;
-    if (!isRecord(result)) {
-      return;
-    }
+    const { result } = ws.latestToolResult;
 
     if (
       result.tool !== "canvas.generate_visual" ||
@@ -2517,7 +2494,7 @@ export const SessionCanvas: React.FC = () => {
       },
       CANVAS_ERROR_TOAST_VISIBLE_MS,
     );
-  }, [showCanvasToast, ws.eventLog]);
+  }, [showCanvasToast, ws.latestToolResult]);
 
   React.useEffect(() => {
     if (ws.frontendActions.length === 0) {

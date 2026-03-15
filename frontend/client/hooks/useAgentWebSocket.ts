@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
-	AgentLogEntry,
 	CanvasActivityWindowMessage,
 	AgentSubtitleState,
 	CanvasContextResponseMessage,
@@ -14,9 +13,9 @@ import type {
 	TalkingState,
 } from '../types/agent-live'
 
-let logIdCounter = 0
-function nextLogId(): string {
-	return `log-${Date.now()}-${++logIdCounter}`
+let wsSignalIdCounter = 0
+function nextWsSignalId(): string {
+	return `ws-signal-${Date.now()}-${++wsSignalIdCounter}`
 }
 
 function base64AudioByteLength(base64: string): number {
@@ -31,8 +30,6 @@ interface UseAgentWebSocketOptions {
 	sessionEntryId?: string
 	onPlayAudio?: (base64Data: string) => void
 	onStopPlayback?: () => void
-	/** Persisted transcript entries to restore on mount (e.g. from session resume). */
-	initialEventLog?: AgentLogEntry[]
 }
 
 function getAgentWebSocketBaseUrl(): string {
@@ -101,55 +98,27 @@ function isToolResultMessage(value: unknown): value is ToolResultMessage {
 	return true
 }
 
-function formatToolResultContent(message: ToolResultMessage): string {
-	const summary = message.result.summary || message.result.tool
-	if (
-		message.result.tool !== 'canvas.generate_visual' &&
-		message.result.tool !== 'canvas.generate_graph' &&
-		message.result.tool !== 'canvas.generate_notation'
-	) {
-		return `${message.result.status}: ${summary}`
-	}
-
-	const payload = isRecord(message.result.payload) ? message.result.payload : null
-	const plannerTrace = payload && isRecord(payload.planner_trace) ? payload.planner_trace : null
-	if (!plannerTrace) {
-		return `${message.result.status}: ${summary}`
-	}
-
-	const rawPlan = isRecord(plannerTrace.raw_response_payload)
-		? plannerTrace.raw_response_payload
-		: isRecord(plannerTrace.parsed_plan)
-			? plannerTrace.parsed_plan
-			: null
-	const finalGeometry = isRecord(plannerTrace.final_geometry) ? plannerTrace.final_geometry : null
-	const hint =
-		typeof plannerTrace.placement_hint === 'string' ? plannerTrace.placement_hint : 'auto'
-	const rawPlanText = rawPlan ? JSON.stringify(rawPlan) : 'none'
-	const finalGeometryText = finalGeometry ? JSON.stringify(finalGeometry) : 'none'
-	const fallbackText = plannerTrace.used_fallback ? ' | fallback used' : ''
-	return `${message.result.status}: ${summary} | hint=${hint} | raw_plan=${rawPlanText} | final=${finalGeometryText}${fallbackText}`
-}
-
 export function useAgentWebSocket({
 	userId,
 	sessionId,
 	sessionEntryId,
 	onPlayAudio,
 	onStopPlayback,
-	initialEventLog,
 }: UseAgentWebSocketOptions) {
 	const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
 	const [talkingState, setTalkingState] = useState<TalkingState>('none')
-	const [eventLog, setEventLog] = useState<AgentLogEntry[]>([])
 	const [agentSubtitle, setAgentSubtitle] = useState<AgentSubtitleState>(EMPTY_SUBTITLE)
 	const [frontendActions, setFrontendActions] = useState<FrontendAction[]>([])
 	const [isKnowledgeLookupActive, setIsKnowledgeLookupActive] = useState(false)
+	const [turnCompleteCount, setTurnCompleteCount] = useState(0)
+	const [latestToolResult, setLatestToolResult] = useState<{
+		id: string
+		result: ToolResultMessage['result']
+	} | null>(null)
 
 	const wsRef = useRef<WebSocket | null>(null)
 	const intentionalDisconnectRef = useRef(false)
 	const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const hasAppliedInitialLogRef = useRef(false)
 	const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const subtitleRevealLoopRef = useRef<ReturnType<typeof setInterval> | null>(null)
 	const subtitleReceivedTextRef = useRef('')
@@ -167,30 +136,6 @@ export function useAgentWebSocket({
 	onPlayAudioRef.current = onPlayAudio
 	const onStopPlaybackRef = useRef(onStopPlayback)
 	onStopPlaybackRef.current = onStopPlayback
-
-	const addLogEntry = useCallback(
-		(type: AgentLogEntry['type'], content: string, rawEvent?: unknown, extra?: Partial<AgentLogEntry>) => {
-			const entry: AgentLogEntry = {
-				id: nextLogId(),
-				timestamp: new Date(),
-				type,
-				content,
-				rawEvent,
-				...extra,
-			}
-			setEventLog((prev) => [...prev, entry])
-		},
-		[]
-	)
-
-	const clearLog = useCallback(() => {
-		setEventLog([])
-		hasAppliedInitialLogRef.current = false
-	}, [])
-
-	const clearFrontendActions = useCallback(() => {
-		setFrontendActions([])
-	}, [])
 
 	const clearKnowledgeLookupActive = useCallback(() => {
 		activeKnowledgeLookupJobIdsRef.current.clear()
@@ -229,22 +174,10 @@ export function useAgentWebSocket({
 		setFrontendActions((prev) => (prev.length > 0 ? prev.slice(1) : prev))
 	}, [])
 
-	// Restore persisted transcript when initialEventLog becomes available (e.g. from session resume)
 	useEffect(() => {
-		if (
-			initialEventLog &&
-			initialEventLog.length > 0 &&
-			!hasAppliedInitialLogRef.current
-		) {
-			hasAppliedInitialLogRef.current = true
-			setEventLog(initialEventLog)
-		}
-	}, [initialEventLog])
-
-	useEffect(() => {
-		hasAppliedInitialLogRef.current = false
-		setEventLog([])
 		setFrontendActions([])
+		setTurnCompleteCount(0)
+		setLatestToolResult(null)
 	}, [sessionId])
 
 	const clearSubtitleTimer = useCallback(() => {
@@ -457,7 +390,6 @@ export function useAgentWebSocket({
 			setTalkingState('none')
 			setFrontendActions([])
 			clearKnowledgeLookupActive()
-			addLogEntry('system', 'Connected to agent', { userId, sessionId, url: wsUrl })
 		}
 
 		ws.onmessage = (event: MessageEvent) => {
@@ -466,21 +398,15 @@ export function useAgentWebSocket({
 
 			if (isFrontendActionMessage(parsedMessage)) {
 				setFrontendActions((prev) => [...prev, parsedMessage.action])
-				addLogEntry(
-					'system',
-					`Frontend action: ${parsedMessage.action.type}`,
-					parsedMessage
-				)
 				return
 			}
 
 			if (isToolResultMessage(parsedMessage)) {
 				updateKnowledgeLookupActive(parsedMessage.result)
-				addLogEntry(
-					'tool-result',
-					formatToolResultContent(parsedMessage),
-					parsedMessage
-				)
+				setLatestToolResult({
+					id: nextWsSignalId(),
+					result: parsedMessage.result,
+				})
 				return
 			}
 
@@ -504,7 +430,7 @@ export function useAgentWebSocket({
 				} else {
 					scheduleSubtitleClear('complete', NORMAL_SUBTITLE_LINGER_MS)
 				}
-				addLogEntry('system', 'Turn complete', adkEvent)
+				setTurnCompleteCount((count) => count + 1)
 				return
 			}
 
@@ -519,21 +445,12 @@ export function useAgentWebSocket({
 						? INTERRUPTED_FINAL_LINGER_MS
 						: INTERRUPTED_PARTIAL_LINGER_MS
 				)
-				addLogEntry('system', 'Interrupted', adkEvent)
 				return
 			}
 
 			// --- inputTranscription (user's speech) ---
 			if (adkEvent.inputTranscription?.text) {
-				const text = adkEvent.inputTranscription.text
-				const finished = adkEvent.inputTranscription.finished
 				setTalkingState('user')
-				addLogEntry(
-					'user-transcription',
-					text,
-					adkEvent,
-					{ isPartial: !finished }
-				)
 			}
 
 			// --- outputTranscription (agent's speech) ---
@@ -542,25 +459,6 @@ export function useAgentWebSocket({
 				const finished = adkEvent.outputTranscription.finished
 				setTalkingState('agent')
 				updateSubtitleFromOutput(text, finished === true)
-				addLogEntry(
-					'agent-transcription',
-					text,
-					adkEvent,
-					{ isPartial: !finished }
-				)
-			}
-
-			// --- usageMetadata ---
-			if (adkEvent.usageMetadata) {
-				const u = adkEvent.usageMetadata
-				const total = u.totalTokenCount || 0
-				const prompt = u.promptTokenCount || 0
-				const response = u.candidatesTokenCount || 0
-				addLogEntry(
-					'system',
-					`Tokens: ${total} total (${prompt} prompt + ${response} response)`,
-					adkEvent
-				)
 			}
 
 			// --- content.parts ---
@@ -580,33 +478,11 @@ export function useAgentWebSocket({
 							onPlayAudioRef.current?.(part.inlineData.data)
 							setTalkingState('agent')
 						}
-						const byteSize = Math.floor((part.inlineData.data?.length || 0) * 0.75)
-						addLogEntry(
-							'agent-audio',
-							`Audio: ${mimeType} (${byteSize.toLocaleString()} bytes)`,
-							undefined,
-							{ isAudioEvent: true }
-						)
 					}
 
 					// Text (skip thought/reasoning)
 					if (part.text && !part.thought) {
 						setTalkingState('agent')
-						addLogEntry('agent-text', part.text, adkEvent, { isPartial: !!adkEvent.partial })
-					}
-
-					// Executable code (tool call)
-					if (part.executableCode) {
-						const lang = part.executableCode.language || 'unknown'
-						const code = part.executableCode.code || ''
-						addLogEntry('tool-call', `[${lang}] ${code}`, adkEvent)
-					}
-
-					// Code execution result
-					if (part.codeExecutionResult) {
-						const outcome = part.codeExecutionResult.outcome || 'UNKNOWN'
-						const output = part.codeExecutionResult.output || ''
-						addLogEntry('tool-result', `${outcome}: ${output}`, adkEvent)
 					}
 				}
 			}
@@ -621,23 +497,17 @@ export function useAgentWebSocket({
 			resetSubtitle()
 
 			if (!intentionalDisconnectRef.current) {
-				addLogEntry('system', 'Disconnected. Reconnecting in 5s...')
 				reconnectTimerRef.current = setTimeout(() => {
 					connect()
 				}, 5000)
-			} else {
-				addLogEntry('system', 'Disconnected')
 			}
 		}
 
-		ws.onerror = () => {
-			addLogEntry('system', 'WebSocket error')
-		}
+		ws.onerror = () => undefined
 	}, [
 		userId,
 		sessionId,
 		sessionEntryId,
-		addLogEntry,
 		clearKnowledgeLookupActive,
 		resetSubtitle,
 		scheduleSubtitleClear,
@@ -662,11 +532,9 @@ export function useAgentWebSocket({
 
 	const sendText = useCallback((message: string) => {
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
-			const payload = JSON.stringify({ type: 'text', text: message })
-			wsRef.current.send(payload)
-			addLogEntry('user-text', message)
+			wsRef.current.send(JSON.stringify({ type: 'text', text: message }))
 		}
-	}, [addLogEntry])
+	}, [])
 
 	const sendSessionStartup = useCallback((entryId?: string): boolean => {
 		if (wsRef.current?.readyState !== WebSocket.OPEN) {
@@ -677,84 +545,51 @@ export function useAgentWebSocket({
 			entry_id: entryId,
 		})
 		wsRef.current.send(payload)
-		addLogEntry(
-			'system',
-			'Sent session startup signal',
-			payload
-		)
 		return true
-	}, [addLogEntry])
+	}, [])
 
 	const sendImage = useCallback((base64: string, mimeType: string) => {
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
-			const payload = JSON.stringify({ type: 'image', data: base64, mimeType })
-			wsRef.current.send(payload)
-			addLogEntry('user-text', `Sent image (${mimeType})`)
+			wsRef.current.send(JSON.stringify({ type: 'image', data: base64, mimeType }))
 		}
-	}, [addLogEntry])
+	}, [])
 
 	const sendCanvasContext = useCallback((context: unknown) => {
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
-			const payload = JSON.stringify({ type: 'canvas_context', context })
-			wsRef.current.send(payload)
-			addLogEntry('system', 'Updated canvas placement context', payload)
+			wsRef.current.send(JSON.stringify({ type: 'canvas_context', context }))
 		}
-	}, [addLogEntry])
+	}, [])
 
 	const sendCanvasContextResponse = useCallback(
 		(message: CanvasContextResponseMessage) => {
 			if (wsRef.current?.readyState !== WebSocket.OPEN) return
-			const payload = JSON.stringify(message)
-			wsRef.current.send(payload)
-			addLogEntry(
-				'system',
-				`Sent canvas context response for ${message.job_id}`,
-				payload
-			)
+			wsRef.current.send(JSON.stringify(message))
 		},
-		[addLogEntry]
+		[]
 	)
 
 	const sendCanvasContextTrace = useCallback(
 		(message: CanvasContextTraceMessage) => {
 			if (wsRef.current?.readyState !== WebSocket.OPEN) return
-			const payload = JSON.stringify(message)
-			wsRef.current.send(payload)
-			addLogEntry(
-				'system',
-				`Sent canvas context trace for ${message.job_id} (${String(message.trace.event ?? 'unknown')})`,
-				payload
-			)
+			wsRef.current.send(JSON.stringify(message))
 		},
-		[addLogEntry]
+		[]
 	)
 
 	const sendCanvasDelegateResult = useCallback(
 		(message: CanvasDelegateResultMessage) => {
 			if (wsRef.current?.readyState !== WebSocket.OPEN) return
-			const payload = JSON.stringify(message)
-			wsRef.current.send(payload)
-			addLogEntry(
-				'system',
-				`Sent canvas delegate result for ${message.job_id} (${message.status})`,
-				payload
-			)
+			wsRef.current.send(JSON.stringify(message))
 		},
-		[addLogEntry]
+		[]
 	)
 
 	const sendCanvasActivityWindow = useCallback(
 		(message: CanvasActivityWindowMessage) => {
 			if (wsRef.current?.readyState !== WebSocket.OPEN) return
-			const payload = JSON.stringify(message)
-			wsRef.current.send(payload)
-			addLogEntry(
-				'system',
-				`Sent canvas activity window ${message.window.id} (${message.window.close_reason})`,
-				payload
-			)
+			wsRef.current.send(JSON.stringify(message))
 		},
-		[addLogEntry]
+		[]
 	)
 
 	const sendAudioChunk = useCallback((data: ArrayBuffer) => {
@@ -766,18 +601,17 @@ export function useAgentWebSocket({
 	const sendFrontendAck = useCallback(
 		(ack: FrontendAck) => {
 			if (wsRef.current?.readyState !== WebSocket.OPEN) return
-			const payload = JSON.stringify({ type: 'frontend_ack', ack })
-			wsRef.current.send(payload)
-			addLogEntry('system', `Frontend ack: ${ack.action_type} (${ack.status})`, payload)
+			wsRef.current.send(JSON.stringify({ type: 'frontend_ack', ack }))
 		},
-		[addLogEntry]
+		[]
 	)
 
 	return {
 		connectionState,
 		talkingState,
 		isKnowledgeLookupActive,
-		eventLog,
+		turnCompleteCount,
+		latestToolResult,
 		agentSubtitle,
 		frontendActions,
 		connect,
@@ -792,8 +626,6 @@ export function useAgentWebSocket({
 		sendCanvasActivityWindow,
 		sendAudioChunk,
 		sendFrontendAck,
-		clearLog,
-		clearFrontendActions,
 		shiftFrontendAction,
 	}
 }
