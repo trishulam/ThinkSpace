@@ -1,9 +1,9 @@
-﻿Open
-Close
+Open
+Close = pan
 Pointer = cursor control
-OK = scroll
-Horn = windows view
-Thumbs Up = exit
-Victory = click
+OK = zoom
+Horn = fit view
+Thumbs Up = mic mute toggle
+Victory = draw
 Duck
-Drag
+Drag = eraser

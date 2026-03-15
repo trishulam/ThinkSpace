@@ -1,18 +1,32 @@
 import { RefObject, useEffect } from 'react'
 import { useEditor } from 'tldraw'
 import { useGestureRuntime } from '../useGestureRuntime'
-import { GestureRuntimeState } from '../types'
+import { GestureRuntimeCallbacks, GestureRuntimeState } from '../types'
 import { VirtualCursorOverlay } from './VirtualCursorOverlay'
 
 interface GestureHostProps {
 	canvasRef: RefObject<HTMLDivElement | null>
 	enabled: boolean
+	micMuted?: GestureRuntimeCallbacks['micMuted']
 	onStateChange?: (state: GestureRuntimeState) => void
+	onFitView?: GestureRuntimeCallbacks['onFitView']
+	onToggleMicMute?: GestureRuntimeCallbacks['onToggleMicMute']
 }
 
-export function GestureHost({ canvasRef, enabled, onStateChange }: GestureHostProps) {
+export function GestureHost({
+	canvasRef,
+	enabled,
+	micMuted,
+	onStateChange,
+	onFitView,
+	onToggleMicMute,
+}: GestureHostProps) {
 	const editor = useEditor()
-	const state = useGestureRuntime(canvasRef, enabled, editor)
+	const state = useGestureRuntime(canvasRef, enabled, editor, {
+		micMuted,
+		onFitView,
+		onToggleMicMute,
+	})
 
 	useEffect(() => {
 		onStateChange?.(state)

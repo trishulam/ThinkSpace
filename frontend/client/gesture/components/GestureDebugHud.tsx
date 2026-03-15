@@ -19,6 +19,11 @@ function formatMs(value: number | null) {
 	return `${value.toFixed(1)} ms`
 }
 
+function formatCommandAt(value: number | null) {
+	if (value === null) return 'n/a'
+	return `${Math.round(value)} ms`
+}
+
 function formatLogDetails(details: unknown) {
 	if (details === undefined) return null
 
@@ -173,6 +178,7 @@ export function GestureDebugHud({
 							state.videoSize ? `${state.videoSize.width}x${state.videoSize.height}` : 'n/a'
 						)}
 						{renderField('cursor', state.cursorVisibility)}
+						{renderField('mic', state.micMuted ? 'muted' : 'live')}
 						{renderField('display cursor', formatPoint(state.cursorPoint))}
 						{renderField('raw cursor', formatPoint(state.rawCursorPoint))}
 						{renderField('mode', state.interactionMode)}
@@ -225,6 +231,29 @@ export function GestureDebugHud({
 						{renderField('last draw', state.lastDrawEvent ?? 'none')}
 						{renderField('dispatch event', state.lastDispatchedEvent ?? 'none')}
 						{renderField('dispatch point', formatPoint(state.lastDispatchScreenPoint))}
+					</div>
+				</section>
+
+				<section className="gesture-debug-section">
+					<div className="gesture-debug-section__title">Eraser</div>
+					<div className="gesture-debug-grid">
+						{renderField('raw erase', state.rawEraserGestureActive ? 'active' : 'inactive')}
+						{renderField('stable erase', state.stableEraserGestureActive ? 'active' : 'inactive')}
+						{renderField('lifecycle', state.eraseLifecycleState)}
+						{renderField('last erase', state.lastEraseEvent ?? 'none')}
+						{renderField('native session', state.nativeSessionActive ? 'active' : 'inactive')}
+						{renderField('dispatch event', state.lastDispatchedEvent ?? 'none')}
+						{renderField('dispatch point', formatPoint(state.lastDispatchScreenPoint))}
+					</div>
+				</section>
+
+				<section className="gesture-debug-section">
+					<div className="gesture-debug-section__title">Commands</div>
+					<div className="gesture-debug-grid">
+						{renderField('last command', state.lastCommandLabel ?? 'none')}
+						{renderField('status', state.lastCommandStatus ?? 'n/a')}
+						{renderField('reason', state.lastCommandReason ?? 'n/a')}
+						{renderField('at', formatCommandAt(state.lastCommandAt))}
 					</div>
 				</section>
 

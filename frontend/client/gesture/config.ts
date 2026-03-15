@@ -13,7 +13,10 @@ export const GESTURE_ASSETS = {
 export const CURSOR_GESTURE_ID = 2
 export const PAN_GESTURE_ID = 1
 export const ZOOM_GESTURE_ID = 3
+export const FIT_VIEW_GESTURE_ID = 4
+export const MIC_TOGGLE_GESTURE_ID = 5
 export const DRAW_GESTURE_ID = 6
+export const ERASER_GESTURE_ID = 8
 
 export const GESTURE_THRESHOLDS = {
 	cursorConfidence: 0.6,
@@ -36,8 +39,18 @@ export const GESTURE_THRESHOLDS = {
 	drawConfidence: 0.45,
 	drawStableFrames: 1,
 	drawMissFrames: 3,
-	drawMinPointDistance: 4,
+	eraserConfidence: 0.45,
+	eraserStableFrames: 1,
+	eraserMissFrames: 3,
+	pointerToolMinPointDistance: 4,
 	drawFinalizeLossMs: 220,
+	commandStableFrames: 2,
+	commandMissFrames: 2,
+	fitViewConfidence: 0.55,
+	fitViewStableFrames: 1,
+	fitViewCooldownMs: 800,
+	micToggleConfidence: 0.55,
+	micToggleCooldownMs: 1400,
 	cameraWidth: 960,
 	cameraHeight: 540,
 } as const

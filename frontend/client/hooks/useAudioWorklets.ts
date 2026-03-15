@@ -23,6 +23,7 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 export function useAudioWorklets() {
 	const [isAudioActive, setIsAudioActive] = useState(false)
+	const [isMicMuted, setIsMicMuted] = useState(false)
 	const [playbackCaptureStream, setPlaybackCaptureStream] = useState<MediaStream | null>(null)
 
 	const playerNodeRef = useRef<AudioWorkletNode | null>(null)
@@ -31,6 +32,12 @@ export function useAudioWorklets() {
 	const recorderNodeRef = useRef<AudioWorkletNode | null>(null)
 	const recorderContextRef = useRef<AudioContext | null>(null)
 	const micStreamRef = useRef<MediaStream | null>(null)
+	const isMicMutedRef = useRef(false)
+
+	const updateMicMuted = useCallback((nextValue: boolean) => {
+		isMicMutedRef.current = nextValue
+		setIsMicMuted(nextValue)
+	}, [])
 
 	const startAudio = useCallback(async (onAudioChunk: (data: ArrayBuffer) => void) => {
 		// --- Player setup (24kHz output) ---
@@ -56,6 +63,9 @@ export function useAudioWorklets() {
 		source.connect(recorderNode)
 
 		recorderNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
+			if (isMicMutedRef.current) {
+				return
+			}
 			const pcmData = convertFloat32ToPCM(event.data)
 			onAudioChunk(pcmData)
 		}
@@ -63,8 +73,9 @@ export function useAudioWorklets() {
 		recorderContextRef.current = recorderContext
 		recorderNodeRef.current = recorderNode
 		micStreamRef.current = micStream
+		updateMicMuted(false)
 		setIsAudioActive(true)
-	}, [])
+	}, [updateMicMuted])
 
 	const stopAudio = useCallback(() => {
 		if (micStreamRef.current) {
@@ -83,8 +94,20 @@ export function useAudioWorklets() {
 		}
 		playerCaptureDestinationRef.current = null
 		setPlaybackCaptureStream(null)
+		updateMicMuted(false)
 		setIsAudioActive(false)
-	}, [])
+	}, [updateMicMuted])
+
+	const setMicMuted = useCallback(
+		(nextValue: boolean) => {
+			updateMicMuted(nextValue)
+		},
+		[updateMicMuted]
+	)
+
+	const toggleMicMuted = useCallback(() => {
+		updateMicMuted(!isMicMutedRef.current)
+	}, [updateMicMuted])
 
 	const playAudioChunk = useCallback((base64Data: string) => {
 		if (playerNodeRef.current) {
@@ -101,9 +124,12 @@ export function useAudioWorklets() {
 
 	return {
 		isAudioActive,
+		isMicMuted,
 		playbackCaptureStream,
 		startAudio,
 		stopAudio,
+		setMicMuted,
+		toggleMicMuted,
 		playAudioChunk,
 		stopPlayback,
 	}

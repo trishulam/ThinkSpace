@@ -5,11 +5,19 @@ export type CameraState = 'idle' | 'requesting' | 'ready' | 'denied' | 'error'
 export type TrackingState = 'no-hand' | 'tracking' | 'lost'
 export type ModelState = 'uninitialized' | 'loading' | 'ready' | 'error'
 export type CursorVisibility = 'hidden' | 'visible' | 'frozen'
-export type GestureInteractionMode = 'idle' | 'cursor' | 'zoom' | 'pan' | 'draw'
+export type GestureInteractionMode = 'idle' | 'cursor' | 'zoom' | 'pan' | 'draw' | 'erase'
 export type CursorLockReason = 'none' | 'tracking-loss' | 'zoom-anchor'
 export type DrawLifecycleState = 'idle' | 'drawArming' | 'drawing' | 'drawEnding'
+export type EraseLifecycleState = 'idle' | 'eraseArming' | 'erasing' | 'eraseEnding'
 export type ZoomLifecycleState = 'idle' | 'zoomArming' | 'zooming' | 'zoomEnding'
 export type PanLifecycleState = 'idle' | 'panArming' | 'panning' | 'panEnding'
+export type GestureCommandId = 'fit-view' | 'toggle-mic-mute'
+export type GestureCommandStatus =
+	| 'fired'
+	| 'blocked'
+	| 'cooldown'
+	| 'released'
+	| 'ignored'
 export type StrokeState =
 	| 'idle'
 	| 'arming'
@@ -52,6 +60,17 @@ export interface GestureLogEntry {
 	details?: unknown
 }
 
+export interface GestureCommandResult {
+	applied: boolean
+	reason: string
+}
+
+export interface GestureRuntimeCallbacks {
+	onFitView?: () => GestureCommandResult
+	onToggleMicMute?: () => GestureCommandResult
+	micMuted?: boolean
+}
+
 export interface GestureRuntimeState extends GesturePredictionState {
 	enabled: boolean
 	initializing: boolean
@@ -86,6 +105,9 @@ export interface GestureRuntimeState extends GesturePredictionState {
 	rawDrawGestureActive: boolean
 	stableDrawGestureActive: boolean
 	drawLifecycleState: DrawLifecycleState
+	rawEraserGestureActive: boolean
+	stableEraserGestureActive: boolean
+	eraseLifecycleState: EraseLifecycleState
 	strokeState: StrokeState
 	nativeSessionActive: boolean
 	activePointerId: number | null
@@ -95,6 +117,13 @@ export interface GestureRuntimeState extends GesturePredictionState {
 	lastDispatchScreenPoint: GesturePoint | null
 	lastDispatchPagePoint: GesturePoint | null
 	lastDrawEvent: string | null
+	lastEraseEvent: string | null
+	micMuted: boolean
+	lastCommandId: GestureCommandId | null
+	lastCommandLabel: string | null
+	lastCommandStatus: GestureCommandStatus | null
+	lastCommandReason: string | null
+	lastCommandAt: number | null
 	stream: MediaStream | null
 	metrics: GestureMetrics
 }

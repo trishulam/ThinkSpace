@@ -1042,9 +1042,11 @@ export const SessionCanvas: React.FC = () => {
   // Audio worklets
   const {
     isAudioActive,
+    isMicMuted,
     playbackCaptureStream,
     startAudio,
     stopAudio,
+    toggleMicMuted,
     playAudioChunk,
     stopPlayback,
   } = useAudioWorklets();
@@ -1168,6 +1170,38 @@ export const SessionCanvas: React.FC = () => {
   const handleStopAudio = useCallback(() => {
     stopAudio();
   }, [stopAudio]);
+
+  const handleFitAllCanvasContent = useCallback(() => {
+    if (!editor) {
+      return { applied: false, reason: "Canvas editor is not ready" };
+    }
+
+    if (editor.getCurrentPageShapes().length === 0) {
+      return { applied: false, reason: "No canvas content to fit" };
+    }
+
+    editor.zoomToFit({
+      animation: { duration: editor.options.animationMediumMs },
+    });
+
+    return { applied: true, reason: "Fit view applied" };
+  }, [editor]);
+
+  const handleToggleMicMute = useCallback(() => {
+    if (ws.connectionState !== "connected") {
+      return { applied: false, reason: "Live agent is not connected" };
+    }
+
+    if (!isAudioActive) {
+      return { applied: false, reason: "Live microphone is not active" };
+    }
+
+    toggleMicMuted();
+    return {
+      applied: true,
+      reason: isMicMuted ? "Microphone unmuted" : "Microphone muted",
+    };
+  }, [isAudioActive, isMicMuted, toggleMicMuted, ws.connectionState]);
 
   const handleSendText = useCallback(
     (message: string) => {
@@ -2187,7 +2221,10 @@ export const SessionCanvas: React.FC = () => {
               <GestureHost
                 canvasRef={canvasRef}
                 enabled={gestureEnabled}
+                micMuted={isMicMuted}
                 onStateChange={handleGestureStateChange}
+                onFitView={handleFitAllCanvasContent}
+                onToggleMicMute={handleToggleMicMute}
               />
               <TldrawAgentAppProvider
                 enablePersistence={false}
