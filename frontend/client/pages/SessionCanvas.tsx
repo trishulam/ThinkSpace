@@ -80,6 +80,7 @@ DefaultSizeStyle.setDefaultValue("s");
 const tools = [TargetShapeTool, TargetAreaTool];
 
 type CanvasTopChromeProps = {
+  recordingEnabled: boolean;
   recordingStatus: string;
   recordingError: string | null;
   isRecording: boolean;
@@ -123,22 +124,29 @@ function createLiveEntryId(): string {
 
 const AUTO_CONNECT_SETTLE_MS = 2500;
 const STARTUP_GREETING_SETTLE_MS = 1500;
+const SESSION_RECORDING_ENABLED =
+  String(import.meta.env.VITE_ENABLE_SESSION_RECORDING ?? "false").toLowerCase() ===
+  "true";
 
 type CanvasCaptureHudProps = {
-  gestureState: GestureRuntimeState | null;
+  gestureState: CanvasGestureCaptureState | null;
   recordingError: string | null;
 };
 
 type CanvasRecordingIndicatorProps = {
+  recordingEnabled: boolean;
   recordingStatus: string;
   recordingError: string | null;
   isRecording: boolean;
   elapsedSeconds: number;
 };
 
+type CanvasGestureCaptureState = Pick<GestureRuntimeState, "stream" | "cameraState">;
+
 type CanvasExitAction = "back" | "end";
 
 type CanvasStartupOverlayProps = {
+  recordingEnabled: boolean;
   recordingStatus: string;
   recordingError: string | null;
   onRetryRecording: () => void;
@@ -229,19 +237,24 @@ const CanvasCaptureHud = ({
 };
 
 const CanvasRecordingIndicator = ({
+  recordingEnabled,
   recordingStatus,
   recordingError,
   isRecording,
   elapsedSeconds,
 }: CanvasRecordingIndicatorProps) => {
-  const label = recordingError
+  const label = !recordingEnabled
+    ? "Recording off"
+    : recordingError
     ? "Recording blocked"
     : isRecording
       ? "Recording"
       : recordingStatus === "requesting-permission"
         ? "Awaiting access"
         : "Preparing";
-  const detail = recordingError
+  const detail = !recordingEnabled
+    ? "Session not captured"
+    : recordingError
     ? "Check browser permissions"
     : isRecording
       ? formatRecordingDuration(elapsedSeconds)
@@ -297,6 +310,7 @@ const CanvasExitOverlay = ({ action }: { action: CanvasExitAction }) => {
 };
 
 const CanvasTopChrome = ({
+  recordingEnabled,
   recordingStatus,
   recordingError,
   isRecording,
@@ -314,6 +328,7 @@ const CanvasTopChrome = ({
   return (
     <div className="ts-canvas-top-chrome">
       <CanvasRecordingIndicator
+        recordingEnabled={recordingEnabled}
         recordingStatus={recordingStatus}
         recordingError={recordingError}
         isRecording={isRecording}
@@ -357,11 +372,16 @@ const CanvasTopChrome = ({
 };
 
 const CanvasStartupOverlay = ({
+  recordingEnabled,
   recordingStatus,
   recordingError,
   onRetryRecording,
   onBackToDashboard,
 }: CanvasStartupOverlayProps) => {
+  if (!recordingEnabled) {
+    return null;
+  }
+
   if (recordingStatus !== "requesting-permission" && recordingStatus !== "error") {
     return null;
   }
@@ -1097,7 +1117,7 @@ export const SessionCanvas: React.FC = () => {
   const [isSessionActionPending, setIsSessionActionPending] = useState(false);
   const [exitAction, setExitAction] = useState<CanvasExitAction | null>(null);
   const [gestureEnabled, setGestureEnabled] = useState(false);
-  const [gestureState, setGestureState] = useState<GestureRuntimeState | null>(
+  const [gestureState, setGestureState] = useState<CanvasGestureCaptureState | null>(
     null,
   );
   const [resolvedUserId, setResolvedUserId] = useState("demo-user");
@@ -1223,6 +1243,8 @@ export const SessionCanvas: React.FC = () => {
   } = useSessionRecording(sessionId, {
     extraAudioStream: playbackCaptureStream,
   });
+  const recordingEnabled = SESSION_RECORDING_ENABLED;
+  const liveSessionReady = recordingEnabled ? recordingStatus === "recording" : true;
 
   const sendFocusedScreenshot = useCallback(
     async (
@@ -1349,7 +1371,7 @@ export const SessionCanvas: React.FC = () => {
   }, [isAudioActive, isMicMuted, toggleMicMuted, ws.connectionState]);
 
   const handleGestureStateChange = useCallback(
-    (nextState: GestureRuntimeState) => {
+    (nextState: CanvasGestureCaptureState) => {
       setGestureState(nextState);
     },
     [],
@@ -2233,7 +2255,7 @@ export const SessionCanvas: React.FC = () => {
   useEffect(() => {
     if (
       !sessionId ||
-      recordingStatus !== "recording" ||
+      !liveSessionReady ||
       isAudioActive ||
       autoAudioAttemptedRef.current
     ) {
@@ -2255,7 +2277,7 @@ export const SessionCanvas: React.FC = () => {
   }, [
     handleStartAudio,
     isAudioActive,
-    recordingStatus,
+    liveSessionReady,
     sessionId,
     suppressRestoreOverlay,
   ]);
@@ -2265,7 +2287,7 @@ export const SessionCanvas: React.FC = () => {
       !sessionId ||
       !editor ||
       !app ||
-      recordingStatus !== "recording" ||
+      !liveSessionReady ||
       !isAudioActive ||
       isRestoringSession ||
       !!resumeError ||
@@ -2299,7 +2321,7 @@ export const SessionCanvas: React.FC = () => {
     isAudioActive,
     isRestoringSession,
     isSessionActionPending,
-    recordingStatus,
+    liveSessionReady,
     resumeError,
     sessionId,
     suppressRestoreOverlay,
@@ -2310,7 +2332,7 @@ export const SessionCanvas: React.FC = () => {
   useEffect(() => {
     if (
       !sessionId ||
-      recordingStatus !== "recording" ||
+      !liveSessionReady ||
       !isAudioActive ||
       wsConnectionState !== "connected" ||
       startupGreetingSentRef.current
@@ -2322,7 +2344,7 @@ export const SessionCanvas: React.FC = () => {
       if (
         startupGreetingSentRef.current ||
         wsConnectionState !== "connected" ||
-        recordingStatus !== "recording" ||
+        !liveSessionReady ||
         !isAudioActive
       ) {
         return;
@@ -2339,13 +2361,17 @@ export const SessionCanvas: React.FC = () => {
     };
   }, [
     isAudioActive,
-    recordingStatus,
+    liveSessionReady,
     sessionId,
     wsConnectionState,
     sendSessionStartup,
   ]);
 
   useEffect(() => {
+    if (!recordingEnabled) {
+      return;
+    }
+
     if (recordingStatus === "recording") {
       wasRecordingActiveRef.current = true;
       return;
@@ -2381,6 +2407,7 @@ export const SessionCanvas: React.FC = () => {
   }, [
     isAudioActive,
     isSessionActionPending,
+    recordingEnabled,
     recordingStatus,
     stopAudio,
     wsConnectionState,
@@ -2389,6 +2416,7 @@ export const SessionCanvas: React.FC = () => {
 
   useEffect(() => {
     if (
+      !recordingEnabled ||
       !sessionId ||
       !editor ||
       !isRecordingSupported ||
@@ -2415,6 +2443,7 @@ export const SessionCanvas: React.FC = () => {
     editor,
     isRecordingSupported,
     isRestoringSession,
+    recordingEnabled,
     resumeError,
     sessionId,
     startRecording,
@@ -2424,7 +2453,7 @@ export const SessionCanvas: React.FC = () => {
   useEffect(() => {
     if (
       !sessionId ||
-      recordingStatus !== "recording" ||
+      !liveSessionReady ||
       autoGestureAttemptedRef.current
     ) {
       return;
@@ -2438,7 +2467,7 @@ export const SessionCanvas: React.FC = () => {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [recordingStatus, sessionId]);
+  }, [liveSessionReady, sessionId]);
 
   useEffect(() => {
     if (ws.turnCompleteCount > 0) {
@@ -2615,6 +2644,7 @@ export const SessionCanvas: React.FC = () => {
               />
             </Tldraw>
             <CanvasStartupOverlay
+              recordingEnabled={recordingEnabled}
               recordingStatus={recordingStatus}
               recordingError={sessionActionError || recordingError}
               onRetryRecording={() => {
@@ -2635,6 +2665,7 @@ export const SessionCanvas: React.FC = () => {
       </TldrawUiToastsProvider>
 
       <CanvasTopChrome
+        recordingEnabled={recordingEnabled}
         recordingStatus={recordingStatus}
         recordingError={sessionActionError || recordingError}
         isRecording={isRecording}

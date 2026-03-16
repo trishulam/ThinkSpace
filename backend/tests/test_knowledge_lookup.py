@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 # pylint: disable=import-error,wrong-import-position
 sys.path.append(str(Path(__file__).resolve().parents[1] / "app"))
@@ -175,6 +178,49 @@ def test_lookup_returns_failed_for_invalid_corpus(monkeypatch) -> None:
 
     assert result["status"] == "failed"
     assert "stale corpus" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_lookup_publishes_notch_lifecycle_updates(monkeypatch) -> None:
+    published_results: list[dict[str, object]] = []
+    status = SimpleNamespace(knowledge_index_status="ready", rag_corpus_id="rag-1")
+    monkeypatch.setattr(
+        "thinkspace_agent.tools.knowledge_lookup.KNOWLEDGE_LOOKUP_MIN_DURATION_S",
+        0.0,
+    )
+
+    async def _fake_publish(*, user_id: str, session_id: str, result: dict[str, object]) -> None:
+        published_results.append(
+            {
+                "user_id": user_id,
+                "session_id": session_id,
+                "status": result["status"],
+                "job_id": result.get("job", {}).get("id"),
+            }
+        )
+
+    monkeypatch.setattr(
+        "thinkspace_agent.tools.knowledge_lookup.publish_knowledge_lookup_job_result",
+        _fake_publish,
+    )
+    monkeypatch.setattr(
+        "thinkspace_agent.tools.knowledge_lookup.grounding_status_store",
+        FakeGroundingStatusStore(status),
+    )
+    monkeypatch.setattr(
+        "thinkspace_agent.tools.knowledge_lookup.lookup_session_rag_corpus_sync",
+        lambda *, rag_corpus_id, query, max_results: VertexSessionLookupResult(
+            query=query,
+            results=[],
+        ),
+    )
+
+    result = knowledge_lookup(query="ATP", tool_context=_tool_context())
+    await asyncio.sleep(0)
+
+    assert result["status"] == "completed"
+    assert [item["status"] for item in published_results] == ["accepted", "completed"]
+    assert all(item["job_id"] == result["job"]["id"] for item in published_results)
 
 
 def test_registry_includes_knowledge_lookup_tool() -> None:

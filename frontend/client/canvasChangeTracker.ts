@@ -41,6 +41,8 @@ type CanvasChangeTrackerOptions = {
 
 type CanvasChangeListener = (event: CanvasChangeEvent) => void;
 
+const MAX_RETAINED_CANVAS_EVENTS = 2000;
+
 function normalizeSource(source: unknown): string | null {
   return typeof source === "string" ? source : null;
 }
@@ -129,6 +131,7 @@ export class CanvasChangeTracker {
   private readonly getAgent?: () => TldrawAgent | null;
   private readonly listeners = new Set<CanvasChangeListener>();
   private readonly events: CanvasChangeEvent[] = [];
+  private eventOffset = 0;
   private stopRecordingFn: (() => void) | null = null;
 
   constructor({ editor, getAgent }: CanvasChangeTrackerOptions) {
@@ -207,18 +210,19 @@ export class CanvasChangeTracker {
   }
 
   getEventCount(): number {
-    return this.events.length;
+    return this.eventOffset + this.events.length;
   }
 
   getEventsSince(startIndex: number): CanvasChangeEvent[] {
-    if (startIndex <= 0) {
+    if (startIndex <= this.eventOffset) {
       return this.getEvents();
     }
-    return this.events.slice(startIndex);
+    return this.events.slice(startIndex - this.eventOffset);
   }
 
   clearEvents() {
     this.events.length = 0;
+    this.eventOffset = 0;
   }
 
   onEvent(listener: CanvasChangeListener) {
@@ -237,6 +241,11 @@ export class CanvasChangeTracker {
     };
 
     this.events.push(nextEvent);
+    if (this.events.length > MAX_RETAINED_CANVAS_EVENTS) {
+      const trimmedEventCount = this.events.length - MAX_RETAINED_CANVAS_EVENTS;
+      this.events.splice(0, trimmedEventCount);
+      this.eventOffset += trimmedEventCount;
+    }
     for (const listener of this.listeners) {
       listener(nextEvent);
     }

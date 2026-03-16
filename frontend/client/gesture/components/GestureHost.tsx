@@ -4,11 +4,13 @@ import { useGestureRuntime } from '../useGestureRuntime'
 import { GestureRuntimeCallbacks, GestureRuntimeState } from '../types'
 import { VirtualCursorOverlay } from './VirtualCursorOverlay'
 
+type GestureCaptureState = Pick<GestureRuntimeState, 'stream' | 'cameraState'>
+
 interface GestureHostProps {
 	canvasRef: RefObject<HTMLDivElement | null>
 	enabled: boolean
 	micMuted?: GestureRuntimeCallbacks['micMuted']
-	onStateChange?: (state: GestureRuntimeState) => void
+	onStateChange?: (state: GestureCaptureState) => void
 	onFitView?: GestureRuntimeCallbacks['onFitView']
 	onToggleMicMute?: GestureRuntimeCallbacks['onToggleMicMute']
 }
@@ -29,8 +31,11 @@ export function GestureHost({
 	})
 
 	useEffect(() => {
-		onStateChange?.(state)
-	}, [onStateChange, state])
+		onStateChange?.({
+			stream: state.stream,
+			cameraState: state.cameraState,
+		})
+	}, [onStateChange, state.cameraState, state.stream])
 
 	return (
 		<>
