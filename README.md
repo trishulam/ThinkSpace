@@ -8,6 +8,12 @@ ThinkSpace is a full-stack project with:
 
 This README is focused on helping you run the project locally first, then optionally enable CI/CD later.
 
+## Start Here
+
+For the most complete system overview, read `docs/thinkspace-end-to-end-technical-architecture.md`.
+
+If you want to understand how the full ThinkSpace platform fits together end to end, this is the primary architecture document and should be read before the infrastructure and deployment details below.
+
 ## Project Structure
 
 ```text
