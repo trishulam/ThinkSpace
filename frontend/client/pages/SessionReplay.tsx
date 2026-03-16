@@ -564,9 +564,9 @@ export const SessionReplay: React.FC = () => {
           ? replayArtifactStatus.notesError || "Session notes could not be generated for this session."
           : "Session notes are not available for this session yet.";
   const recommendedNext = {
-    title: "Quantum Cryptography",
-    description: "Next in series",
-    duration: "32 min",
+    title: "ReLU Activation Function",
+    description: "Learn about the ReLU activation function and its properties.",
+    duration: "",
   };
   const activeKeyMomentId = useMemo(() => {
     if (timelineKeyMoments.length === 0) {

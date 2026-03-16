@@ -3684,13 +3684,18 @@
 .ts-home-landing-logo {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
   border: none;
   background: transparent;
   color: #f8fafc;
-  font-size: 16px;
-  font-weight: 700;
   cursor: pointer;
+}
+
+.ts-home-landing-logo-text {
+  font-family: var(--mindpad-font-secondary);
+  font-size: clamp(1.65rem, 2vw, 2rem);
+  font-weight: 600;
+  letter-spacing: -0.045em;
+  line-height: 1;
 }
 
 .ts-home-landing-logo-mark,

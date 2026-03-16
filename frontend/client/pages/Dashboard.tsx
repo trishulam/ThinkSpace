@@ -760,10 +760,7 @@ export const Dashboard: React.FC = () => {
           <header className="ts-home-landing-nav">
             <div className="ts-home-landing-brand">
               <button className="ts-home-landing-logo" onClick={() => navigate("/dashboard")} type="button">
-                <span className="ts-home-landing-logo-mark">
-                  <LogoGlyph />
-                </span>
-                <span>ThinkSpace</span>
+                <span className="ts-home-landing-logo-text">ThinkSpace</span>
               </button>
             </div>
             <nav className="ts-home-landing-nav-links" aria-label="Primary">
@@ -868,7 +865,6 @@ export const Dashboard: React.FC = () => {
                       accept=".pdf,.txt,.md,.markdown,text/plain,text/markdown,application/pdf"
                       onChange={(event) => {
                         setAttachedFiles(Array.from(event.target.files ?? []));
-                        setIsPromptPopoverOpen(false);
                       }}
                     />
                   </div>
@@ -883,7 +879,7 @@ export const Dashboard: React.FC = () => {
                         void handleSessionPreviewOpen();
                       }
                     }}
-                    placeholder="What would you like to master today?"
+                    placeholder="Start with a topic, question, or idea"
                     aria-label="Search or describe what you want to learn"
                   />
                   <button
@@ -891,7 +887,7 @@ export const Dashboard: React.FC = () => {
                     onClick={handleSessionPreviewOpen}
                     type="button"
                   >
-                    Ask ThinkSpace
+                    Enter ThinkSpace
                   </button>
                 </div>
                 <div className="ts-home-landing-suggestions">
