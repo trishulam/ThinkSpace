@@ -129,6 +129,14 @@ Create `frontend/.env.local`:
 ```bash
 VITE_AGENT_BACKEND_URL=ws://localhost:8000
 VITE_SESSION_API_BASE_URL=http://localhost:8000
+# Optional: enable session recording inside the canvas flow
+VITE_ENABLE_SESSION_RECORDING=false
+```
+
+If you want to use the canvas agent, also create `frontend/.dev.vars`:
+
+```bash
+GOOGLE_API_KEY=your_google_api_key_here
 ```
 
 Optional:
@@ -136,6 +144,8 @@ Optional:
 ```bash
 VITE_TLDRAW_AGENT_STREAM_URL=https://your-worker-url/stream
 ```
+
+Set `VITE_ENABLE_SESSION_RECORDING=true` only if you want the canvas session flow to capture a recording. By default this flag is `false`.
 
 Then run the frontend:
 
@@ -154,6 +164,10 @@ For the frontend:
 - `VITE_AGENT_BACKEND_URL`: WebSocket URL for live backend sessions
 - `VITE_SESSION_API_BASE_URL`: REST API base URL for dashboard and session APIs
 - `VITE_TLDRAW_AGENT_STREAM_URL`: canvas agent stream endpoint
+- `VITE_ENABLE_SESSION_RECORDING`: enables recording during the session canvas flow; default is `false`
+- `frontend/.dev.vars`: required for the canvas agent worker locally; at minimum set `GOOGLE_API_KEY`
+
+If `VITE_ENABLE_SESSION_RECORDING=true`, the canvas session waits for recording to start and captures the session recording flow. If it is `false`, the live session can continue without recording.
 
 For the backend:
 
@@ -167,7 +181,7 @@ Not for basic frontend + backend local development.
 
 Cloudflare deployment is only required for the production application.
 
-For local testing, you do not need to deploy the Cloudflare worker. You only need `VITE_TLDRAW_AGENT_STREAM_URL` when you specifically want the `/canvas` flow to use a deployed `/stream` endpoint.
+For local testing, you do not need to deploy the Cloudflare worker. If you want to use the canvas agent locally, make sure `frontend/.dev.vars` exists. If you also want canvas session recording, set `VITE_ENABLE_SESSION_RECORDING=true` in `frontend/.env.local`. You only need `VITE_TLDRAW_AGENT_STREAM_URL` when you specifically want the `/canvas` flow to use a deployed `/stream` endpoint.
 
 ### Default local URLs
 
