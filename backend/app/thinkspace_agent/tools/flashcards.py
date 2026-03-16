@@ -67,6 +67,60 @@ def _build_tool_result(
     return result
 
 
+def _schedule_flashcard_result_delivery(
+    *,
+    user_id: str | None,
+    session_id: str | None,
+    result: dict[str, object],
+    task_name: str,
+) -> None:
+    if not user_id or not session_id:
+        return
+
+    asyncio.get_running_loop().create_task(
+        publish_flashcard_job_result(
+            user_id=user_id,
+            session_id=session_id,
+            result=result,
+        ),
+        name=task_name,
+    )
+
+
+def _queue_flashcard_frontend_action(
+    *,
+    user_id: str | None,
+    session_id: str | None,
+    status: str,
+    tool: str,
+    summary: str,
+    action_type: str,
+    action_payload: object,
+    payload: object | None = None,
+    job_id: str | None = None,
+) -> None:
+    frontend_result = _build_tool_result(
+        status=status,
+        tool=tool,
+        summary=summary,
+        payload=payload,
+        frontend_action=_build_frontend_action(
+            action_type,
+            tool,
+            payload=action_payload,
+            job_id=job_id,
+        ),
+        job_id=job_id,
+    )
+    task_suffix = job_id or action_type.replace(".", "-")
+    _schedule_flashcard_result_delivery(
+        user_id=user_id,
+        session_id=session_id,
+        result=frontend_result,
+        task_name=f"flashcard-frontend-action-{task_suffix}",
+    )
+
+
 def _get_session_identity(
     tool_context: ToolContext | None,
 ) -> tuple[str | None, str | None]:
@@ -279,15 +333,24 @@ def flashcards_create(
             status="failed",
             tool=FLASHCARDS_CREATE_TOOL,
             summary="Flashcard generation requires an active session context",
-            frontend_action=_build_frontend_action(
-                FLASHCARDS_CLEAR_ACTION,
-                FLASHCARDS_CREATE_TOOL,
-                payload={},
-                job_id=job_id,
-            ),
             job_id=job_id,
         )
 
+    accepted_summary = (
+        f"Starting flashcard generation for {normalized_topic} "
+        f"with {normalized_card_count} cards. Do not ask any flashcard "
+        "question until the deck is created and the UI confirms it is visible."
+    )
+    _queue_flashcard_frontend_action(
+        user_id=user_id,
+        session_id=session_id,
+        status="accepted",
+        tool=FLASHCARDS_CREATE_TOOL,
+        summary=accepted_summary,
+        action_type=FLASHCARDS_BEGIN_ACTION,
+        action_payload={},
+        job_id=job_id,
+    )
     asyncio.get_running_loop().create_task(
         _run_flashcard_generation_job(
             user_id=user_id,
@@ -309,18 +372,8 @@ def flashcards_create(
     return _build_tool_result(
         status="accepted",
         tool=FLASHCARDS_CREATE_TOOL,
-        summary=(
-            f"Starting flashcard generation for {normalized_topic} "
-            f"with {normalized_card_count} cards. Do not ask any flashcard "
-            "question until the deck is created and the UI confirms it is visible."
-        ),
+        summary=accepted_summary,
         payload=payload,
-        frontend_action=_build_frontend_action(
-            FLASHCARDS_BEGIN_ACTION,
-            FLASHCARDS_CREATE_TOOL,
-            payload={},
-            job_id=job_id,
-        ),
         job_id=job_id,
     )
 
@@ -393,20 +446,26 @@ def flashcards_next(tool_context: ToolContext | None = None) -> dict[str, object
         session_id=session_id,
     )
     control_payload = _build_flashcard_control_payload(next_payload)
+    summary = (
+        "Requested the next flashcard. Wait until the UI confirms the next card "
+        "is visible before asking it."
+    )
+    _queue_flashcard_frontend_action(
+        user_id=user_id,
+        session_id=session_id,
+        status="completed",
+        tool=FLASHCARDS_NEXT_TOOL,
+        summary=summary,
+        action_type=FLASHCARDS_NEXT_TOOL,
+        action_payload=control_payload or {},
+        payload=_build_flashcards_next_grounding_payload(next_payload),
+    )
 
     return _build_tool_result(
         status="completed",
         tool=FLASHCARDS_NEXT_TOOL,
-        summary=(
-            "Requested the next flashcard. Wait until the UI confirms the next card "
-            "is visible before asking it."
-        ),
+        summary=summary,
         payload=_build_flashcards_next_grounding_payload(next_payload),
-        frontend_action=_build_frontend_action(
-            FLASHCARDS_NEXT_TOOL,
-            FLASHCARDS_NEXT_TOOL,
-            payload=control_payload or {},
-        ),
     )
 
 
@@ -456,19 +515,24 @@ def flashcards_reveal_answer(
         session_id=session_id,
     )
     control_payload = _build_flashcard_control_payload(revealed_payload)
+    summary = (
+        "Requested answer reveal. Wait until the UI confirms the answer is "
+        "visible before explaining it."
+    )
+    _queue_flashcard_frontend_action(
+        user_id=user_id,
+        session_id=session_id,
+        status="completed",
+        tool=FLASHCARDS_REVEAL_ANSWER_TOOL,
+        summary=summary,
+        action_type=FLASHCARDS_REVEAL_ANSWER_TOOL,
+        action_payload=control_payload or {},
+    )
 
     return _build_tool_result(
         status="completed",
         tool=FLASHCARDS_REVEAL_ANSWER_TOOL,
-        summary=(
-            "Requested answer reveal. Wait until the UI confirms the answer is "
-            "visible before explaining it."
-        ),
-        frontend_action=_build_frontend_action(
-            FLASHCARDS_REVEAL_ANSWER_TOOL,
-            FLASHCARDS_REVEAL_ANSWER_TOOL,
-            payload=control_payload or {},
-        ),
+        summary=summary,
     )
 
 
@@ -492,17 +556,23 @@ def flashcards_end(tool_context: ToolContext | None = None) -> dict[str, object]
         )
 
     flashcard_session_store.clear(user_id=user_id, session_id=session_id)
+    summary = "Cleared the active flashcard session"
+    _queue_flashcard_frontend_action(
+        user_id=user_id,
+        session_id=session_id,
+        status="completed",
+        tool=FLASHCARDS_END_TOOL,
+        summary=summary,
+        action_type=FLASHCARDS_CLEAR_ACTION,
+        action_payload={},
+        payload=_build_flashcard_grounding_base(current_payload),
+    )
 
     return _build_tool_result(
         status="completed",
         tool=FLASHCARDS_END_TOOL,
-        summary="Cleared the active flashcard session",
+        summary=summary,
         payload=_build_flashcard_grounding_base(current_payload),
-        frontend_action=_build_frontend_action(
-            FLASHCARDS_CLEAR_ACTION,
-            FLASHCARDS_END_TOOL,
-            payload={},
-        ),
     )
 
 

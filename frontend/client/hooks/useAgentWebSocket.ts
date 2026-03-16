@@ -66,6 +66,7 @@ const CPS_SMOOTHING_FACTOR = 0.2
 const OUTPUT_AUDIO_SAMPLE_RATE = 24000
 const OUTPUT_AUDIO_BYTES_PER_SAMPLE = 2
 const REVEAL_TICK_MS = 50
+const KNOWLEDGE_LOOKUP_MIN_VISIBLE_MS = 2500
 
 const EMPTY_SUBTITLE: AgentSubtitleState = {
 	receivedText: '',
@@ -130,6 +131,10 @@ export function useAgentWebSocket({
 	const hasFinalSubtitleRef = useRef(false)
 	const pendingTurnCompleteRef = useRef(false)
 	const activeKnowledgeLookupJobIdsRef = useRef<Set<string>>(new Set())
+	const knowledgeLookupStartedAtRef = useRef<Map<string, number>>(new Map())
+	const knowledgeLookupDismissTimersRef = useRef<
+		Map<string, ReturnType<typeof setTimeout>>
+	>(new Map())
 
 	// Stable refs for callbacks so the WS handler always sees the latest
 	const onPlayAudioRef = useRef(onPlayAudio)
@@ -137,8 +142,21 @@ export function useAgentWebSocket({
 	const onStopPlaybackRef = useRef(onStopPlayback)
 	onStopPlaybackRef.current = onStopPlayback
 
+	const clearKnowledgeLookupDismissTimer = useCallback((jobKey: string) => {
+		const timerId = knowledgeLookupDismissTimersRef.current.get(jobKey)
+		if (timerId) {
+			clearTimeout(timerId)
+			knowledgeLookupDismissTimersRef.current.delete(jobKey)
+		}
+	}, [])
+
 	const clearKnowledgeLookupActive = useCallback(() => {
+		for (const timerId of knowledgeLookupDismissTimersRef.current.values()) {
+			clearTimeout(timerId)
+		}
+		knowledgeLookupDismissTimersRef.current.clear()
 		activeKnowledgeLookupJobIdsRef.current.clear()
+		knowledgeLookupStartedAtRef.current.clear()
 		setIsKnowledgeLookupActive(false)
 	}, [])
 
@@ -146,28 +164,42 @@ export function useAgentWebSocket({
 		(result: ToolResultMessage['result']) => {
 			if (result.tool !== 'knowledge.lookup') return
 
-			const jobId =
+			const jobKey =
 				typeof result.job?.id === 'string' && result.job.id.trim()
 					? result.job.id.trim()
-					: null
+					: '__knowledge_lookup__'
 
-			if (jobId) {
-				if (result.status === 'accepted') {
-					activeKnowledgeLookupJobIdsRef.current.add(jobId)
-				} else if (result.status === 'completed' || result.status === 'failed') {
-					activeKnowledgeLookupJobIdsRef.current.delete(jobId)
-				}
+			if (result.status === 'accepted') {
+				clearKnowledgeLookupDismissTimer(jobKey)
+				activeKnowledgeLookupJobIdsRef.current.add(jobKey)
+				knowledgeLookupStartedAtRef.current.set(jobKey, Date.now())
 				setIsKnowledgeLookupActive(activeKnowledgeLookupJobIdsRef.current.size > 0)
 				return
 			}
 
-			if (result.status === 'accepted') {
-				setIsKnowledgeLookupActive(true)
-			} else if (result.status === 'completed' || result.status === 'failed') {
-				clearKnowledgeLookupActive()
+			if (result.status === 'completed' || result.status === 'failed') {
+				const startedAt = knowledgeLookupStartedAtRef.current.get(jobKey) ?? Date.now()
+				const elapsedMs = Date.now() - startedAt
+				const remainingMs = Math.max(0, KNOWLEDGE_LOOKUP_MIN_VISIBLE_MS - elapsedMs)
+				clearKnowledgeLookupDismissTimer(jobKey)
+
+				if (remainingMs <= 0) {
+					activeKnowledgeLookupJobIdsRef.current.delete(jobKey)
+					knowledgeLookupStartedAtRef.current.delete(jobKey)
+					setIsKnowledgeLookupActive(activeKnowledgeLookupJobIdsRef.current.size > 0)
+					return
+				}
+
+				const timerId = setTimeout(() => {
+					knowledgeLookupDismissTimersRef.current.delete(jobKey)
+					activeKnowledgeLookupJobIdsRef.current.delete(jobKey)
+					knowledgeLookupStartedAtRef.current.delete(jobKey)
+					setIsKnowledgeLookupActive(activeKnowledgeLookupJobIdsRef.current.size > 0)
+				}, remainingMs)
+				knowledgeLookupDismissTimersRef.current.set(jobKey, timerId)
 			}
 		},
-		[clearKnowledgeLookupActive]
+		[clearKnowledgeLookupDismissTimer]
 	)
 
 	const shiftFrontendAction = useCallback(() => {
@@ -175,10 +207,11 @@ export function useAgentWebSocket({
 	}, [])
 
 	useEffect(() => {
+		clearKnowledgeLookupActive()
 		setFrontendActions([])
 		setTurnCompleteCount(0)
 		setLatestToolResult(null)
-	}, [sessionId])
+	}, [clearKnowledgeLookupActive, sessionId])
 
 	const clearSubtitleTimer = useCallback(() => {
 		if (subtitleTimerRef.current) {
